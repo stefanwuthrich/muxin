@@ -27,6 +27,8 @@ Agents can also **borrow a machine as a work environment**: an [agent workspace]
 - **Agent-first.** Every capability is available as an MCP server (`muxin mcp`) and as scriptable commands with `--json`. Claude Code, Codex and other agents can check your machines, explain problems and fix them.
 - **Uses what you already have.** Machines are first reached with your system `ssh`, so your keys, agent and `~/.ssh/config` aliases just work; after that Muxin talks to its own small agent there, directly or through [Tailscale](#tailscale-and-moving-between-networks). GitHub access uses your `gh` login.
 
+How this tree is put together (the architecture diagram, the CLI and MCP surface, how a machine is reached) is in [docs/](docs/README.md).
+
 ## Install
 
 Download the app from the [latest release](https://github.com/stefanwuthrich/muxin/releases/latest):

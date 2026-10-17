@@ -2,6 +2,8 @@
 
 Muxin is one app for all of the user's machines (reached over `ssh`, or directly for `host = "local"`): agent sessions, desktops, files, GitHub, workspaces, cloud machines, and the self-hosted GitHub Actions runners installed on them.
 
+A snapshot of that shape, with the architecture diagram, is in [docs/](docs/README.md).
+
 Use the MCP tools when they're connected: start the server with `muxin mcp`, and see the README for setup. Otherwise use the CLI with `--json`. Both front the same API and return the same shapes.
 
 ## Ground rules
