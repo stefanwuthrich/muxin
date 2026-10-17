@@ -79,5 +79,7 @@ Do not start, stop, or remove a runner from this page. Those commands change the
 ## Related
 
 - [How a machine is reached](explanation-connections.md)
+- [How to add a machine](howto-add-a-machine.md)
+- [How to install runners on a machine](howto-install-runners.md)
 - [Surfaces](reference-surfaces.md)
 - [Cloud machines](reference-cloud.md)

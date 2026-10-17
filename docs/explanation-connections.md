@@ -51,6 +51,7 @@ A VPN Muxin configures for you was not built. Tailscale is detected and preferre
 
 ## Related
 
+- [How to add a machine](howto-add-a-machine.md)
 - [How to see what needs attention](howto-see-what-needs-attention.md)
 - [Architecture](explanation-architecture.md)
 - [Surfaces](reference-surfaces.md)

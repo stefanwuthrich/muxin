@@ -227,5 +227,7 @@ claude mcp add muxin -- muxin mcp
 ## Related
 
 - [How to see what needs attention](howto-see-what-needs-attention.md)
+- [How to add a machine](howto-add-a-machine.md)
+- [How to install runners on a machine](howto-install-runners.md)
 - [Cloud machines](reference-cloud.md)
 - [How a machine is reached](explanation-connections.md)

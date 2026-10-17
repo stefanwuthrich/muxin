@@ -11,7 +11,9 @@ Documentation plan:
   App shape              tutorial  how-to  reference  explanation
   One API, three doors   no        no      surfaces   explanation-architecture
   Reaching a machine     no        no      surfaces   explanation-connections
-  What needs attention   no        howto   surfaces   no
+  What needs attention   no        howto-see-what-needs-attention   surfaces   no
+  Add a machine          no        howto-add-a-machine              surfaces   explanation-connections
+  Install runners        no        howto-install-runners           surfaces   no
   Cloud (DigitalOcean)   no        no      reference-cloud  no
 ```
 
@@ -29,6 +31,8 @@ There is no tutorial here. The README already walks install to `muxin add-machin
 ## How-to
 
 - [How to see what needs attention](howto-see-what-needs-attention.md)
+- [How to add a machine](howto-add-a-machine.md)
+- [How to install runners on a machine](howto-install-runners.md)
 
 ## Reference
 
