@@ -31,7 +31,7 @@ aarch64=$(sha "Muxin-$version-linux-aarch64.tar.gz")
     echo "error: v$version's SHA256SUMS.txt doesn't have the Linux tarballs" >&2
     exit 1
 }
-release=https://github.com/LumaryLabsLLC/muxin/releases/download/v$version
+release=https://github.com/stefanwuthrich/muxin/releases/download/v$version
 desc="All your machines in one app, for you and your AI agents"
 depends="glibc libxcb libxkbcommon libxkbcommon-x11 vulkan-icd-loader"
 
@@ -47,7 +47,7 @@ cat > "$aur/PKGBUILD" <<'EOF'
 # Maintainer: Adib Hanna <adibhanna@gmail.com>
 #
 # Muxin (yay -S muxin-bin): written by scripts/aur.sh in
-# https://github.com/LumaryLabsLLC/muxin from each release.
+# https://github.com/stefanwuthrich/muxin from each release.
 
 pkgname=muxin-bin
 pkgver=@VERSION@
@@ -62,8 +62,8 @@ optdepends=('wayland: to run in a Wayland session'
 provides=('muxin')
 conflicts=('muxin')
 options=('!strip' '!debug')
-source_x86_64=("Muxin-${pkgver}-linux-x86_64.tar.gz::https://github.com/LumaryLabsLLC/muxin/releases/download/v${pkgver}/Muxin-${pkgver}-linux-x86_64.tar.gz")
-source_aarch64=("Muxin-${pkgver}-linux-aarch64.tar.gz::https://github.com/LumaryLabsLLC/muxin/releases/download/v${pkgver}/Muxin-${pkgver}-linux-aarch64.tar.gz")
+source_x86_64=("Muxin-${pkgver}-linux-x86_64.tar.gz::https://github.com/stefanwuthrich/muxin/releases/download/v${pkgver}/Muxin-${pkgver}-linux-x86_64.tar.gz")
+source_aarch64=("Muxin-${pkgver}-linux-aarch64.tar.gz::https://github.com/stefanwuthrich/muxin/releases/download/v${pkgver}/Muxin-${pkgver}-linux-aarch64.tar.gz")
 sha256sums_x86_64=('@SHA_X86_64@')
 sha256sums_aarch64=('@SHA_AARCH64@')
 

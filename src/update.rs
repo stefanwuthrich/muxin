@@ -1,5 +1,5 @@
 //! Whether a newer Muxin is out: GitHub's latest release of
-//! LumaryLabsLLC/muxin against this build's version, and how this copy is
+//! stefanwuthrich/muxin against this build's version, and how this copy is
 //! best updated: Homebrew or the AUR update it, else the release's file for
 //! this computer (the DMG, the Windows installer, the .deb or .rpm, the
 //! AppImage or the tarball). Only GitHub is asked, and nothing about the user
@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-const LATEST: &str = "https://api.github.com/repos/LumaryLabsLLC/muxin/releases/latest";
+const LATEST: &str = "https://api.github.com/repos/stefanwuthrich/muxin/releases/latest";
 
 /// A newer version, and how to get it.
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -64,7 +64,7 @@ fn read(release: &serde_json::Value, current: &str, how: &Installed) -> Option<U
         Installed::App if cfg!(windows) => (file(&format!("-windows-{}-setup.exe", if cfg!(target_arch = "aarch64") { "arm64" } else { "x64" })), None),
         Installed::App => (None, None),
     };
-    Some(Update { version, page: release["html_url"].as_str().unwrap_or("https://github.com/LumaryLabsLLC/muxin/releases/latest").to_string(), download, command })
+    Some(Update { version, page: release["html_url"].as_str().unwrap_or("https://github.com/stefanwuthrich/muxin/releases/latest").to_string(), download, command })
 }
 
 /// `a` comes after `b`: their numbers compared in order ("0.10.0" after
@@ -151,7 +151,7 @@ mod tests {
     #[test]
     fn picks_how_to_update() {
         let release = json!({
-            "tag_name": "v0.5.3", "html_url": "https://github.com/LumaryLabsLLC/muxin/releases/tag/v0.5.3",
+            "tag_name": "v0.5.3", "html_url": "https://github.com/stefanwuthrich/muxin/releases/tag/v0.5.3",
             "assets": [
                 { "name": "Muxin-0.5.3-macos.dmg", "browser_download_url": "https://x/Muxin-0.5.3-macos.dmg" },
                 { "name": "Muxin-0.5.3-linux-x86_64.deb", "browser_download_url": "https://x/Muxin-0.5.3-linux-x86_64.deb" },

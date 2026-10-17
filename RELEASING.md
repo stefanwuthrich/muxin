@@ -93,8 +93,8 @@ Certificates, right-click **Developer ID Application: Lumary Labs LLC
 (WYY7PK57DM)** › Export, as a `.p12` with a password. Then:
 
 ```sh
-base64 -i DeveloperID.p12 | gh secret set MACOS_CERT_P12 -R LumaryLabsLLC/muxin
-gh secret set MACOS_CERT_PASSWORD -R LumaryLabsLLC/muxin     # asks for the password
+base64 -i DeveloperID.p12 | gh secret set MACOS_CERT_P12 -R stefanwuthrich/muxin
+gh secret set MACOS_CERT_PASSWORD -R stefanwuthrich/muxin     # asks for the password
 rm DeveloperID.p12
 ```
 
@@ -105,9 +105,9 @@ rm DeveloperID.p12
 once). Note its **Key ID** and the **Issuer ID** above the list. Then:
 
 ```sh
-gh secret set APPLE_API_KEY_P8 -R LumaryLabsLLC/muxin < AuthKey_<id>.p8
-gh secret set APPLE_API_KEY_ID -R LumaryLabsLLC/muxin --body <key id>
-gh secret set APPLE_API_ISSUER_ID -R LumaryLabsLLC/muxin --body <issuer id>
+gh secret set APPLE_API_KEY_P8 -R stefanwuthrich/muxin < AuthKey_<id>.p8
+gh secret set APPLE_API_KEY_ID -R stefanwuthrich/muxin --body <key id>
+gh secret set APPLE_API_ISSUER_ID -R stefanwuthrich/muxin --body <issuer id>
 ```
 
 **3. On your Mac too** (to notarize a local build), save the same key for

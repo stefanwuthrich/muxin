@@ -1,0 +1,5 @@
+# GPUI 0.2.2 authorizes a Wayland clipboard write with the last key-press
+# serial. A mouse click has none (it stays 0), and GNOME ignores the write,
+# so Copy does nothing. The wrapper patches the cached crate before rustc.
+[build]
+rustc-wrapper = "scripts/ensure-gpui-patch.sh"

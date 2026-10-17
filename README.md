@@ -29,7 +29,7 @@ Agents can also **borrow a machine as a work environment**: an [agent workspace]
 
 ## Install
 
-Download the app from the [latest release](https://github.com/LumaryLabsLLC/muxin/releases/latest):
+Download the app from the [latest release](https://github.com/stefanwuthrich/muxin/releases/latest):
 
 - **macOS** 12 or later, Apple silicon and Intel: `Muxin-<version>-macos.dmg`. Open it and drag Muxin to Applications. It's signed and notarized.
 - **Linux** with glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36, openSUSE Tumbleweed, RHEL 10 and later), for Intel and AMD (`x86_64`) or Arm (`aarch64`):
@@ -55,7 +55,7 @@ Muxin was called Muxen before 0.5.1. Updating keeps your settings, machines and 
 ### Build from source
 
 ```sh
-git clone https://github.com/LumaryLabsLLC/muxin && cd muxin
+git clone https://github.com/stefanwuthrich/muxin && cd muxin
 cargo build --release
 ./target/release/muxin            # opens the window
 ```

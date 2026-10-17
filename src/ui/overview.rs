@@ -52,7 +52,7 @@ impl Root {
     fn overview_header(&self, theme: &Theme, s: &Snapshot, cx: &mut Context<Self>) -> impl IntoElement {
         use chrono::Timelike;
         let greeting = match chrono::Local::now().hour() {
-            5..=11 => "Good morning",
+            5..=11 => "Good morning, Bom Dia",
             12..=17 => "Good afternoon",
             _ => "Good evening",
         };

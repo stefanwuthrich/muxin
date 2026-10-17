@@ -33,7 +33,7 @@ aarch64=$(sha "Muxin-$version-linux-aarch64.tar.gz")
     echo "error: v$version's SHA256SUMS.txt doesn't have the macOS and Linux files" >&2
     exit 1
 }
-base=${MUXIN_CASK_URL:-'https://github.com/LumaryLabsLLC/muxin/releases/download/v#{version}'}
+base=${MUXIN_CASK_URL:-'https://github.com/stefanwuthrich/muxin/releases/download/v#{version}'}
 
 tap=${HOMEBREW_TAP_DIR:-}
 if [ -z "$tap" ]; then

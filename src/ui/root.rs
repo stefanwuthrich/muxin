@@ -200,7 +200,7 @@ pub fn bind_app_actions(cx: &mut App) {
     }
     cx.on_action(|_: &Minimize, cx| on_window(cx, |w| w.minimize_window()));
     cx.on_action(|_: &Zoom, cx| on_window(cx, |w| w.zoom_window()));
-    const REPO: &str = "https://github.com/LumaryLabsLLC/muxin";
+    const REPO: &str = "https://github.com/stefanwuthrich/muxin";
     cx.on_action(|_: &OpenDocs, cx| cx.open_url("https://muxin.dev/docs"));
     cx.on_action(|_: &ShowReleaseNotes, cx| cx.open_url(&format!("{REPO}/releases")));
     cx.on_action(|_: &ReportProblem, cx| cx.open_url(&format!("{REPO}/issues/new/choose")));

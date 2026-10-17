@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Questions
-    url: https://github.com/LumaryLabsLLC/muxin/discussions
+    url: https://github.com/stefanwuthrich/muxin/discussions
     about: Ask how to do something in Discussions.
   - name: A security problem
-    url: https://github.com/LumaryLabsLLC/muxin/security/policy
+    url: https://github.com/stefanwuthrich/muxin/security/policy
     about: Please report security problems privately.

@@ -588,7 +588,7 @@ mod tests {
 
     #[test]
     fn parses_repo_and_issue_refs() {
-        assert_eq!(repo_name("git@github.com:LumaryLabsLLC/muxin.git").as_deref(), Some("LumaryLabsLLC/muxin"));
+        assert_eq!(repo_name("git@github.com:stefanwuthrich/muxin.git").as_deref(), Some("stefanwuthrich/muxin"));
         assert_eq!(repo_name("https://github.com/zennotes/zennotes").as_deref(), Some("zennotes/zennotes"));
         assert_eq!(repo_name("acme/api").as_deref(), Some("acme/api"));
         assert_eq!(repo_name("https://gitlab.com/x/y"), None);
