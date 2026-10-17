@@ -14,12 +14,14 @@ pub fn set(dir: &Path, name: &str, value: &str) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         let _ = dir;
-        security_framework::passwords::set_generic_password(SERVICE, name, value.as_bytes()).map_err(|e| format!("Couldn't save to the Keychain: {e}"))
+        security_framework::passwords::set_generic_password(SERVICE, name, value.as_bytes())
+            .map_err(|e| format!("Couldn't save to the Keychain: {e}"))
     }
     #[cfg(windows)]
     {
         let _ = dir;
-        credentials::set(name, value).map_err(|e| format!("Couldn't save to Windows' Credential Manager: {e}"))
+        credentials::set(name, value)
+            .map_err(|e| format!("Couldn't save to Windows' Credential Manager: {e}"))
     }
     #[cfg(not(any(target_os = "macos", windows)))]
     {
@@ -33,7 +35,10 @@ pub fn get(dir: &Path, name: &str) -> Option<String> {
     #[cfg(target_os = "macos")]
     {
         let _ = dir;
-        security_framework::passwords::get_generic_password(SERVICE, name).ok().and_then(|b| String::from_utf8(b).ok()).filter(|s| !s.is_empty())
+        security_framework::passwords::get_generic_password(SERVICE, name)
+            .ok()
+            .and_then(|b| String::from_utf8(b).ok())
+            .filter(|s| !s.is_empty())
     }
     #[cfg(windows)]
     {
@@ -74,7 +79,10 @@ mod credentials {
     use windows_sys::Win32::Security::Credentials::*;
 
     fn target(name: &str) -> Vec<u16> {
-        format!("{}/{name}", super::SERVICE).encode_utf16().chain(std::iter::once(0)).collect()
+        format!("{}/{name}", super::SERVICE)
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect()
     }
 
     pub fn set(name: &str, value: &str) -> Result<(), String> {
@@ -86,7 +94,10 @@ mod credentials {
             Type: CRED_TYPE_GENERIC,
             TargetName: target.as_mut_ptr(),
             Comment: std::ptr::null_mut(),
-            LastWritten: FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 },
+            LastWritten: FILETIME {
+                dwLowDateTime: 0,
+                dwHighDateTime: 0,
+            },
             CredentialBlobSize: blob.len() as u32,
             CredentialBlob: blob.as_mut_ptr(),
             Persist: CRED_PERSIST_LOCAL_MACHINE,
@@ -95,13 +106,19 @@ mod credentials {
             TargetAlias: std::ptr::null_mut(),
             UserName: user.as_mut_ptr(),
         };
-        if unsafe { CredWriteW(&cred, 0) } != 0 { Ok(()) } else { Err(std::io::Error::last_os_error().to_string()) }
+        if unsafe { CredWriteW(&cred, 0) } != 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error().to_string())
+        }
     }
 
     pub fn get(name: &str) -> Option<String> {
         let target = target(name);
         let mut found: *mut CREDENTIALW = std::ptr::null_mut();
-        if unsafe { CredReadW(target.as_ptr(), CRED_TYPE_GENERIC, 0, &mut found) } == 0 || found.is_null() {
+        if unsafe { CredReadW(target.as_ptr(), CRED_TYPE_GENERIC, 0, &mut found) } == 0
+            || found.is_null()
+        {
             return None;
         }
         let value = unsafe {
@@ -126,14 +143,18 @@ fn file(dir: &Path) -> PathBuf {
 
 #[cfg(not(any(target_os = "macos", windows)))]
 fn read_file(dir: &Path) -> std::collections::BTreeMap<String, String> {
-    std::fs::read_to_string(file(dir)).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+    std::fs::read_to_string(file(dir))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
 }
 
 #[cfg(not(any(target_os = "macos", windows)))]
 fn write_file(dir: &Path, all: &std::collections::BTreeMap<String, String>) -> Result<(), String> {
     let path = file(dir);
     let bytes = serde_json::to_vec_pretty(all).map_err(|e| e.to_string())?;
-    crate::config::write_atomic(&path, &bytes).map_err(|e| format!("Couldn't save {}: {e:#}", path.display()))?;
+    crate::config::write_atomic(&path, &bytes)
+        .map_err(|e| format!("Couldn't save {}: {e:#}", path.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

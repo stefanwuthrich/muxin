@@ -4,15 +4,19 @@
 use std::time::Duration;
 
 use gpui::{
-    Animation, AnimationExt, AnyView, App, ClickEvent, Div, ElementId, FontWeight, Hsla, IntoElement,
-    ParentElement, RenderOnce, SharedString, Styled, Svg, Transformation, Window, div, percentage, prelude::*, px,
-    svg,
+    Animation, AnimationExt, AnyView, App, ClickEvent, Div, ElementId, FontWeight, Hsla,
+    IntoElement, ParentElement, RenderOnce, SharedString, Styled, Svg, Transformation, Window, div,
+    percentage, prelude::*, px, svg,
 };
 
-use super::theme::{ActiveTheme, mono_font, Theme};
+use super::theme::{ActiveTheme, Theme, mono_font};
 
 pub fn icon(name: &str, size: f32, color: Hsla) -> Svg {
-    svg().path(SharedString::from(format!("icons/{name}.svg"))).size(px(size)).flex_none().text_color(color)
+    svg()
+        .path(SharedString::from(format!("icons/{name}.svg")))
+        .size(px(size))
+        .flex_none()
+        .text_color(color)
 }
 
 /// How icons look across the app (Settings › Appearance › Icons). Each style
@@ -43,7 +47,14 @@ enum Backdrop {
 }
 
 impl IconStyle {
-    pub const ALL: [IconStyle; 6] = [IconStyle::Minimal, IconStyle::Tiles, IconStyle::Soft, IconStyle::Duotone, IconStyle::Rounded, IconStyle::Fluent];
+    pub const ALL: [IconStyle; 6] = [
+        IconStyle::Minimal,
+        IconStyle::Tiles,
+        IconStyle::Soft,
+        IconStyle::Duotone,
+        IconStyle::Rounded,
+        IconStyle::Fluent,
+    ];
 
     /// As saved in config.toml.
     pub fn id(self) -> &'static str {
@@ -58,7 +69,10 @@ impl IconStyle {
     }
 
     pub fn from_id(id: &str) -> IconStyle {
-        IconStyle::ALL.into_iter().find(|s| s.id() == id).unwrap_or_default()
+        IconStyle::ALL
+            .into_iter()
+            .find(|s| s.id() == id)
+            .unwrap_or_default()
     }
 
     pub fn label(self) -> &'static str {
@@ -108,7 +122,12 @@ pub struct Look {
 
 impl Look {
     pub fn new(style: IconStyle, theme: &Theme) -> Look {
-        Look { style, text: theme.text, muted: theme.text_muted, dark: theme.canvas.l < 0.5 }
+        Look {
+            style,
+            text: theme.text,
+            muted: theme.text_muted,
+            dark: theme.canvas.l < 0.5,
+        }
     }
 }
 
@@ -137,10 +156,54 @@ pub fn icon_style() -> IconStyle {
 
 /// The icons each style has its own glyph for (assets/icons/<prefix>-<name>.svg).
 const STYLED: &[&str] = &[
-    "gauge", "workflow", "terminal", "activity", "server", "laptop", "monitor", "hard-drive", "folder", "folder-open", "file", "copy",
-    "refresh-cw", "rotate-ccw", "play", "square", "trash-2", "power", "unplug", "plug", "zap", "external-link", "git-branch", "arrow-up",
-    "box", "layers", "lock", "info", "inbox", "clock", "bot", "scroll-text", "circle-check", "circle-x", "triangle-alert", "circle-alert",
-    "star", "message-square", "settings", "search", "cpu", "memory-stick", "book-open", "network", "plus", "x", "check", "agent-github",
+    "gauge",
+    "workflow",
+    "terminal",
+    "activity",
+    "server",
+    "laptop",
+    "monitor",
+    "hard-drive",
+    "folder",
+    "folder-open",
+    "file",
+    "copy",
+    "refresh-cw",
+    "rotate-ccw",
+    "play",
+    "square",
+    "trash-2",
+    "power",
+    "unplug",
+    "plug",
+    "zap",
+    "external-link",
+    "git-branch",
+    "arrow-up",
+    "box",
+    "layers",
+    "lock",
+    "info",
+    "inbox",
+    "clock",
+    "bot",
+    "scroll-text",
+    "circle-check",
+    "circle-x",
+    "triangle-alert",
+    "circle-alert",
+    "star",
+    "message-square",
+    "settings",
+    "search",
+    "cpu",
+    "memory-stick",
+    "book-open",
+    "network",
+    "plus",
+    "x",
+    "check",
+    "agent-github",
 ];
 
 /// The glyph a style draws for an icon; logos and others are used as they are.
@@ -150,7 +213,11 @@ fn glyph(style: IconStyle, name: &str) -> String {
         "star-filled" => "star",
         other => other,
     };
-    if STYLED.contains(&name) { format!("{}-{name}", style.prefix()) } else { name.to_string() }
+    if STYLED.contains(&name) {
+        format!("{}-{name}", style.prefix())
+    } else {
+        name.to_string()
+    }
 }
 
 /// An icon on its tile, in the style in use. `from`/`to` are its color pair
@@ -165,14 +232,38 @@ pub fn tile_in(look: Look, icon_name: &str, from: u32, to: u32, size: f32) -> Di
     // In color on the page, a pair's lighter color reads on dark themes and
     // its deeper one on light themes; near-black brand colors use the text color.
     let tone = if look.dark { from } else { to };
-    let tone: Hsla = if luminance(tone) < 0.22 { look.text } else { gpui::rgb(tone).into() };
+    let tone: Hsla = if luminance(tone) < 0.22 {
+        look.text
+    } else {
+        gpui::rgb(tone).into()
+    };
     let base: Hsla = gpui::rgb(mix(from, to)).into();
-    let el = div().flex_none().size(px(size)).flex().items_center().justify_center();
+    let el = div()
+        .flex_none()
+        .size(px(size))
+        .flex()
+        .items_center()
+        .justify_center();
     match look.style.backdrop() {
-        Backdrop::Solid => el.rounded(px(size * 0.27)).bg(base).child(icon(&glyph, size * 0.58, gpui::white())),
-        Backdrop::Faint => el.rounded(px(size * 0.27)).bg(base.opacity(0.2)).child(icon(&glyph, size * 0.62, tone)),
+        Backdrop::Solid => {
+            el.rounded(px(size * 0.27))
+                .bg(base)
+                .child(icon(&glyph, size * 0.58, gpui::white()))
+        }
+        Backdrop::Faint => el
+            .rounded(px(size * 0.27))
+            .bg(base.opacity(0.2))
+            .child(icon(&glyph, size * 0.62, tone)),
         // A provider's logo keeps its color even in Minimal, so a droplet reads as one at a glance.
-        Backdrop::None => el.child(icon(&glyph, size * 0.86, if look.style.colored() || icon_name.starts_with("brand-") { tone } else { look.muted })),
+        Backdrop::None => el.child(icon(
+            &glyph,
+            size * 0.86,
+            if look.style.colored() || icon_name.starts_with("brand-") {
+                tone
+            } else {
+                look.muted
+            },
+        )),
     }
 }
 
@@ -210,9 +301,8 @@ pub mod tiles {
 pub fn icon_colors(name: &str) -> Option<(u32, u32)> {
     Some(match name {
         "terminal" | "square-terminal" => (0x8f95ff, 0x5057e0),
-        "monitor" | "laptop" | "server" | "maximize" | "minimize" | "panel-left" | "panel-right" | "panel-bottom" | "layout-grid" => {
-            (0x6cc8ff, 0x2f7ae4)
-        }
+        "monitor" | "laptop" | "server" | "maximize" | "minimize" | "panel-left"
+        | "panel-right" | "panel-bottom" | "layout-grid" => (0x6cc8ff, 0x2f7ae4),
         "folder" | "folder-open" | "hard-drive" | "box" => (0xffd36b, 0xf09a0b),
         "file" | "settings" | "gauge" | "cpu" | "memory-stick" | "search" => (0xa3b4d9, 0x5a6d99),
         "copy" => (0xf0a6fc, 0xb83ad0),
@@ -221,10 +311,15 @@ pub fn icon_colors(name: &str) -> Option<(u32, u32)> {
         "plus" => (0xb69cff, 0x7a4ce8),
         "trash-2" | "circle-x" | "square" => (0xff8080, 0xdc3b33),
         "power" | "unplug" => (0xff8fb1, 0xd63c6e),
-        "external-link" | "info" | "inbox" | "message-square" | "arrow-up" | "arrow-down" | "cloud" => (0x6cb6ff, 0x2f6fe4),
-        "git-branch" | "git-merge" | "git-pull-request" | "git-pull-request-draft" | "workflow" | "list" | "scroll-text" => {
-            (0xffa95c, 0xea6a2a)
-        }
+        "external-link" | "info" | "inbox" | "message-square" | "arrow-up" | "arrow-down"
+        | "cloud" => (0x6cb6ff, 0x2f6fe4),
+        "git-branch"
+        | "git-merge"
+        | "git-pull-request"
+        | "git-pull-request-draft"
+        | "workflow"
+        | "list"
+        | "scroll-text" => (0xffa95c, 0xea6a2a),
         "layers" => tiles::WORKSPACES,
         "activity" | "clock" => tiles::ACTIVITY,
         "zap" | "star" | "star-filled" | "circle-alert" | "triangle-alert" => (0xffcc4d, 0xf08c00),
@@ -295,7 +390,10 @@ pub fn runner_glyph(theme: &Theme, state: &str, size: f32) -> Div {
     let base = div().flex_none().size(px(size)).rounded(px(2.5));
     match state {
         "working" | "idle" => base.bg(theme.state(state)),
-        _ => base.border_1().border_dashed().border_color(theme.text_placeholder),
+        _ => base
+            .border_1()
+            .border_dashed()
+            .border_color(theme.text_placeholder),
     }
 }
 
@@ -364,12 +462,24 @@ pub fn meter(theme: &Theme, fraction: f32, color: Hsla) -> Div {
         .h(px(3.))
         .rounded_full()
         .bg(theme.track)
-        .child(div().h_full().rounded_full().bg(color).w(gpui::relative(f.max(if f > 0.0 { 0.02 } else { 0.0 }))))
+        .child(
+            div()
+                .h_full()
+                .rounded_full()
+                .bg(color)
+                .w(gpui::relative(f.max(if f > 0.0 { 0.02 } else { 0.0 }))),
+        )
 }
 
 /// A bordered surface, the basic container for page sections.
 pub fn card(theme: &Theme) -> Div {
-    div().flex().flex_col().rounded(px(8.)).border_1().border_color(theme.border_variant).bg(theme.surface)
+    div()
+        .flex()
+        .flex_col()
+        .rounded(px(8.))
+        .border_1()
+        .border_color(theme.border_variant)
+        .bg(theme.surface)
 }
 
 pub fn section_title(theme: &Theme, title: impl Into<SharedString>, count: Option<usize>) -> Div {
@@ -381,11 +491,20 @@ pub fn section_title(theme: &Theme, title: impl Into<SharedString>, count: Optio
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(theme.text)
         .child(title.into())
-        .children(count.map(|n| div().font_family(mono_font()).text_color(theme.text_placeholder).font_weight(FontWeight::NORMAL).child(n.to_string())))
+        .children(count.map(|n| {
+            div()
+                .font_family(mono_font())
+                .text_color(theme.text_placeholder)
+                .font_weight(FontWeight::NORMAL)
+                .child(n.to_string())
+        }))
 }
 
 pub fn label(theme: &Theme, text: impl Into<SharedString>) -> Div {
-    div().text_size(px(11.)).text_color(theme.text_placeholder).child(text.into())
+    div()
+        .text_size(px(11.))
+        .text_color(theme.text_placeholder)
+        .child(text.into())
 }
 
 pub fn empty_state(theme: &Theme, icon_name: &str, text: impl Into<SharedString>) -> Div {
@@ -398,7 +517,14 @@ pub fn empty_state(theme: &Theme, icon_name: &str, text: impl Into<SharedString>
         .text_size(px(12.5))
         .text_color(theme.text_placeholder)
         // Icon box matches the first line's height so long text wraps under itself.
-        .child(div().flex_none().h(px(20.)).flex().items_center().child(color_icon(theme, icon_name, 14., theme.text_placeholder)))
+        .child(
+            div()
+                .flex_none()
+                .h(px(20.))
+                .flex()
+                .items_center()
+                .child(color_icon(theme, icon_name, 14., theme.text_placeholder)),
+        )
         .child(div().flex_1().min_w(px(0.)).child(text.into()))
 }
 
@@ -410,8 +536,20 @@ pub fn kv(theme: &Theme, key: impl Into<SharedString>, value: impl IntoElement) 
         .gap(px(12.))
         .py(px(5.))
         .text_size(px(12.5))
-        .child(div().w(px(112.)).flex_none().text_color(theme.text_placeholder).child(key.into()))
-        .child(div().flex_1().min_w(px(0.)).text_color(theme.text).child(value))
+        .child(
+            div()
+                .w(px(112.))
+                .flex_none()
+                .text_color(theme.text_placeholder)
+                .child(key.into()),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .text_color(theme.text)
+                .child(value),
+        )
 }
 
 // ---------------------------------------------------------------------------
@@ -460,7 +598,12 @@ impl Button {
     }
 
     pub fn icon_only(id: impl Into<ElementId>, icon: &'static str) -> Self {
-        Button { label: None, icon: Some(icon), style: ButtonStyle::Ghost, ..Button::new(id, "") }
+        Button {
+            label: None,
+            icon: Some(icon),
+            style: ButtonStyle::Ghost,
+            ..Button::new(id, "")
+        }
     }
 
     pub fn icon(mut self, icon: &'static str) -> Self {
@@ -493,7 +636,10 @@ impl Button {
         self
     }
 
-    pub fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
+    pub fn on_click(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
         self.on_click = Some(Box::new(handler));
         self
     }
@@ -504,14 +650,35 @@ impl RenderOnce for Button {
         let theme = cx.theme();
         let icon_only = self.label.is_none();
         let (bg, hover, fg, border) = match self.style {
-            ButtonStyle::Primary => (theme.accent, theme.accent.opacity(0.85), theme.accent_text, None),
-            ButtonStyle::Outlined => (theme.element, theme.element_hover, theme.text, Some(theme.border_variant)),
-            ButtonStyle::Ghost => (gpui::transparent_black(), theme.ghost_hover, theme.text_muted, None),
-            ButtonStyle::Danger => (gpui::transparent_black(), theme.error.opacity(0.14), theme.error, None),
+            ButtonStyle::Primary => (
+                theme.accent,
+                theme.accent.opacity(0.85),
+                theme.accent_text,
+                None,
+            ),
+            ButtonStyle::Outlined => (
+                theme.element,
+                theme.element_hover,
+                theme.text,
+                Some(theme.border_variant),
+            ),
+            ButtonStyle::Ghost => (
+                gpui::transparent_black(),
+                theme.ghost_hover,
+                theme.text_muted,
+                None,
+            ),
+            ButtonStyle::Danger => (
+                gpui::transparent_black(),
+                theme.error.opacity(0.14),
+                theme.error,
+                None,
+            ),
         };
         let disabled = self.disabled || self.loading;
         // A theme with two brand colors fills primary buttons with both, as the icon does.
-        let gradient = (self.style == ButtonStyle::Primary && theme.accent2 != theme.accent).then_some((theme.accent, theme.accent2));
+        let gradient = (self.style == ButtonStyle::Primary && theme.accent2 != theme.accent)
+            .then_some((theme.accent, theme.accent2));
         let mut el = div()
             .id(self.id.clone())
             .flex()
@@ -531,15 +698,31 @@ impl RenderOnce for Button {
             .when(disabled, |d| d.opacity(0.5))
             .when(!disabled, |d| d.cursor_pointer())
             // One hover style per element (GPUI checks in debug builds).
-            .when(!disabled && gradient.is_none(), |d| d.hover(move |s| s.bg(hover)));
+            .when(!disabled && gradient.is_none(), |d| {
+                d.hover(move |s| s.bg(hover))
+            });
         if let Some((a, b)) = gradient {
-            el = el.bg(gpui::linear_gradient(90., gpui::linear_color_stop(a, 0.), gpui::linear_color_stop(b, 1.)));
+            el = el.bg(gpui::linear_gradient(
+                90.,
+                gpui::linear_color_stop(a, 0.),
+                gpui::linear_color_stop(b, 1.),
+            ));
             if !disabled {
-                el = el.hover(move |s| s.bg(gpui::linear_gradient(90., gpui::linear_color_stop(a.opacity(0.85), 0.), gpui::linear_color_stop(b.opacity(0.85), 1.))));
+                el = el.hover(move |s| {
+                    s.bg(gpui::linear_gradient(
+                        90.,
+                        gpui::linear_color_stop(a.opacity(0.85), 0.),
+                        gpui::linear_color_stop(b.opacity(0.85), 1.),
+                    ))
+                });
             }
         }
         if self.loading {
-            el = el.child(spinner(ElementId::Name(format!("{}-spin", self.id).into()), 13., fg));
+            el = el.child(spinner(
+                ElementId::Name(format!("{}-spin", self.id).into()),
+                13.,
+                fg,
+            ));
         } else if let Some(i) = self.icon {
             // Icons carry their own color, except on filled and danger buttons.
             let color = match self.style {
@@ -556,7 +739,11 @@ impl RenderOnce for Button {
                 div()
                     .text_size(px(10.5))
                     .font_family(mono_font())
-                    .text_color(if self.style == ButtonStyle::Primary { fg.opacity(0.75) } else { theme.text_placeholder })
+                    .text_color(if self.style == ButtonStyle::Primary {
+                        fg.opacity(0.75)
+                    } else {
+                        theme.text_placeholder
+                    })
                     .child(hint),
             );
         }
@@ -589,22 +776,19 @@ impl Tooltip {
 impl Render for Tooltip {
     fn render(&mut self, _: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        div()
-            .pl(px(8.))
-            .pt(px(10.))
-            .child(
-                div()
-                    .px(px(8.))
-                    .py(px(4.))
-                    .rounded(px(6.))
-                    .bg(theme.elevated)
-                    .border_1()
-                    .border_color(theme.border)
-                    .shadow_md()
-                    .text_size(px(12.))
-                    .text_color(theme.text)
-                    .child(self.text.clone()),
-            )
+        div().pl(px(8.)).pt(px(10.)).child(
+            div()
+                .px(px(8.))
+                .py(px(4.))
+                .rounded(px(6.))
+                .bg(theme.elevated)
+                .border_1()
+                .border_color(theme.border)
+                .shadow_md()
+                .text_size(px(12.))
+                .text_color(theme.text)
+                .child(self.text.clone()),
+        )
     }
 }
 

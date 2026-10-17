@@ -43,8 +43,11 @@ pub fn sources() -> Value {
     if mac {
         system.push(json!({ "kind": "system", "name": "Everything", "detail": "The system log" }));
     } else if journal {
-        system.push(json!({ "kind": "system", "name": "Everything", "detail": "The systemd journal" }));
-        system.push(json!({ "kind": "kernel", "name": "Kernel", "detail": "The kernel's messages" }));
+        system.push(
+            json!({ "kind": "system", "name": "Everything", "detail": "The systemd journal" }),
+        );
+        system
+            .push(json!({ "kind": "kernel", "name": "Kernel", "detail": "The kernel's messages" }));
     }
     let (docker, docker_note) = containers();
     json!({
@@ -66,7 +69,13 @@ fn which(program: &str) -> bool {
 
 /// Output of a short command, if it worked within a few seconds.
 pub(crate) fn quick(program: &str, args: &[&str]) -> Option<String> {
-    let mut child = Command::new(program).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+    let mut child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
     let mut out = child.stdout.take()?;
     let reader = std::thread::spawn(move || {
         let mut text = String::new();
@@ -77,7 +86,9 @@ pub(crate) fn quick(program: &str, args: &[&str]) -> Option<String> {
     loop {
         match child.try_wait() {
             Ok(Some(status)) => return status.success().then(|| reader.join().unwrap_or_default()),
-            Ok(None) if started.elapsed() < Duration::from_secs(5) => std::thread::sleep(Duration::from_millis(20)),
+            Ok(None) if started.elapsed() < Duration::from_secs(5) => {
+                std::thread::sleep(Duration::from_millis(20))
+            }
             _ => {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -89,7 +100,10 @@ pub(crate) fn quick(program: &str, args: &[&str]) -> Option<String> {
 
 fn journal_groups() -> bool {
     let root = crate::sys::is_root();
-    root || quick("id", &["-Gn"]).is_some_and(|g| g.split_whitespace().any(|g| ["systemd-journal", "adm", "wheel", "sudo"].contains(&g)))
+    root || quick("id", &["-Gn"]).is_some_and(|g| {
+        g.split_whitespace()
+            .any(|g| ["systemd-journal", "adm", "wheel", "sudo"].contains(&g))
+    })
 }
 
 /// The services systemd has loaded, the system's and the user's own, with
@@ -98,15 +112,26 @@ fn journal_groups() -> bool {
 fn units() -> Vec<Value> {
     let mut out = Vec::new();
     for user in [false, true] {
-        let mut args = vec!["list-units", "--type=service", "--all", "--no-legend", "--plain", "--no-pager"];
+        let mut args = vec![
+            "list-units",
+            "--type=service",
+            "--all",
+            "--no-legend",
+            "--plain",
+            "--no-pager",
+        ];
         if user {
             args.insert(0, "--user");
         }
-        let Some(text) = quick("systemctl", &args) else { continue };
+        let Some(text) = quick("systemctl", &args) else {
+            continue;
+        };
         for line in text.lines() {
             // UNIT LOAD ACTIVE SUB DESCRIPTION...
             let parts: Vec<&str> = line.split_whitespace().collect();
-            let [unit, load, active, sub, ..] = parts[..] else { continue };
+            let [unit, load, active, sub, ..] = parts[..] else {
+                continue;
+            };
             if load != "loaded" {
                 continue;
             }
@@ -130,8 +155,22 @@ fn containers() -> (Vec<Value>, Option<String>) {
         return (Vec::new(), None);
     }
     let docker = crate::root::tool("docker").unwrap_or_else(|| "docker".into());
-    let Some(text) = quick(&docker, &["ps", "-a", "--format", "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.State}}\t{{.Status}}\t{{.Label \"com.docker.compose.project\"}}"]) else {
-        return (Vec::new(), Some("Docker didn't answer: is it running, and may this user use it (the docker group)?".into()));
+    let Some(text) = quick(
+        &docker,
+        &[
+            "ps",
+            "-a",
+            "--format",
+            "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.State}}\t{{.Status}}\t{{.Label \"com.docker.compose.project\"}}",
+        ],
+    ) else {
+        return (
+            Vec::new(),
+            Some(
+                "Docker didn't answer: is it running, and may this user use it (the docker group)?"
+                    .into(),
+            ),
+        );
     };
     let mut list: Vec<Value> = text
         .lines()
@@ -174,15 +213,28 @@ fn files() -> Vec<Value> {
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut add_dir = |dir: &std::path::Path, depth: usize, recent_only: bool| {
         walk(dir, depth, deadline, &mut |p| {
-            let log = p.extension().is_some_and(|e| e == "log") || p.file_name().is_some_and(|n| ["syslog", "messages", "system.log"].contains(&n.to_string_lossy().as_ref()));
-            let recent = std::fs::metadata(p).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age < Duration::from_secs(14 * 86400));
+            let log = p.extension().is_some_and(|e| e == "log")
+                || p.file_name().is_some_and(|n| {
+                    ["syslog", "messages", "system.log"].contains(&n.to_string_lossy().as_ref())
+                });
+            let recent = std::fs::metadata(p)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age < Duration::from_secs(14 * 86400));
             if log && (!recent_only || recent) && !found.contains(&p.to_path_buf()) {
                 found.push(p.to_path_buf());
             }
         });
     };
     if cfg!(windows) {
-        add_dir(&std::path::PathBuf::from(std::env::var("ProgramData").unwrap_or_else(|_| r"C:\ProgramData".into())), 3, true);
+        add_dir(
+            &std::path::PathBuf::from(
+                std::env::var("ProgramData").unwrap_or_else(|_| r"C:\ProgramData".into()),
+            ),
+            3,
+            true,
+        );
     } else {
         add_dir(std::path::Path::new("/var/log"), 2, false);
     }
@@ -209,25 +261,53 @@ fn files() -> Vec<Value> {
 
 /// Calls `found` for the files under `dir`, `depth` folders deep (until
 /// `deadline`), skipping the big trees nobody keeps logs in.
-fn walk(dir: &std::path::Path, depth: usize, deadline: Instant, found: &mut dyn FnMut(&std::path::Path)) {
+fn walk(
+    dir: &std::path::Path,
+    depth: usize,
+    deadline: Instant,
+    found: &mut dyn FnMut(&std::path::Path),
+) {
     const SKIP: [&str; 16] = [
-        "node_modules", ".git", ".cache", ".cargo", ".rustup", "target", ".npm", "Library", "snap", "Pictures", "Movies", "Music", "Applications", "vendor", "dist", ".venv",
+        "node_modules",
+        ".git",
+        ".cache",
+        ".cargo",
+        ".rustup",
+        "target",
+        ".npm",
+        "Library",
+        "snap",
+        "Pictures",
+        "Movies",
+        "Music",
+        "Applications",
+        "vendor",
+        "dist",
+        ".venv",
     ];
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         if Instant::now() > deadline {
             return;
         }
         let path = entry.path();
-        let Ok(kind) = entry.file_type() else { continue };
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
         if kind.is_file() {
             found(&path);
         } else if kind.is_dir() && depth > 0 {
             let name = entry.file_name();
             let name = name.to_string_lossy();
             // Bundles (.app, .photoslibrary, ...) are folders, but not ones with logs.
-            let bundle = name.contains('.') && !name.starts_with('.') && path.join("Contents").is_dir();
-            if !SKIP.contains(&name.as_ref()) && !bundle && (!name.starts_with('.') || name == ".muxen") {
+            let bundle =
+                name.contains('.') && !name.starts_with('.') && path.join("Contents").is_dir();
+            if !SKIP.contains(&name.as_ref())
+                && !bundle
+                && (!name.starts_with('.') || name == ".muxen")
+            {
                 walk(&path, depth - 1, deadline, found);
             }
         }
@@ -241,12 +321,28 @@ pub fn command(source: &Value, lines: u64, follow: bool) -> Result<(String, Vec<
     let target = source["target"].as_str().unwrap_or("").to_string();
     let s = |v: &str| v.to_string();
     let mac = cfg!(target_os = "macos");
-    if cfg!(windows) && matches!(source["kind"].as_str(), Some("system" | "kernel" | "service" | "file")) {
-        let script = crate::win::log_script(source["kind"].as_str().unwrap_or(""), &target, lines.parse().unwrap_or(500), follow)?;
+    if cfg!(windows)
+        && matches!(
+            source["kind"].as_str(),
+            Some("system" | "kernel" | "service" | "file")
+        )
+    {
+        let script = crate::win::log_script(
+            source["kind"].as_str().unwrap_or(""),
+            &target,
+            lines.parse().unwrap_or(500),
+            follow,
+        )?;
         return Ok(crate::win::log_command(script));
     }
     let journal = |extra: Vec<String>| {
-        let mut args = vec![s("--no-pager"), s("-o"), s("short-iso"), s("-n"), lines.clone()];
+        let mut args = vec![
+            s("--no-pager"),
+            s("-o"),
+            s("short-iso"),
+            s("-n"),
+            lines.clone(),
+        ];
         args.extend(extra);
         if follow {
             args.push(s("-f"));
@@ -256,11 +352,21 @@ pub fn command(source: &Value, lines: u64, follow: bool) -> Result<(String, Vec<
     match source["kind"].as_str().unwrap_or("") {
         "system" if mac => {
             // Recent history, then live. A target narrows it to one process.
-            if !target.is_empty() && !target.chars().all(|c| c.is_ascii_alphanumeric() || "._- ".contains(c)) {
+            if !target.is_empty()
+                && !target
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "._- ".contains(c))
+            {
                 return Err("That process name has odd characters.".into());
             }
-            let predicate = if target.is_empty() { String::new() } else { format!(" --predicate 'process == \"{target}\"'") };
-            let mut script = format!("log show --last 10m --style compact{predicate} 2>/dev/null | tail -n {lines}");
+            let predicate = if target.is_empty() {
+                String::new()
+            } else {
+                format!(" --predicate 'process == \"{target}\"'")
+            };
+            let mut script = format!(
+                "log show --last 10m --style compact{predicate} 2>/dev/null | tail -n {lines}"
+            );
             if follow {
                 script.push_str(&format!("; exec log stream --style compact{predicate}"));
             }
@@ -284,7 +390,9 @@ pub fn command(source: &Value, lines: u64, follow: bool) -> Result<(String, Vec<
             }
             let path = expand_home(&target);
             std::fs::File::open(&path).map_err(|e| match e.kind() {
-                std::io::ErrorKind::PermissionDenied => format!("{target} is readable only by root (or its group)."),
+                std::io::ErrorKind::PermissionDenied => {
+                    format!("{target} is readable only by root (or its group).")
+                }
                 std::io::ErrorKind::NotFound => format!("There's no {target} on this machine."),
                 _ => format!("Couldn't open {target}: {e}"),
             })?;
@@ -305,17 +413,35 @@ pub fn command(source: &Value, lines: u64, follow: bool) -> Result<(String, Vec<
                 args.push(s("-f"));
             }
             args.push(target);
-            Ok((crate::root::tool("docker").unwrap_or_else(|| s("docker")), args))
+            Ok((
+                crate::root::tool("docker").unwrap_or_else(|| s("docker")),
+                args,
+            ))
         }
         "compose" => {
-            if target.is_empty() || !target.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
+            if target.is_empty()
+                || !target
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "-_".contains(c))
+            {
                 return Err("Which Compose project?".into());
             }
-            let mut args = vec![s("compose"), s("-p"), target, s("logs"), s("--timestamps"), s("--tail"), lines];
+            let mut args = vec![
+                s("compose"),
+                s("-p"),
+                target,
+                s("logs"),
+                s("--timestamps"),
+                s("--tail"),
+                lines,
+            ];
             if follow {
                 args.push(s("-f"));
             }
-            Ok((crate::root::tool("docker").unwrap_or_else(|| s("docker")), args))
+            Ok((
+                crate::root::tool("docker").unwrap_or_else(|| s("docker")),
+                args,
+            ))
         }
         other => Err(format!("No log source called \"{other}\".")),
     }
@@ -339,7 +465,11 @@ pub fn read(req: &Value) -> Value {
         Ok(c) => c,
         Err(e) => return json!({ "ok": false, "error": e }),
     };
-    let output = match Command::new(&program).args(&args).stdin(Stdio::null()).output() {
+    let output = match Command::new(&program)
+        .args(&args)
+        .stdin(Stdio::null())
+        .output()
+    {
         Ok(o) => o,
         Err(e) => return json!({ "ok": false, "error": format!("couldn't run {program}: {e}") }),
     };
@@ -350,7 +480,10 @@ pub fn read(req: &Value) -> Value {
         return json!({ "ok": false, "error": err.lines().last().unwrap_or("It didn't work.").trim() });
     }
     text.push_str(&err);
-    let mut kept: Vec<&str> = text.lines().filter(|l| filter.is_empty() || l.to_lowercase().contains(&filter)).collect();
+    let mut kept: Vec<&str> = text
+        .lines()
+        .filter(|l| filter.is_empty() || l.to_lowercase().contains(&filter))
+        .collect();
     if req["source"]["kind"] == "compose" {
         kept = by_time(kept);
     }
@@ -386,7 +519,10 @@ fn stamp(line: &str) -> Option<String> {
         return None;
     }
     let (secs, after) = word.split_at(19);
-    let frac: String = after.strip_prefix('.').map(|f| f.chars().take_while(char::is_ascii_digit).collect()).unwrap_or_default();
+    let frac: String = after
+        .strip_prefix('.')
+        .map(|f| f.chars().take_while(char::is_ascii_digit).collect())
+        .unwrap_or_default();
     Some(format!("{secs}.{frac:0<9}"))
 }
 
@@ -408,13 +544,16 @@ mod tests {
             "web-1    |   at line 2",
             "api-1    | 2026-10-12T16:11:51.42778Z up",
         ];
-        assert_eq!(by_time(lines), vec![
-            "cache-1  | 2026-10-12T16:11:51.4277Z ready",
-            "api-1    | 2026-10-12T16:11:51.42778Z up",
-            "web-1    | 2026-10-12T16:11:56.612834458Z starting",
-            "web-1    |   at line 2",
-            "cache-1  | 2026-10-12T16:20:12.587451332Z saving",
-        ]);
+        assert_eq!(
+            by_time(lines),
+            vec![
+                "cache-1  | 2026-10-12T16:11:51.4277Z ready",
+                "api-1    | 2026-10-12T16:11:51.42778Z up",
+                "web-1    | 2026-10-12T16:11:56.612834458Z starting",
+                "web-1    |   at line 2",
+                "cache-1  | 2026-10-12T16:20:12.587451332Z saving",
+            ]
+        );
         assert_eq!(stamp("no bar here"), None);
     }
 
@@ -432,16 +571,42 @@ mod tests {
             assert_eq!(a, ["-n", "50", "-F", "--", path.as_str()]);
             let read = read(&json!({ "source": { "kind": "file", "target": path }, "lines": 1 }));
             assert_eq!(read["lines"], json!(["two"]));
-            assert!(command(&json!({ "kind": "file", "target": "/nonexistent/x.log" }), 10, false).unwrap_err().contains("no /nonexistent"));
+            assert!(
+                command(
+                    &json!({ "kind": "file", "target": "/nonexistent/x.log" }),
+                    10,
+                    false
+                )
+                .unwrap_err()
+                .contains("no /nonexistent")
+            );
         }
         let (p, a) = command(&json!({ "kind": "docker", "target": "abc123" }), 10, false).unwrap();
         assert!(p.trim_end_matches(".exe").ends_with("docker"), "{p}");
         assert_eq!(a.join(" "), "logs --timestamps --tail 10 abc123");
-        assert!(command(&json!({ "kind": "docker", "target": "--privileged" }), 10, false).is_err());
+        assert!(
+            command(
+                &json!({ "kind": "docker", "target": "--privileged" }),
+                10,
+                false
+            )
+            .is_err()
+        );
         assert!(command(&json!({ "kind": "nope" }), 10, false).is_err());
         if !cfg!(target_os = "macos") && !cfg!(windows) {
-            let (p, a) = command(&json!({ "kind": "service", "target": "nginx.service", "user": true }), 20, true).unwrap();
-            assert_eq!((p.as_str(), a.join(" ").as_str()), ("journalctl", "--no-pager -o short-iso -n 20 --user -u nginx.service -f"));
+            let (p, a) = command(
+                &json!({ "kind": "service", "target": "nginx.service", "user": true }),
+                20,
+                true,
+            )
+            .unwrap();
+            assert_eq!(
+                (p.as_str(), a.join(" ").as_str()),
+                (
+                    "journalctl",
+                    "--no-pager -o short-iso -n 20 --user -u nginx.service -f"
+                )
+            );
         }
     }
 }

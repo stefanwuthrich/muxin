@@ -7,13 +7,15 @@ mod fleet;
 mod github;
 mod mcp;
 mod ops;
+#[cfg(all(feature = "gui", target_os = "linux"))]
+mod os_clip;
 mod probe;
 #[cfg(feature = "gui")]
 mod renamed;
 mod shell_command;
-mod update;
 #[cfg(feature = "gui")]
 mod ui;
+mod update;
 mod util;
 
 use std::io::IsTerminal;
@@ -499,17 +501,33 @@ struct ScheduleRefArgs {
 /// `--every` and `--at` as a schedule's `when`.
 fn parse_every(every: &str, at: Option<String>) -> Result<muxen_when::When, String> {
     let e = every.trim().to_ascii_lowercase();
-    let num = |s: &str| s.parse::<u32>().map_err(|_| format!("\"{every}\" isn't a schedule Muxin knows."));
-    let (kind, n, days): (&str, Option<u32>, Vec<String>) = if let Some(m) = e.strip_suffix('m').filter(|m| m.chars().all(|c| c.is_ascii_digit())) {
+    let num = |s: &str| {
+        s.parse::<u32>()
+            .map_err(|_| format!("\"{every}\" isn't a schedule Muxin knows."))
+    };
+    let (kind, n, days): (&str, Option<u32>, Vec<String>) = if let Some(m) = e
+        .strip_suffix('m')
+        .filter(|m| m.chars().all(|c| c.is_ascii_digit()))
+    {
         ("minutes", Some(num(m)?), Vec::new())
-    } else if let Some(h) = e.strip_suffix('h').filter(|h| h.chars().all(|c| c.is_ascii_digit())) {
+    } else if let Some(h) = e
+        .strip_suffix('h')
+        .filter(|h| h.chars().all(|c| c.is_ascii_digit()))
+    {
         ("hours", Some(num(h)?), Vec::new())
     } else if matches!(e.as_str(), "day" | "daily") {
         ("day", None, Vec::new())
     } else if e == "weekdays" {
         ("weekdays", None, Vec::new())
     } else {
-        ("week", None, e.split(',').map(|d| d.trim().to_string()).filter(|d| !d.is_empty()).collect())
+        (
+            "week",
+            None,
+            e.split(',')
+                .map(|d| d.trim().to_string())
+                .filter(|d| !d.is_empty())
+                .collect(),
+        )
     };
     let at = match (kind, at) {
         ("minutes", _) => None,
@@ -517,7 +535,12 @@ fn parse_every(every: &str, at: Option<String>) -> Result<muxen_when::When, Stri
         (_, Some(a)) => Some(a),
         (_, None) => return Err("Say when with --at HH:MM.".into()),
     };
-    Ok(muxen_when::When { every: kind.into(), n, at, days })
+    Ok(muxen_when::When {
+        every: kind.into(),
+        n,
+        at,
+        days,
+    })
 }
 
 mod muxen_when {
@@ -1350,7 +1373,8 @@ fn main() -> ExitCode {
     // Logs always go to stderr: stdout is reserved for --json output and MCP messages.
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_env("MUXEN_LOG").unwrap_or_else(|_| "muxin=info".into()),
+            tracing_subscriber::EnvFilter::try_from_env("MUXEN_LOG")
+                .unwrap_or_else(|_| "muxin=info".into()),
         )
         .with_writer(std::io::stderr)
         .with_ansi(std::io::stderr().is_terminal())
@@ -1371,40 +1395,118 @@ fn main() -> ExitCode {
         Some(Command::Open(args)) => open(args, &runtime),
         Some(Command::Status(a)) => {
             let req = api::StatusRequest { refresh: a.refresh };
-            run(&runtime, &a.agent, async move |e| api::status(&e, req, api::Surface::Cli).await, cli::status)
+            run(
+                &runtime,
+                &a.agent,
+                async move |e| api::status(&e, req, api::Surface::Cli).await,
+                cli::status,
+            )
         }
-        Some(Command::Machines(a)) => run(&runtime, &a, async move |e| api::machines(&e).await, |m| cli::machines(m)),
+        Some(Command::Machines(a)) => run(
+            &runtime,
+            &a,
+            async move |e| api::machines(&e).await,
+            |m| cli::machines(m),
+        ),
         Some(Command::Machine(a)) => {
-            let req = api::MachineRequest { machine_id: a.machine_id };
-            run(&runtime, &a.agent, async move |e| api::machine(&e, req).await, cli::machine)
+            let req = api::MachineRequest {
+                machine_id: a.machine_id,
+            };
+            run(
+                &runtime,
+                &a.agent,
+                async move |e| api::machine(&e, req).await,
+                cli::machine,
+            )
         }
         Some(Command::AddMachine(a)) => {
-            let req = api::AddMachineRequest { name: a.name, host: a.host, check: !a.no_check };
-            run(&runtime, &a.agent, async move |e| api::add_machine(&e, req, api::Surface::Cli).await, cli::added_machine)
+            let req = api::AddMachineRequest {
+                name: a.name,
+                host: a.host,
+                check: !a.no_check,
+            };
+            run(
+                &runtime,
+                &a.agent,
+                async move |e| api::add_machine(&e, req, api::Surface::Cli).await,
+                cli::added_machine,
+            )
         }
         Some(Command::RemoveMachine(a)) => {
-            let req = api::MachineRequest { machine_id: a.machine_id };
-            run(&runtime, &a.agent, async move |e| api::remove_machine(&e, req).await, |m| {
-                format!("Removed {} ({}) from config.toml. Nothing on the machine changed.\n", m.name, m.id)
-            })
+            let req = api::MachineRequest {
+                machine_id: a.machine_id,
+            };
+            run(
+                &runtime,
+                &a.agent,
+                async move |e| api::remove_machine(&e, req).await,
+                |m| {
+                    format!(
+                        "Removed {} ({}) from config.toml. Nothing on the machine changed.\n",
+                        m.name, m.id
+                    )
+                },
+            )
         }
         Some(Command::Connect(a)) => {
-            let req = api::ConnectMachineRequest { machine_id: a.machine_id, connected: true };
-            run(&runtime, &a.agent, async move |e| api::connect_machine(&e, req).await, |m| format!("Connected to {} ({}).\n", m.name, m.status))
+            let req = api::ConnectMachineRequest {
+                machine_id: a.machine_id,
+                connected: true,
+            };
+            run(
+                &runtime,
+                &a.agent,
+                async move |e| api::connect_machine(&e, req).await,
+                |m| format!("Connected to {} ({}).\n", m.name, m.status),
+            )
         }
         Some(Command::Disconnect(a)) => {
-            let req = api::ConnectMachineRequest { machine_id: a.machine_id, connected: false };
-            run(&runtime, &a.agent, async move |e| api::connect_machine(&e, req).await, |m| format!("Disconnected from {}. Its sessions go on there; `muxin connect {}` connects again.\n", m.name, m.id))
+            let req = api::ConnectMachineRequest {
+                machine_id: a.machine_id,
+                connected: false,
+            };
+            run(
+                &runtime,
+                &a.agent,
+                async move |e| api::connect_machine(&e, req).await,
+                |m| {
+                    format!(
+                        "Disconnected from {}. Its sessions go on there; `muxin connect {}` connects again.\n",
+                        m.name, m.id
+                    )
+                },
+            )
         }
         Some(Command::RenameMachine(a)) => {
-            let req = api::RenameMachineRequest { machine_id: a.machine_id, name: a.name };
-            run(&runtime, &a.agent, async move |e| api::rename_machine(&e, req).await, |m| format!("Renamed {} to {}.\n", m.id, m.name))
+            let req = api::RenameMachineRequest {
+                machine_id: a.machine_id,
+                name: a.name,
+            };
+            run(
+                &runtime,
+                &a.agent,
+                async move |e| api::rename_machine(&e, req).await,
+                |m| format!("Renamed {} to {}.\n", m.id, m.name),
+            )
         }
         Some(Command::Runners(a)) => {
-            let req = api::RunnersRequest { machine_id: a.machine, state: a.state };
-            run(&runtime, &a.agent, async move |e| api::runners(&e, req).await, |r| cli::runners(r))
+            let req = api::RunnersRequest {
+                machine_id: a.machine,
+                state: a.state,
+            };
+            run(
+                &runtime,
+                &a.agent,
+                async move |e| api::runners(&e, req).await,
+                |r| cli::runners(r),
+            )
         }
-        Some(Command::Jobs(a)) => run(&runtime, &a, async move |e| api::jobs(&e, api::Surface::Cli).await, cli::jobs),
+        Some(Command::Jobs(a)) => run(
+            &runtime,
+            &a,
+            async move |e| api::jobs(&e, api::Surface::Cli).await,
+            cli::jobs,
+        ),
         Some(Command::Install(a)) => {
             let req = api::InstallRunnersRequest {
                 machine_id: a.machine_id,
@@ -1414,13 +1516,22 @@ fn main() -> ExitCode {
                 labels: a.label,
                 runner_group: a.group,
                 as_service: !a.no_service,
-                mode: Some(if a.no_service { "background".into() } else { a.mode }),
+                mode: Some(if a.no_service {
+                    "background".into()
+                } else {
+                    a.mode
+                }),
                 image: a.image,
                 docker_socket: a.docker_socket,
                 wait: !a.no_wait,
                 timeout_secs: Some(a.timeout),
             };
-            run(&runtime, &a.agent, async move |e| api::install_runners(&e, req, api::Surface::Cli, stream_line).await, cli::action)
+            run(
+                &runtime,
+                &a.agent,
+                async move |e| api::install_runners(&e, req, api::Surface::Cli, stream_line).await,
+                cli::action,
+            )
         }
         Some(Command::Runner(a)) => {
             let action = match a.action.parse::<api::ActionName>() {
@@ -1434,19 +1545,49 @@ fn main() -> ExitCode {
                 wait: !a.no_wait,
                 timeout_secs: Some(a.timeout),
             };
-            run(&runtime, &a.agent, async move |e| api::runner_action(&e, req, api::Surface::Cli, stream_line).await, cli::action)
+            run(
+                &runtime,
+                &a.agent,
+                async move |e| api::runner_action(&e, req, api::Surface::Cli, stream_line).await,
+                cli::action,
+            )
         }
         Some(Command::CancelRun(a)) => {
-            let req = api::CancelRunRequest { job_id: a.job_id, wait: !a.no_wait, timeout_secs: None };
-            run(&runtime, &a.agent, async move |e| api::cancel_run(&e, req, api::Surface::Cli, stream_line).await, cli::action)
+            let req = api::CancelRunRequest {
+                job_id: a.job_id,
+                wait: !a.no_wait,
+                timeout_secs: None,
+            };
+            run(
+                &runtime,
+                &a.agent,
+                async move |e| api::cancel_run(&e, req, api::Surface::Cli, stream_line).await,
+                cli::action,
+            )
         }
         Some(Command::Watch(a)) => {
-            let req = api::GitHubScopesRequest { add: a.scopes, remove: vec![] };
-            run(&runtime, &a.agent, async move |e| api::github_scopes(&e, req).await, cli::scopes)
+            let req = api::GitHubScopesRequest {
+                add: a.scopes,
+                remove: vec![],
+            };
+            run(
+                &runtime,
+                &a.agent,
+                async move |e| api::github_scopes(&e, req).await,
+                cli::scopes,
+            )
         }
         Some(Command::Unwatch(a)) => {
-            let req = api::GitHubScopesRequest { add: vec![], remove: a.scopes };
-            run(&runtime, &a.agent, async move |e| api::github_scopes(&e, req).await, cli::scopes)
+            let req = api::GitHubScopesRequest {
+                add: vec![],
+                remove: a.scopes,
+            };
+            run(
+                &runtime,
+                &a.agent,
+                async move |e| api::github_scopes(&e, req).await,
+                cli::scopes,
+            )
         }
         Some(Command::Settings(a)) => {
             let req = api::UpdateSettingsRequest {
@@ -1462,29 +1603,52 @@ fn main() -> ExitCode {
             run(
                 &runtime,
                 &a.agent,
-                async move |e| if changing { api::update_settings(&e, req) } else { Ok(api::settings(&e)) },
+                async move |e| {
+                    if changing {
+                        api::update_settings(&e, req)
+                    } else {
+                        Ok(api::settings(&e))
+                    }
+                },
                 cli::settings,
             )
         }
-        Some(Command::SshHosts(a)) => run(&runtime, &a, async move |e| Ok(api::ssh_hosts(&e).await), |h| {
-            let mut out = if h.hosts.is_empty() { "No hosts in ~/.ssh/config.\n".to_string() } else { format!("{}\n", h.hosts.join("\n")) };
-            if !h.network.is_empty() {
-                out.push_str("\nOn this network:\n");
-                for n in &h.network {
-                    let note = if n.ssh { "" } else { "  (a Mac with Remote Login off: turn it on in System Settings › General › Sharing)" };
-                    out.push_str(&format!("{}  {}{note}\n", n.host, n.name));
+        Some(Command::SshHosts(a)) => run(
+            &runtime,
+            &a,
+            async move |e| Ok(api::ssh_hosts(&e).await),
+            |h| {
+                let mut out = if h.hosts.is_empty() {
+                    "No hosts in ~/.ssh/config.\n".to_string()
+                } else {
+                    format!("{}\n", h.hosts.join("\n"))
+                };
+                if !h.network.is_empty() {
+                    out.push_str("\nOn this network:\n");
+                    for n in &h.network {
+                        let note = if n.ssh {
+                            ""
+                        } else {
+                            "  (a Mac with Remote Login off: turn it on in System Settings › General › Sharing)"
+                        };
+                        out.push_str(&format!("{}  {}{note}\n", n.host, n.name));
+                    }
                 }
-            }
-            if !h.tailnet.is_empty() {
-                out.push_str("\nOn your tailnet:\n");
-                for t in &h.tailnet {
-                    let state = if t.online { "online" } else { "offline" };
-                    let added = t.machine_id.as_ref().map(|id| format!("  (added as {id})")).unwrap_or_default();
-                    out.push_str(&format!("{}  {}  {}{added}\n", t.host, t.os, state));
+                if !h.tailnet.is_empty() {
+                    out.push_str("\nOn your tailnet:\n");
+                    for t in &h.tailnet {
+                        let state = if t.online { "online" } else { "offline" };
+                        let added = t
+                            .machine_id
+                            .as_ref()
+                            .map(|id| format!("  (added as {id})"))
+                            .unwrap_or_default();
+                        out.push_str(&format!("{}  {}  {}{added}\n", t.host, t.os, state));
+                    }
                 }
-            }
-            out
-        }),
+                out
+            },
+        ),
         Some(Command::Workspace(cmd)) => workspace(cmd, &runtime),
         Some(Command::Session(cmd)) => session(cmd, &runtime),
         Some(Command::Github(cmd)) => github(cmd, &runtime),
@@ -1494,42 +1658,123 @@ fn main() -> ExitCode {
         Some(Command::Logs(a)) => logs(a, &runtime),
         Some(Command::Services(a)) => services(a, &runtime),
         Some(Command::Ps(a)) => {
-            let (req, n) = (api::ProcessesRequest { machine_id: a.machine }, a.lines);
-            run(&runtime, &a.agent, async move |e| api::machine_processes(&e, req).await, move |l| cli::processes(l, n))
+            let (req, n) = (
+                api::ProcessesRequest {
+                    machine_id: a.machine,
+                },
+                a.lines,
+            );
+            run(
+                &runtime,
+                &a.agent,
+                async move |e| api::machine_processes(&e, req).await,
+                move |l| cli::processes(l, n),
+            )
         }
         Some(Command::Kill(a)) => {
-            let req = api::ProcessSignalRequest { machine_id: a.machine, pid: a.pid, signal: Some(if a.force { "kill".into() } else { "stop".into() }) };
-            run(&runtime, &a.agent, async move |e| api::process_signal(&e, req).await, |v| format!("{} {}.\n", if v["done"] == "killed" { "Killed" } else { "Stopped" }, v["pid"]))
+            let req = api::ProcessSignalRequest {
+                machine_id: a.machine,
+                pid: a.pid,
+                signal: Some(if a.force {
+                    "kill".into()
+                } else {
+                    "stop".into()
+                }),
+            };
+            run(
+                &runtime,
+                &a.agent,
+                async move |e| api::process_signal(&e, req).await,
+                |v| {
+                    format!(
+                        "{} {}.\n",
+                        if v["done"] == "killed" {
+                            "Killed"
+                        } else {
+                            "Stopped"
+                        },
+                        v["pid"]
+                    )
+                },
+            )
         }
         Some(Command::Run(a)) => fleet_run(a, &runtime),
         Some(Command::Power(a)) => {
-            let req = api::CloudMachineRequest { machine_id: a.machine, power: Some(a.state), wait: true };
-            run(&runtime, &a.agent, async move |e| api::machine_power(&e, req, api::Surface::Cli, stream_line).await, cli::action)
+            let req = api::CloudMachineRequest {
+                machine_id: a.machine,
+                power: Some(a.state),
+                wait: true,
+            };
+            run(
+                &runtime,
+                &a.agent,
+                async move |e| api::machine_power(&e, req, api::Surface::Cli, stream_line).await,
+                cli::action,
+            )
         }
         Some(Command::Wake(a)) => {
-            let req = api::WakeRequest { machine_id: a.machine_id };
-            run(&runtime, &a.agent, async move |e| api::wake_machine(&e, req).await, |v| format!("Sent the wake signal from {}. Muxin checks it again in 20 and 40 seconds.\n", v["sent_from"].as_str().unwrap_or("here")))
+            let req = api::WakeRequest {
+                machine_id: a.machine_id,
+            };
+            run(
+                &runtime,
+                &a.agent,
+                async move |e| api::wake_machine(&e, req).await,
+                |v| {
+                    format!(
+                        "Sent the wake signal from {}. Muxin checks it again in 20 and 40 seconds.\n",
+                        v["sent_from"].as_str().unwrap_or("here")
+                    )
+                },
+            )
         }
         Some(Command::Edit(a)) => {
-            let (machine, path) = a.target.split_once(':').map(|(m, p)| (m.to_string(), p.to_string())).unwrap_or((a.target.clone(), "~".into()));
+            let (machine, path) = a
+                .target
+                .split_once(':')
+                .map(|(m, p)| (m.to_string(), p.to_string()))
+                .unwrap_or((a.target.clone(), "~".into()));
             let (editor, print) = (a.editor.clone(), a.print);
             run(
                 &runtime,
                 &a.agent,
                 async move |e| {
                     let m = api::find_machine(&e.current(), &machine)?.clone();
-                    e.editor_command(&m.id, &path, &editor, !print).await.map_err(api::ApiError::invalid)
+                    e.editor_command(&m.id, &path, &editor, !print)
+                        .await
+                        .map_err(api::ApiError::invalid)
                 },
-                move |(name, line)| if print { format!("{}\n", line.join(" ")) } else { format!("Opening it in {name}.\n") },
+                move |(name, line)| {
+                    if print {
+                        format!("{}\n", line.join(" "))
+                    } else {
+                        format!("Opening it in {name}.\n")
+                    }
+                },
             )
         }
         Some(Command::Usage(a)) => {
-            let req = api::UsageRequest { days: Some(a.days), machine_id: a.machine };
-            run(&runtime, &a.agent, async move |e| api::usage(&e, req).await, cli::usage)
+            let req = api::UsageRequest {
+                days: Some(a.days),
+                machine_id: a.machine,
+            };
+            run(
+                &runtime,
+                &a.agent,
+                async move |e| api::usage(&e, req).await,
+                cli::usage,
+            )
         }
         Some(Command::Ports(a)) => {
-            let req = api::PortsRequest { machine_id: a.machine_id };
-            run(&runtime, &a.agent, async move |e| api::machine_ports(&e, req).await, |p| cli::ports(p))
+            let req = api::PortsRequest {
+                machine_id: a.machine_id,
+            };
+            run(
+                &runtime,
+                &a.agent,
+                async move |e| api::machine_ports(&e, req).await,
+                |p| cli::ports(p),
+            )
         }
         Some(Command::Forward(a)) => {
             let (machine, port, local) = (a.machine.clone(), a.port, a.local);
@@ -1537,8 +1782,21 @@ fn main() -> ExitCode {
                 &runtime,
                 &a.agent,
                 async move |e| {
-                    let f = api::forward_port(&e, api::ForwardRequest { machine_id: machine, port, local_port: local }).await?;
-                    eprintln!("Port {} of {} is at {} here. Ctrl-C stops.", f.port, f.machine_id, f.url());
+                    let f = api::forward_port(
+                        &e,
+                        api::ForwardRequest {
+                            machine_id: machine,
+                            port,
+                            local_port: local,
+                        },
+                    )
+                    .await?;
+                    eprintln!(
+                        "Port {} of {} is at {} here. Ctrl-C stops.",
+                        f.port,
+                        f.machine_id,
+                        f.url()
+                    );
                     let _ = tokio::signal::ctrl_c().await;
                     e.stop_forward(&f.machine_id, f.port);
                     Ok(f)
@@ -1550,7 +1808,12 @@ fn main() -> ExitCode {
         Some(Command::Schedule(cmd)) => match cmd {
             ScheduleCommand::Ls(a) => {
                 let req = api::ScheduleListRequest { machine_id: a.on };
-                run(&runtime, &a.agent, async move |e| api::schedule_list(&e, req).await, cli::schedules)
+                run(
+                    &runtime,
+                    &a.agent,
+                    async move |e| api::schedule_list(&e, req).await,
+                    cli::schedules,
+                )
             }
             ScheduleCommand::Add(a) => {
                 let when = match parse_every(&a.every, a.at) {
@@ -1560,52 +1823,156 @@ fn main() -> ExitCode {
                         return std::process::ExitCode::from(2);
                     }
                 };
-                let req = api::ScheduleSaveRequest { machine_id: a.machine, id: None, name: a.name, when, command: a.command, agent: a.cli, prompt: a.prompt, folder: a.folder, enabled: true };
-                run(&runtime, &a.agent, async move |e| api::schedule_save(&e, req).await, |s| format!("✓ {} ({}): {}\n", s.name, s.id, s.when_text))
+                let req = api::ScheduleSaveRequest {
+                    machine_id: a.machine,
+                    id: None,
+                    name: a.name,
+                    when,
+                    command: a.command,
+                    agent: a.cli,
+                    prompt: a.prompt,
+                    folder: a.folder,
+                    enabled: true,
+                };
+                run(
+                    &runtime,
+                    &a.agent,
+                    async move |e| api::schedule_save(&e, req).await,
+                    |s| format!("✓ {} ({}): {}\n", s.name, s.id, s.when_text),
+                )
             }
             ScheduleCommand::Rm(a) => {
-                let req = api::ScheduleRequest { machine_id: a.machine, schedule_id: a.id, started: None };
-                run(&runtime, &a.agent, async move |e| api::schedule_delete(&e, req).await, |_| "✓ Deleted\n".to_string())
+                let req = api::ScheduleRequest {
+                    machine_id: a.machine,
+                    schedule_id: a.id,
+                    started: None,
+                };
+                run(
+                    &runtime,
+                    &a.agent,
+                    async move |e| api::schedule_delete(&e, req).await,
+                    |_| "✓ Deleted\n".to_string(),
+                )
             }
             ScheduleCommand::Run(a) => {
-                let req = api::ScheduleRequest { machine_id: a.machine, schedule_id: a.id, started: None };
-                run(&runtime, &a.agent, async move |e| api::schedule_run(&e, req).await, |_| "✓ Started. See it with `muxin schedule log`.\n".to_string())
+                let req = api::ScheduleRequest {
+                    machine_id: a.machine,
+                    schedule_id: a.id,
+                    started: None,
+                };
+                run(
+                    &runtime,
+                    &a.agent,
+                    async move |e| api::schedule_run(&e, req).await,
+                    |_| "✓ Started. See it with `muxin schedule log`.\n".to_string(),
+                )
             }
             ScheduleCommand::Log(a) => {
-                let req = api::ScheduleRequest { machine_id: a.machine, schedule_id: a.id, started: None };
-                run(&runtime, &a.agent, async move |e| api::schedule_log(&e, req).await, cli::schedule_log)
+                let req = api::ScheduleRequest {
+                    machine_id: a.machine,
+                    schedule_id: a.id,
+                    started: None,
+                };
+                run(
+                    &runtime,
+                    &a.agent,
+                    async move |e| api::schedule_log(&e, req).await,
+                    cli::schedule_log,
+                )
             }
         },
         Some(Command::Vm(cmd)) => match cmd {
-            VmCommand::Options(a) => run(&runtime, &a, async move |e| Ok::<_, api::ApiError>(api::vm_options(&e).await), cli::vm_options),
+            VmCommand::Options(a) => run(
+                &runtime,
+                &a,
+                async move |e| Ok::<_, api::ApiError>(api::vm_options(&e).await),
+                cli::vm_options,
+            ),
             VmCommand::Create(a) => {
-                let install = a.install.map(|l| l.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()).unwrap_or_default();
-                let req = api::VmCreateRequest { name: a.name, system: a.system, host: a.on, cpus: a.cpus, memory_gb: a.memory, disk_gb: a.disk, install, wait: !a.no_wait, timeout_secs: Some(100 * 60) };
-                run(&runtime, &a.agent, async move |e| api::vm_create(&e, req, api::Surface::Cli, stream_line).await, cli::action)
+                let install = a
+                    .install
+                    .map(|l| {
+                        l.split(',')
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let req = api::VmCreateRequest {
+                    name: a.name,
+                    system: a.system,
+                    host: a.on,
+                    cpus: a.cpus,
+                    memory_gb: a.memory,
+                    disk_gb: a.disk,
+                    install,
+                    wait: !a.no_wait,
+                    timeout_secs: Some(100 * 60),
+                };
+                run(
+                    &runtime,
+                    &a.agent,
+                    async move |e| api::vm_create(&e, req, api::Surface::Cli, stream_line).await,
+                    cli::action,
+                )
             }
             VmCommand::Destroy(a) => {
-                let req = api::CloudMachineRequest { machine_id: a.machine, power: None, wait: true };
-                run(&runtime, &a.agent, async move |e| api::vm_destroy(&e, req, api::Surface::Cli, stream_line).await, cli::action)
+                let req = api::CloudMachineRequest {
+                    machine_id: a.machine,
+                    power: None,
+                    wait: true,
+                };
+                run(
+                    &runtime,
+                    &a.agent,
+                    async move |e| api::vm_destroy(&e, req, api::Surface::Cli, stream_line).await,
+                    cli::action,
+                )
             }
         },
         Some(Command::Files(a)) => {
-            let (machine, path) = a.target.split_once(':').map(|(m, p)| (m.to_string(), p.to_string())).unwrap_or((a.target.clone(), String::new()));
-            let req = api::ListFilesRequest { machine_id: machine, path };
-            run(&runtime, &a.agent, async move |e| api::list_files(&e, req).await, cli::listing)
+            let (machine, path) = a
+                .target
+                .split_once(':')
+                .map(|(m, p)| (m.to_string(), p.to_string()))
+                .unwrap_or((a.target.clone(), String::new()));
+            let req = api::ListFilesRequest {
+                machine_id: machine,
+                path,
+            };
+            run(
+                &runtime,
+                &a.agent,
+                async move |e| api::list_files(&e, req).await,
+                cli::listing,
+            )
         }
         Some(Command::Cp(a)) => cp(a, &runtime),
         Some(Command::Connection(a)) => {
             let machine = a.machine.clone();
             match a.direct.as_deref() {
                 Some(v @ ("on" | "off")) => {
-                    let req = api::DirectRequest { machine_id: machine, enabled: v == "on" };
-                    run(&runtime, &a.agent, async move |e| api::set_direct(&e, req).await, cli::connection)
+                    let req = api::DirectRequest {
+                        machine_id: machine,
+                        enabled: v == "on",
+                    };
+                    run(
+                        &runtime,
+                        &a.agent,
+                        async move |e| api::set_direct(&e, req).await,
+                        cli::connection,
+                    )
                 }
                 Some(other) => {
                     eprintln!("error: --direct takes on or off, not \"{other}\"");
                     2
                 }
-                None => run(&runtime, &a.agent, async move |e| api::machine_connection(&e, &machine).await, cli::connection),
+                None => run(
+                    &runtime,
+                    &a.agent,
+                    async move |e| api::machine_connection(&e, &machine).await,
+                    cli::connection,
+                ),
             }
         }
         Some(Command::Mcp(a)) => mcp(a, &runtime),
@@ -1614,9 +1981,13 @@ fn main() -> ExitCode {
             let engine = Engine::new(args.common.paths(), args.demo);
             let snapshot = runtime.block_on(engine.check_once(!args.no_github));
             if args.json {
-                println!("{}", serde_json::to_string_pretty(&snapshot).unwrap_or_default());
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&snapshot).unwrap_or_default()
+                );
             } else {
-                let color = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
+                let color =
+                    std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
                 print!("{}", fleet::report::render(&snapshot, color));
             }
             0
@@ -1636,7 +2007,13 @@ fn main() -> ExitCode {
             let current = env!("CARGO_PKG_VERSION");
             match (runtime.block_on(update::check()), args.json) {
                 (Ok(latest), true) => {
-                    println!("{}", serde_json::to_string_pretty(&serde_json::json!({ "current": current, "update": latest })).unwrap_or_default());
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(
+                            &serde_json::json!({ "current": current, "update": latest })
+                        )
+                        .unwrap_or_default()
+                    );
                     0
                 }
                 (Ok(None), false) => {
@@ -1654,7 +2031,10 @@ fn main() -> ExitCode {
                     0
                 }
                 (Err(e), true) => {
-                    println!("{}", serde_json::json!({ "error": { "code": "unreachable", "message": e } }));
+                    println!(
+                        "{}",
+                        serde_json::json!({ "error": { "code": "unreachable", "message": e } })
+                    );
                     1
                 }
                 (Err(e), false) => {
@@ -1677,8 +2057,18 @@ fn main() -> ExitCode {
                 (Ok(s), false) => {
                     let line = match s.state {
                         "installed" => format!("muxin is installed: {}", s.path),
-                        "missing" => format!("Not installed (it would go in {}). Run `muxin shell-command install`.", s.path),
-                        "other" => format!("{} is something else{}", s.path, s.target.as_deref().map(|t| format!(" (-> {t})")).unwrap_or_default()),
+                        "missing" => format!(
+                            "Not installed (it would go in {}). Run `muxin shell-command install`.",
+                            s.path
+                        ),
+                        "other" => format!(
+                            "{} is something else{}",
+                            s.path,
+                            s.target
+                                .as_deref()
+                                .map(|t| format!(" (-> {t})"))
+                                .unwrap_or_default()
+                        ),
                         _ => "Not available here.".to_string(),
                     };
                     println!("{line}");
@@ -1688,7 +2078,10 @@ fn main() -> ExitCode {
                     0
                 }
                 (Err(e), true) => {
-                    println!("{}", serde_json::json!({ "error": { "code": "operation_failed", "message": e } }));
+                    println!(
+                        "{}",
+                        serde_json::json!({ "error": { "code": "operation_failed", "message": e } })
+                    );
                     1
                 }
                 (Err(e), false) => {
@@ -1719,9 +2112,13 @@ fn without_console_window() -> bool {
     if unsafe { GetConsoleProcessList(ids.as_mut_ptr(), ids.len() as u32) } != 1 {
         return false;
     }
-    let Ok(exe) = std::env::current_exe() else { return false };
+    let Ok(exe) = std::env::current_exe() else {
+        return false;
+    };
     let mut cmd = std::process::Command::new(exe);
-    cmd.args(std::env::args_os().skip(1)).env("MUXEN_NO_CONSOLE", "1").creation_flags(CREATE_NO_WINDOW);
+    cmd.args(std::env::args_os().skip(1))
+        .env("MUXEN_NO_CONSOLE", "1")
+        .creation_flags(CREATE_NO_WINDOW);
     cmd.spawn().is_ok()
 }
 
@@ -1759,7 +2156,10 @@ fn open(args: OpenArgs, runtime: &tokio::runtime::Runtime) -> u8 {
 /// code (0 ok, 1 failed, 2 bad input / not found).
 /// `muxin cp <machine>:<path>... <machine>:<folder>`
 fn cp(a: CpArgs, runtime: &tokio::runtime::Runtime) -> u8 {
-    let place = |s: &str| s.split_once(':').map(|(m, p)| (m.to_string(), p.to_string()));
+    let place = |s: &str| {
+        s.split_once(':')
+            .map(|(m, p)| (m.to_string(), p.to_string()))
+    };
     let (dest, sources) = a.paths.split_last().expect("clap requires two");
     let Some((to, to_dir)) = place(dest) else {
         eprintln!("error: the destination is <machine>:<folder>, e.g. mac-studio:~/Downloads");
@@ -1778,14 +2178,35 @@ fn cp(a: CpArgs, runtime: &tokio::runtime::Runtime) -> u8 {
                 return 2;
             }
             None => {
-                eprintln!("error: \"{s}\" needs its machine: <machine>:<path>, e.g. beelink:~/build/app.tar.gz");
+                eprintln!(
+                    "error: \"{s}\" needs its machine: <machine>:<path>, e.g. beelink:~/build/app.tar.gz"
+                );
                 return 2;
             }
         }
     }
-    let req = api::CopyFilesRequest { from: from.unwrap_or_default(), paths, to, to_dir, wait: !a.no_wait, timeout_secs: None };
+    let req = api::CopyFilesRequest {
+        from: from.unwrap_or_default(),
+        paths,
+        to,
+        to_dir,
+        wait: !a.no_wait,
+        timeout_secs: None,
+    };
     let json = a.agent.json;
-    run(runtime, &a.agent, async move |e| api::copy_files(&e, req, api::Surface::Cli, |line| if !json { eprintln!("{line}") }).await, cli::copied)
+    run(
+        runtime,
+        &a.agent,
+        async move |e| {
+            api::copy_files(&e, req, api::Surface::Cli, |line| {
+                if !json {
+                    eprintln!("{line}")
+                }
+            })
+            .await
+        },
+        cli::copied,
+    )
 }
 
 fn run<T: Serialize>(
@@ -1799,7 +2220,10 @@ fn run<T: Serialize>(
     match runtime.block_on(f(engine)) {
         Ok(value) => {
             if args.json {
-                println!("{}", serde_json::to_string_pretty(&value).unwrap_or_default());
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&value).unwrap_or_default()
+                );
             } else {
                 print!("{}", human(&value));
             }
@@ -1811,7 +2235,10 @@ fn run<T: Serialize>(
 
 fn report_error(args: &AgentArgs, e: &ApiError) -> u8 {
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({ "error": e })).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({ "error": e })).unwrap_or_default()
+        );
     } else {
         eprint!("{}", cli::error(e));
     }
@@ -1837,74 +2264,177 @@ fn workspace(cmd: WorkspaceCommand, runtime: &tokio::runtime::Runtime) -> u8 {
                 repo: a.repo,
                 git_ref: a.git_ref,
                 branch: a.branch,
-                isolation: if a.docker { Some("docker".into()) } else { a.isolation },
+                isolation: if a.docker {
+                    Some("docker".into())
+                } else {
+                    a.isolation
+                },
                 image: a.image,
                 docker_socket: a.docker_socket,
                 worktree_of: a.worktree_of,
             };
-            run(runtime, &a.agent, async move |e| api::workspace_create(&e, req, CLI_OWNER, CLI).await, cli::workspace_created)
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::workspace_create(&e, req, CLI_OWNER, CLI).await,
+                cli::workspace_created,
+            )
         }
-        WorkspaceCommand::Ls(a) => run(runtime, &a, async move |e| Ok(api::workspaces_list(&e).await), cli::workspaces),
+        WorkspaceCommand::Ls(a) => run(
+            runtime,
+            &a,
+            async move |e| Ok(api::workspaces_list(&e).await),
+            cli::workspaces,
+        ),
         WorkspaceCommand::Show(a) => {
-            let req = api::WorkspaceRequest { workspace_id: a.workspace_id };
-            run(runtime, &a.agent, async move |e| api::workspace_get(&e, req, CLI), cli::workspace)
+            let req = api::WorkspaceRequest {
+                workspace_id: a.workspace_id,
+            };
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::workspace_get(&e, req, CLI),
+                cli::workspace,
+            )
         }
         WorkspaceCommand::Exec(a) => workspace_exec(a, runtime),
         WorkspaceCommand::Cat(a) => {
-            let req = api::WorkspaceReadRequest { workspace_id: a.workspace_id, path: a.path, max_bytes: a.max_bytes };
-            run(runtime, &a.agent, async move |e| api::workspace_read_file(&e, req, CLI).await, cli::file)
+            let req = api::WorkspaceReadRequest {
+                workspace_id: a.workspace_id,
+                path: a.path,
+                max_bytes: a.max_bytes,
+            };
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::workspace_read_file(&e, req, CLI).await,
+                cli::file,
+            )
         }
         WorkspaceCommand::Write(a) => {
             let mut content = String::new();
             if let Err(e) = std::io::Read::read_to_string(&mut std::io::stdin(), &mut content) {
-                return report_error(&a.agent, &ApiError::invalid(format!("Couldn't read stdin as UTF-8 text: {e}")));
+                return report_error(
+                    &a.agent,
+                    &ApiError::invalid(format!("Couldn't read stdin as UTF-8 text: {e}")),
+                );
             }
-            let req = api::WorkspaceWriteRequest { workspace_id: a.workspace_id, path: a.path, content, append: a.append };
-            run(runtime, &a.agent, async move |e| api::workspace_write_file(&e, req, CLI).await, |w| {
-                format!("Wrote {} ({} bytes) in {}.\n", w.path, w.size, w.workspace_id)
-            })
+            let req = api::WorkspaceWriteRequest {
+                workspace_id: a.workspace_id,
+                path: a.path,
+                content,
+                append: a.append,
+            };
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::workspace_write_file(&e, req, CLI).await,
+                |w| {
+                    format!(
+                        "Wrote {} ({} bytes) in {}.\n",
+                        w.path, w.size, w.workspace_id
+                    )
+                },
+            )
         }
         WorkspaceCommand::Files(a) => {
-            let req = api::WorkspaceFilesRequest { workspace_id: a.workspace_id, path: a.path, depth: Some(a.depth) };
-            run(runtime, &a.agent, async move |e| api::workspace_list_files(&e, req, CLI).await, cli::files)
+            let req = api::WorkspaceFilesRequest {
+                workspace_id: a.workspace_id,
+                path: a.path,
+                depth: Some(a.depth),
+            };
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::workspace_list_files(&e, req, CLI).await,
+                cli::files,
+            )
         }
         WorkspaceCommand::Changes(a) => {
-            let req = api::WorkspaceRequest { workspace_id: a.workspace_id };
-            run(runtime, &a.agent, async move |e| api::workspace_changes(&e, req, CLI).await, |c| {
-                let mut out = c.changes.clone();
-                if !out.ends_with('\n') {
-                    out.push('\n');
-                }
-                out
-            })
+            let req = api::WorkspaceRequest {
+                workspace_id: a.workspace_id,
+            };
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::workspace_changes(&e, req, CLI).await,
+                |c| {
+                    let mut out = c.changes.clone();
+                    if !out.ends_with('\n') {
+                        out.push('\n');
+                    }
+                    out
+                },
+            )
         }
         WorkspaceCommand::Sync(a) => {
-            let direction = if a.push { fleet::workspaces::SyncDirection::Push } else { fleet::workspaces::SyncDirection::Pull };
-            let req = api::WorkspaceSyncRequest { workspace_id: a.workspace_id, local_path: a.local_path, direction, delete: a.delete };
-            run(runtime, &a.agent, async move |e| api::workspace_sync(&e, req, CLI).await, |r| {
-                let mut out = r.summary.clone();
-                if !out.ends_with('\n') {
-                    out.push('\n');
-                }
-                out
-            })
+            let direction = if a.push {
+                fleet::workspaces::SyncDirection::Push
+            } else {
+                fleet::workspaces::SyncDirection::Pull
+            };
+            let req = api::WorkspaceSyncRequest {
+                workspace_id: a.workspace_id,
+                local_path: a.local_path,
+                direction,
+                delete: a.delete,
+            };
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::workspace_sync(&e, req, CLI).await,
+                |r| {
+                    let mut out = r.summary.clone();
+                    if !out.ends_with('\n') {
+                        out.push('\n');
+                    }
+                    out
+                },
+            )
         }
         WorkspaceCommand::Shell(a) => workspace_shell(a, runtime),
         WorkspaceCommand::Rm(a) => {
-            let req = api::WorkspaceDestroyRequest { workspace_id: a.workspace_id, keep_files: a.keep_files };
-            run(runtime, &a.agent, async move |e| api::workspace_destroy(&e, req, CLI).await, |d| {
-                if d.kept_files {
-                    format!("Forgot {}; its folder is still on the machine.\n", d.workspace_id)
-                } else {
-                    format!("Destroyed {}.\n", d.workspace_id)
-                }
-            })
+            let req = api::WorkspaceDestroyRequest {
+                workspace_id: a.workspace_id,
+                keep_files: a.keep_files,
+            };
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::workspace_destroy(&e, req, CLI).await,
+                |d| {
+                    if d.kept_files {
+                        format!(
+                            "Forgot {}; its folder is still on the machine.\n",
+                            d.workspace_id
+                        )
+                    } else {
+                        format!("Destroyed {}.\n", d.workspace_id)
+                    }
+                },
+            )
         }
         WorkspaceCommand::Allow(a) => {
-            let req = api::WorkspaceAllowRequest { machine_id: a.machine_id, allowed: !a.off };
-            run(runtime, &a.agent, async move |e| api::workspace_allow(&e, req, CLI), |r| {
-                format!("Workspaces are now {} on {}.\n", if r.workspaces_allowed { "allowed" } else { "off" }, r.machine_id)
-            })
+            let req = api::WorkspaceAllowRequest {
+                machine_id: a.machine_id,
+                allowed: !a.off,
+            };
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::workspace_allow(&e, req, CLI),
+                |r| {
+                    format!(
+                        "Workspaces are now {} on {}.\n",
+                        if r.workspaces_allowed {
+                            "allowed"
+                        } else {
+                            "off"
+                        },
+                        r.machine_id
+                    )
+                },
+            )
         }
     }
 }
@@ -1916,12 +2446,25 @@ fn fleet_run(a: FleetRunArgs, runtime: &tokio::runtime::Runtime) -> u8 {
     let _guard = runtime.enter();
     let engine = Engine::new(a.agent.common.paths(), a.agent.demo);
     let machine_ids = if a.all {
-        runtime.block_on(api::status(&engine, api::StatusRequest::default(), CLI)).ok();
-        engine.current().machines.iter().filter(|m| m.status == "online").map(|m| m.id.clone()).collect()
+        runtime
+            .block_on(api::status(&engine, api::StatusRequest::default(), CLI))
+            .ok();
+        engine
+            .current()
+            .machines
+            .iter()
+            .filter(|m| m.status == "online")
+            .map(|m| m.id.clone())
+            .collect()
     } else {
         a.on.clone()
     };
-    let req = api::RunRequest { machine_ids, command: shell_join(&a.command), timeout_secs: Some(a.timeout), wait: Some(true) };
+    let req = api::RunRequest {
+        machine_ids,
+        command: shell_join(&a.command),
+        timeout_secs: Some(a.timeout),
+        wait: Some(true),
+    };
     match runtime.block_on(api::run_on_machines(&engine, req)) {
         Ok(out) => {
             if a.agent.json {
@@ -1937,7 +2480,12 @@ fn fleet_run(a: FleetRunArgs, runtime: &tokio::runtime::Runtime) -> u8 {
                         (None, None) => "running".into(),
                     };
                     println!("── {} ({how})", r.machine_id);
-                    let log = r.operation.as_ref().and_then(|o| ops.iter().find(|x| x.id == o.id)).map(|o| o.log.clone()).unwrap_or_default();
+                    let log = r
+                        .operation
+                        .as_ref()
+                        .and_then(|o| ops.iter().find(|x| x.id == o.id))
+                        .map(|o| o.log.clone())
+                        .unwrap_or_default();
                     for line in log.iter().filter(|l| !l.starts_with("error: ")) {
                         println!("{line}");
                     }
@@ -1956,7 +2504,12 @@ fn workspace_exec(a: WsExecArgs, runtime: &tokio::runtime::Runtime) -> u8 {
             Some((k, v)) => {
                 env.insert(k.to_string(), v.to_string());
             }
-            None => return report_error(&a.agent, &ApiError::invalid(format!("--env needs KEY=VALUE, got \"{pair}\"."))),
+            None => {
+                return report_error(
+                    &a.agent,
+                    &ApiError::invalid(format!("--env needs KEY=VALUE, got \"{pair}\".")),
+                );
+            }
         }
     }
     let req = api::WorkspaceExecRequest {
@@ -1977,11 +2530,22 @@ fn workspace_exec(a: WsExecArgs, runtime: &tokio::runtime::Runtime) -> u8 {
                 use std::io::Write;
                 // Captured output loses its final newline; put it back so the shell prompt
                 // (or the next line) doesn't run into the last line of output.
-                let newline = |s: &str| if s.is_empty() || s.ends_with('\n') { "" } else { "\n" };
+                let newline = |s: &str| {
+                    if s.is_empty() || s.ends_with('\n') {
+                        ""
+                    } else {
+                        "\n"
+                    }
+                };
                 let _ = write!(std::io::stdout(), "{}{}", out.stdout, newline(&out.stdout));
                 let _ = write!(std::io::stderr(), "{}{}", out.stderr, newline(&out.stderr));
                 if let Some(log) = &out.log_path {
-                    eprintln!("started in the background (pid {}), log: {log}", out.background_pid.map(|p| p.to_string()).unwrap_or_else(|| "?".into()));
+                    eprintln!(
+                        "started in the background (pid {}), log: {log}",
+                        out.background_pid
+                            .map(|p| p.to_string())
+                            .unwrap_or_else(|| "?".into())
+                    );
                 } else if out.timed_out {
                     eprintln!("muxin: timed out after {}s", out.duration_ms / 1000);
                 } else if out.truncated {
@@ -2006,8 +2570,14 @@ fn shell_join(args: &[String]) -> String {
     }
     args.iter()
         .map(|a| {
-            let safe = !a.is_empty() && a.chars().all(|c| c.is_ascii_alphanumeric() || "-_./=:@%+,".contains(c));
-            if safe { a.clone() } else { format!("'{}'", a.replace('\'', r"'\''")) }
+            let safe = !a.is_empty()
+                && a.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "-_./=:@%+,".contains(c));
+            if safe {
+                a.clone()
+            } else {
+                format!("'{}'", a.replace('\'', r"'\''"))
+            }
         })
         .collect::<Vec<_>>()
         .join(" ")
@@ -2015,10 +2585,20 @@ fn shell_join(args: &[String]) -> String {
 
 /// `workspace shell`: replaces this process with an interactive shell in the workspace.
 fn workspace_shell(a: WsShellArgs, runtime: &tokio::runtime::Runtime) -> u8 {
-    let agent = AgentArgs { common: a.common.clone(), demo: a.demo, json: false };
+    let agent = AgentArgs {
+        common: a.common.clone(),
+        demo: a.demo,
+        json: false,
+    };
     let _guard = runtime.enter();
     let engine = Engine::new(a.common.paths(), a.demo);
-    let w = match api::workspace_get(&engine, api::WorkspaceRequest { workspace_id: a.workspace_id }, CLI) {
+    let w = match api::workspace_get(
+        &engine,
+        api::WorkspaceRequest {
+            workspace_id: a.workspace_id,
+        },
+        CLI,
+    ) {
         Ok(w) => w,
         Err(e) => return report_error(&agent, &e),
     };
@@ -2030,14 +2610,23 @@ fn workspace_shell(a: WsShellArgs, runtime: &tokio::runtime::Runtime) -> u8 {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        let err = std::process::Command::new("/bin/sh").arg("-c").arg(&w.shell).exec();
+        let err = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(&w.shell)
+            .exec();
         eprintln!("error: couldn't start the shell: {err}");
         1
     }
     #[cfg(not(unix))]
     {
-        match std::process::Command::new("cmd").args(["/C", &w.shell]).status() {
-            Ok(status) => status.code().and_then(|c| u8::try_from(c).ok()).unwrap_or(1),
+        match std::process::Command::new("cmd")
+            .args(["/C", &w.shell])
+            .status()
+        {
+            Ok(status) => status
+                .code()
+                .and_then(|c| u8::try_from(c).ok())
+                .unwrap_or(1),
             Err(err) => {
                 eprintln!("error: couldn't start the shell: {err}");
                 1
@@ -2048,63 +2637,162 @@ fn workspace_shell(a: WsShellArgs, runtime: &tokio::runtime::Runtime) -> u8 {
 
 fn github(cmd: GithubCommand, runtime: &tokio::runtime::Runtime) -> u8 {
     match cmd {
-        GithubCommand::Inbox(a) => run(runtime, &a, async move |e| api::github_inbox(&e).await, cli::github_inbox),
-        GithubCommand::Repos(a) => run(runtime, &a, async move |e| api::github_repos(&e).await, |r| cli::github_repos(r)),
+        GithubCommand::Inbox(a) => run(
+            runtime,
+            &a,
+            async move |e| api::github_inbox(&e).await,
+            cli::github_inbox,
+        ),
+        GithubCommand::Repos(a) => run(
+            runtime,
+            &a,
+            async move |e| api::github_repos(&e).await,
+            |r| cli::github_repos(r),
+        ),
         GithubCommand::Repo(a) => {
             let req = api::RepoRequest { repo: a.repo };
-            run(runtime, &a.agent, async move |e| api::github_repo(&e, req).await, cli::github_repo)
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::github_repo(&e, req).await,
+                cli::github_repo,
+            )
         }
-        GithubCommand::Accounts(a) => run(runtime, &a, async move |e| api::github_accounts(&e).await, cli::github_accounts),
+        GithubCommand::Accounts(a) => run(
+            runtime,
+            &a,
+            async move |e| api::github_accounts(&e).await,
+            cli::github_accounts,
+        ),
         GithubCommand::Use(a) => {
-            let req = api::UseAccountRequest { login: a.login.unwrap_or_default(), machine_id: a.machine };
-            run(runtime, &a.agent, async move |e| api::github_use_account(&e, req).await, cli::github_accounts)
+            let req = api::UseAccountRequest {
+                login: a.login.unwrap_or_default(),
+                machine_id: a.machine,
+            };
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::github_use_account(&e, req).await,
+                cli::github_accounts,
+            )
         }
         GithubCommand::Favorite(a) => {
-            let req = api::FavoriteRequest { repo: a.repo, favorite: !a.remove };
-            run(runtime, &a.agent, async move |e| api::github_favorite(&e, req), cli::github_favorites)
+            let req = api::FavoriteRequest {
+                repo: a.repo,
+                favorite: !a.remove,
+            };
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::github_favorite(&e, req),
+                cli::github_favorites,
+            )
         }
         GithubCommand::Issue(a) => {
-            let req = api::ItemRequest { reference: a.reference };
-            run(runtime, &a.agent, async move |e| api::github_item(&e, req).await, cli::github_item)
+            let req = api::ItemRequest {
+                reference: a.reference,
+            };
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::github_item(&e, req).await,
+                cli::github_item,
+            )
         }
     }
 }
 
 fn cloud(cmd: CloudCommand, runtime: &tokio::runtime::Runtime) -> u8 {
     match cmd {
-        CloudCommand::Options(a) => run(runtime, &a, async move |e| Ok::<_, api::ApiError>(api::cloud_options(&e).await), cli::cloud_options),
-        CloudCommand::Usage(a) => run(runtime, &a, async move |e| Ok::<_, api::ApiError>(api::cloud_usage(&e).await), cli::cloud_usage),
+        CloudCommand::Options(a) => run(
+            runtime,
+            &a,
+            async move |e| Ok::<_, api::ApiError>(api::cloud_options(&e).await),
+            cli::cloud_options,
+        ),
+        CloudCommand::Usage(a) => run(
+            runtime,
+            &a,
+            async move |e| Ok::<_, api::ApiError>(api::cloud_usage(&e).await),
+            cli::cloud_usage,
+        ),
         CloudCommand::Create(a) => {
             let req = api::CloudCreateRequest {
                 name: a.name,
                 region: a.region,
                 size: a.size,
-                install: a.install.map(|list| list.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()),
+                install: a.install.map(|list| {
+                    list.split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                }),
                 wait: !a.no_wait,
                 timeout_secs: None,
             };
-            run(runtime, &a.agent, async move |e| api::cloud_create(&e, req, api::Surface::Cli, stream_line).await, cli::action)
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::cloud_create(&e, req, api::Surface::Cli, stream_line).await,
+                cli::action,
+            )
         }
         CloudCommand::Destroy(a) => {
-            let req = api::CloudMachineRequest { machine_id: a.machine, power: None, wait: true };
-            run(runtime, &a.agent, async move |e| api::cloud_destroy(&e, req, api::Surface::Cli, stream_line).await, cli::action)
+            let req = api::CloudMachineRequest {
+                machine_id: a.machine,
+                power: None,
+                wait: true,
+            };
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::cloud_destroy(&e, req, api::Surface::Cli, stream_line).await,
+                cli::action,
+            )
         }
         CloudCommand::Power(a) => {
-            let req = api::CloudMachineRequest { machine_id: a.machine, power: Some(a.state), wait: true };
-            run(runtime, &a.agent, async move |e| api::cloud_power(&e, req, api::Surface::Cli, stream_line).await, cli::action)
+            let req = api::CloudMachineRequest {
+                machine_id: a.machine,
+                power: Some(a.state),
+                wait: true,
+            };
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::cloud_power(&e, req, api::Surface::Cli, stream_line).await,
+                cli::action,
+            )
         }
         CloudCommand::Login(a) => {
-            let method = if a.doctl { "doctl" } else if a.browser { "oauth" } else { "token" };
+            let method = if a.doctl {
+                "doctl"
+            } else if a.browser {
+                "oauth"
+            } else {
+                "token"
+            };
             let token = a.token.clone();
             if method == "token" && token.is_none() {
                 eprintln!("error: pass --token TOKEN, --doctl or --browser");
                 return 2;
             }
-            run(runtime, &a.agent, async move |e| e.cloud_sign_in(method, token, |url| crate::util::open_url(url)).await.map_err(api::ApiError::invalid), |email| {
-                format!("Signed in to DigitalOcean as {email}.\n")
-            })
+            run(
+                runtime,
+                &a.agent,
+                async move |e| {
+                    e.cloud_sign_in(method, token, |url| crate::util::open_url(url))
+                        .await
+                        .map_err(api::ApiError::invalid)
+                },
+                |email| format!("Signed in to DigitalOcean as {email}.\n"),
+            )
         }
-        CloudCommand::Logout(a) => run(runtime, &a, async move |e| Ok::<_, api::ApiError>(e.cloud_sign_out()), |_| "Signed out of DigitalOcean.\n".to_string()),
+        CloudCommand::Logout(a) => run(
+            runtime,
+            &a,
+            async move |e| Ok::<_, api::ApiError>(e.cloud_sign_out()),
+            |_| "Signed out of DigitalOcean.\n".to_string(),
+        ),
     }
 }
 
@@ -2112,17 +2800,41 @@ fn desktop(cmd: DesktopCommand, runtime: &tokio::runtime::Runtime) -> u8 {
     match cmd {
         DesktopCommand::Shot(a) => {
             let machine = a.machine.clone();
-            let path = a.output.clone().unwrap_or_else(|| format!("{machine}-desktop.jpg").into());
+            let path = a
+                .output
+                .clone()
+                .unwrap_or_else(|| format!("{machine}-desktop.jpg").into());
             let display = a.display.clone();
-            run(runtime, &a.agent, async move |e| api::desktop_screenshot(&e, &machine, display.as_deref()).await, move |shot| match std::fs::write(&path, &shot.jpeg) {
-                Ok(()) => format!("Saved {} ({}×{}, screen {}×{}).\n", path.display(), shot.width, shot.height, shot.screen_width, shot.screen_height),
-                Err(e) => format!("Couldn't save {}: {e}\n", path.display()),
-            })
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::desktop_screenshot(&e, &machine, display.as_deref()).await,
+                move |shot| match std::fs::write(&path, &shot.jpeg) {
+                    Ok(()) => format!(
+                        "Saved {} ({}×{}, screen {}×{}).\n",
+                        path.display(),
+                        shot.width,
+                        shot.height,
+                        shot.screen_width,
+                        shot.screen_height
+                    ),
+                    Err(e) => format!("Couldn't save {}: {e}\n", path.display()),
+                },
+            )
         }
         DesktopCommand::Input(a) => match serde_json::from_str(&a.events) {
             Ok(events) => {
-                let req = api::DesktopInputRequest { machine_id: a.machine, display: a.display, events };
-                run(runtime, &a.agent, async move |e| api::desktop_input(&e, req).await, |v| format!("Sent {} events.\n", v["events"]))
+                let req = api::DesktopInputRequest {
+                    machine_id: a.machine,
+                    display: a.display,
+                    events,
+                };
+                run(
+                    runtime,
+                    &a.agent,
+                    async move |e| api::desktop_input(&e, req).await,
+                    |v| format!("Sent {} events.\n", v["events"]),
+                )
             }
             Err(e) => {
                 eprintln!("error: the events aren't valid: {e}");
@@ -2130,16 +2842,41 @@ fn desktop(cmd: DesktopCommand, runtime: &tokio::runtime::Runtime) -> u8 {
             }
         },
         DesktopCommand::Displays(a) => {
-            let req = api::MachineRequest { machine_id: a.machine_id };
-            run(runtime, &a.agent, async move |e| api::desktop_displays(&e, req).await, |displays| {
-                displays
-                    .iter()
-                    .map(|d| {
-                        let tags = [d.main.then_some("main"), d.is_virtual.then_some("virtual")].into_iter().flatten().collect::<Vec<_>>().join(", ");
-                        format!("{:<16} {:<20} {:>5}×{:<5} at {},{}{}\n", d.id, d.name, d.width, d.height, d.x, d.y, if tags.is_empty() { String::new() } else { format!("  ({tags})") })
-                    })
-                    .collect::<String>()
-            })
+            let req = api::MachineRequest {
+                machine_id: a.machine_id,
+            };
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::desktop_displays(&e, req).await,
+                |displays| {
+                    displays
+                        .iter()
+                        .map(|d| {
+                            let tags =
+                                [d.main.then_some("main"), d.is_virtual.then_some("virtual")]
+                                    .into_iter()
+                                    .flatten()
+                                    .collect::<Vec<_>>()
+                                    .join(", ");
+                            format!(
+                                "{:<16} {:<20} {:>5}×{:<5} at {},{}{}\n",
+                                d.id,
+                                d.name,
+                                d.width,
+                                d.height,
+                                d.x,
+                                d.y,
+                                if tags.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!("  ({tags})")
+                                }
+                            )
+                        })
+                        .collect::<String>()
+                },
+            )
         }
         DesktopCommand::Add(a) => {
             let size = match a.size.as_deref().map(parse_size) {
@@ -2150,8 +2887,23 @@ fn desktop(cmd: DesktopCommand, runtime: &tokio::runtime::Runtime) -> u8 {
                 }
                 None => None,
             };
-            let req = api::AddDisplayRequest { machine_id: a.machine, width: size.map(|s| s.0), height: size.map(|s| s.1), name: a.name };
-            run(runtime, &a.agent, async move |e| api::desktop_add_display(&e, req).await, |d| format!("Added {} ({}×{}) as display {}.\n", d.name, d.width, d.height, d.id))
+            let req = api::AddDisplayRequest {
+                machine_id: a.machine,
+                width: size.map(|s| s.0),
+                height: size.map(|s| s.1),
+                name: a.name,
+            };
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::desktop_add_display(&e, req).await,
+                |d| {
+                    format!(
+                        "Added {} ({}×{}) as display {}.\n",
+                        d.name, d.width, d.height, d.id
+                    )
+                },
+            )
         }
         DesktopCommand::Set(a) => {
             let size = match a.size.as_deref().map(parse_size) {
@@ -2162,12 +2914,31 @@ fn desktop(cmd: DesktopCommand, runtime: &tokio::runtime::Runtime) -> u8 {
                 }
                 None => None,
             };
-            let req = api::SetDisplayRequest { machine_id: a.machine, display: a.display, width: size.map(|s| s.0), height: size.map(|s| s.1), scale: a.scale };
-            run(runtime, &a.agent, async move |e| api::desktop_set_display(&e, req).await, |d| format!("{} is now {}×{}.\n", d.name, d.width, d.height))
+            let req = api::SetDisplayRequest {
+                machine_id: a.machine,
+                display: a.display,
+                width: size.map(|s| s.0),
+                height: size.map(|s| s.1),
+                scale: a.scale,
+            };
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::desktop_set_display(&e, req).await,
+                |d| format!("{} is now {}×{}.\n", d.name, d.width, d.height),
+            )
         }
         DesktopCommand::Remove(a) => {
-            let req = api::RemoveDisplayRequest { machine_id: a.machine, display: a.display };
-            run(runtime, &a.agent, async move |e| api::desktop_remove_display(&e, req).await, |v| format!("Removed display {}.\n", v["removed"].as_str().unwrap_or("")))
+            let req = api::RemoveDisplayRequest {
+                machine_id: a.machine,
+                display: a.display,
+            };
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::desktop_remove_display(&e, req).await,
+                |v| format!("Removed display {}.\n", v["removed"].as_str().unwrap_or("")),
+            )
         }
     }
 }
@@ -2175,13 +2946,44 @@ fn desktop(cmd: DesktopCommand, runtime: &tokio::runtime::Runtime) -> u8 {
 fn services(a: ServicesArgs, runtime: &tokio::runtime::Runtime) -> u8 {
     let machine = a.machine.clone();
     match (a.action.clone(), a.name.clone()) {
-        (None, _) => run(runtime, &a.agent, async move |e| api::machine_services(&e, api::ServicesRequest { machine_id: machine }).await, cli::services),
+        (None, _) => run(
+            runtime,
+            &a.agent,
+            async move |e| {
+                api::machine_services(
+                    &e,
+                    api::ServicesRequest {
+                        machine_id: machine,
+                    },
+                )
+                .await
+            },
+            cli::services,
+        ),
         (Some(action), Some(name)) => {
-            let req = api::ServiceActionRequest { machine_id: machine, name, action, container: a.container };
-            run(runtime, &a.agent, async move |e| api::service_action(&e, req).await, |v| format!("{} {}.\n", past(v["action"].as_str().unwrap_or("")), v["name"].as_str().unwrap_or("")))
+            let req = api::ServiceActionRequest {
+                machine_id: machine,
+                name,
+                action,
+                container: a.container,
+            };
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::service_action(&e, req).await,
+                |v| {
+                    format!(
+                        "{} {}.\n",
+                        past(v["action"].as_str().unwrap_or("")),
+                        v["name"].as_str().unwrap_or("")
+                    )
+                },
+            )
         }
         (Some(_), None) => {
-            eprintln!("error: which service or container? muxin services <machine> <action> <name>");
+            eprintln!(
+                "error: which service or container? muxin services <machine> <action> <name>"
+            );
             2
         }
     }
@@ -2203,23 +3005,68 @@ fn logs(a: LogsArgs, runtime: &tokio::runtime::Runtime) -> u8 {
     use crate::fleet::logs::LogSource;
     let machine = a.machine.clone();
     if a.list {
-        return run(runtime, &a.agent, async move |e| api::log_sources(&e, api::LogSourcesRequest { machine_id: machine }).await, cli::log_sources);
+        return run(
+            runtime,
+            &a.agent,
+            async move |e| {
+                api::log_sources(
+                    &e,
+                    api::LogSourcesRequest {
+                        machine_id: machine,
+                    },
+                )
+                .await
+            },
+            cli::log_sources,
+        );
     }
     let (kind, target) = match (&a.file, &a.unit, &a.container) {
         (Some(f), _, _) => ("file", f.clone()),
-        (_, Some(u), _) => ("service", if u.contains('.') { u.clone() } else { format!("{u}.service") }),
+        (_, Some(u), _) => (
+            "service",
+            if u.contains('.') {
+                u.clone()
+            } else {
+                format!("{u}.service")
+            },
+        ),
         (_, _, Some(c)) => ("docker", c.clone()),
         _ if a.kernel => ("kernel", String::new()),
         _ => ("system", String::new()),
     };
     if !a.follow {
-        let req = api::ReadLogsRequest { machine_id: machine, kind: kind.into(), target, user: a.user, lines: Some(a.lines), filter: a.grep.clone() };
-        return run(runtime, &a.agent, async move |e| api::logs_read(&e, req).await, |v| {
-            v["lines"].as_array().map(|l| l.iter().filter_map(|x| x.as_str()).map(|x| format!("{x}\n")).collect()).unwrap_or_default()
-        });
+        let req = api::ReadLogsRequest {
+            machine_id: machine,
+            kind: kind.into(),
+            target,
+            user: a.user,
+            lines: Some(a.lines),
+            filter: a.grep.clone(),
+        };
+        return run(
+            runtime,
+            &a.agent,
+            async move |e| api::logs_read(&e, req).await,
+            |v| {
+                v["lines"]
+                    .as_array()
+                    .map(|l| {
+                        l.iter()
+                            .filter_map(|x| x.as_str())
+                            .map(|x| format!("{x}\n"))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            },
+        );
     }
     // Following: the machine's link, printing lines as they come.
-    let source = LogSource { kind: kind.into(), target, user: a.user, ..Default::default() };
+    let source = LogSource {
+        kind: kind.into(),
+        target,
+        user: a.user,
+        ..Default::default()
+    };
     let grep = a.grep.as_deref().map(str::to_lowercase);
     let _guard = runtime.enter();
     let engine = Engine::new(a.agent.common.paths(), a.agent.demo);
@@ -2268,75 +3115,194 @@ fn git(cmd: GitCommand, runtime: &tokio::runtime::Runtime) -> u8 {
     match cmd {
         GitCommand::Status(a) => {
             let machine = a.machine;
-            run(runtime, &a.agent, async move |e| api::git_status(&e, &machine).await, cli::git_setup)
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::git_status(&e, &machine).await,
+                cli::git_setup,
+            )
         }
         GitCommand::Setup(a) => {
-            let req = api::GitSetupRequest { machine_id: a.machine, identity: a.identity, name: a.name, email: a.email, credentials: a.credentials };
-            run(runtime, &a.agent, async move |e| api::git_setup(&e, req).await, cli::git_setup)
+            let req = api::GitSetupRequest {
+                machine_id: a.machine,
+                identity: a.identity,
+                name: a.name,
+                email: a.email,
+                credentials: a.credentials,
+            };
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::git_setup(&e, req).await,
+                cli::git_setup,
+            )
         }
     }
 }
 
 fn checkouts(a: CheckoutsArgs, runtime: &tokio::runtime::Runtime) -> u8 {
-    if let (Some(action), Some(machine), Some(path)) = (a.git.clone(), a.machine.clone(), a.path.clone()) {
-        let req = api::GitRequest { machine_id: machine, path, action };
-        return run(runtime, &a.agent, async move |e| api::checkout_git(&e, req).await, |r| format!("{}\n", r.output));
+    if let (Some(action), Some(machine), Some(path)) =
+        (a.git.clone(), a.machine.clone(), a.path.clone())
+    {
+        let req = api::GitRequest {
+            machine_id: machine,
+            path,
+            action,
+        };
+        return run(
+            runtime,
+            &a.agent,
+            async move |e| api::checkout_git(&e, req).await,
+            |r| format!("{}\n", r.output),
+        );
     }
-    let req = api::CheckoutsRequest { machine_id: a.machine, repo: a.repo };
-    run(runtime, &a.agent, async move |e| api::checkouts(&e, req).await, |r| cli::checkouts(r))
+    let req = api::CheckoutsRequest {
+        machine_id: a.machine,
+        repo: a.repo,
+    };
+    run(
+        runtime,
+        &a.agent,
+        async move |e| api::checkouts(&e, req).await,
+        |r| cli::checkouts(r),
+    )
 }
 
 fn session(cmd: SessionCommand, runtime: &tokio::runtime::Runtime) -> u8 {
     match cmd {
         SessionCommand::Ls(a) => {
-            let req = api::SessionListRequest { machine_id: a.machine };
-            run(runtime, &a.agent, async move |e| api::sessions_list(&e, req).await, cli::sessions)
+            let req = api::SessionListRequest {
+                machine_id: a.machine,
+            };
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::sessions_list(&e, req).await,
+                cli::sessions,
+            )
         }
         SessionCommand::Start(a) => {
-            let req = api::SessionStartRequest { machine_id: a.machine, agent: a.kind, cwd: a.cwd, title: a.title, prompt: a.prompt };
-            run(runtime, &a.agent, async move |e| api::session_start(&e, req).await, cli::session_started)
+            let req = api::SessionStartRequest {
+                machine_id: a.machine,
+                agent: a.kind,
+                cwd: a.cwd,
+                title: a.title,
+                prompt: a.prompt,
+            };
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::session_start(&e, req).await,
+                cli::session_started,
+            )
         }
         SessionCommand::Read(a) => {
-            let req = api::SessionReadRequest { session_id: a.session_id, lines: Some(a.lines) };
-            run(runtime, &a.agent, async move |e| api::session_read(&e, req).await, |r| format!("{}\n", r.text))
+            let req = api::SessionReadRequest {
+                session_id: a.session_id,
+                lines: Some(a.lines),
+            };
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::session_read(&e, req).await,
+                |r| format!("{}\n", r.text),
+            )
         }
         SessionCommand::Question(a) => {
-            let req = api::SessionRequest { session_id: a.session_id };
-            run(runtime, &a.agent, async move |e| api::session_question(&e, req).await, |q| {
-                let mut out: String = q.text.iter().map(|l| format!("{l}\n")).collect();
-                if q.options.is_empty() {
-                    out.push_str("(waiting for a message: muxin session send)\n");
-                }
-                for o in &q.options {
-                    let mark = if q.selected.as_deref() == Some(o.key.as_str()) { "›" } else { " " };
-                    out.push_str(&format!("{mark} {:<3} {}\n", o.key, o.label));
-                }
-                out
-            })
+            let req = api::SessionRequest {
+                session_id: a.session_id,
+            };
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::session_question(&e, req).await,
+                |q| {
+                    let mut out: String = q.text.iter().map(|l| format!("{l}\n")).collect();
+                    if q.options.is_empty() {
+                        out.push_str("(waiting for a message: muxin session send)\n");
+                    }
+                    for o in &q.options {
+                        let mark = if q.selected.as_deref() == Some(o.key.as_str()) {
+                            "›"
+                        } else {
+                            " "
+                        };
+                        out.push_str(&format!("{mark} {:<3} {}\n", o.key, o.label));
+                    }
+                    out
+                },
+            )
         }
         SessionCommand::Answer(a) => {
-            let req = api::SessionAnswerRequest { session_id: a.session_id, choice: a.choice };
-            run(runtime, &a.agent, async move |e| api::session_answer(&e, req).await, |d| format!("Answered {}.\n", d.session_id))
+            let req = api::SessionAnswerRequest {
+                session_id: a.session_id,
+                choice: a.choice,
+            };
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::session_answer(&e, req).await,
+                |d| format!("Answered {}.\n", d.session_id),
+            )
         }
         SessionCommand::Do(a) => {
-            let req = api::SessionActionRequest { session_id: a.session_id, action: a.action };
-            run(runtime, &a.agent, async move |e| api::session_action(&e, req).await, |r| format!("Asked {}: {}\n", r.session_id, r.prompt))
+            let req = api::SessionActionRequest {
+                session_id: a.session_id,
+                action: a.action,
+            };
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::session_action(&e, req).await,
+                |r| format!("Asked {}: {}\n", r.session_id, r.prompt),
+            )
         }
         SessionCommand::Send(a) => {
-            let req = api::SessionSendRequest { session_id: a.session_id, text: a.text, enter: !a.no_enter };
-            run(runtime, &a.agent, async move |e| api::session_send(&e, req).await, |r| format!("Sent to {}.\n", r.session_id))
+            let req = api::SessionSendRequest {
+                session_id: a.session_id,
+                text: a.text,
+                enter: !a.no_enter,
+            };
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::session_send(&e, req).await,
+                |r| format!("Sent to {}.\n", r.session_id),
+            )
         }
         SessionCommand::Restart(a) => {
-            let req = api::SessionRequest { session_id: a.session_id };
-            run(runtime, &a.agent, async move |e| api::session_restart(&e, req).await, |r| format!("Restarted {}.\n", r.session_id))
+            let req = api::SessionRequest {
+                session_id: a.session_id,
+            };
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::session_restart(&e, req).await,
+                |r| format!("Restarted {}.\n", r.session_id),
+            )
         }
         SessionCommand::Rename(a) => {
-            let req = api::SessionRenameRequest { session_id: a.session_id, title: a.title };
-            run(runtime, &a.agent, async move |e| api::session_rename(&e, req).await, |s| format!("{} is now \"{}\".\n", s.id, s.title))
+            let req = api::SessionRenameRequest {
+                session_id: a.session_id,
+                title: a.title,
+            };
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::session_rename(&e, req).await,
+                |s| format!("{} is now \"{}\".\n", s.id, s.title),
+            )
         }
         SessionCommand::Stop(a) => {
-            let req = api::SessionRequest { session_id: a.session_id };
-            run(runtime, &a.agent, async move |e| api::session_stop(&e, req).await, |r| format!("Stopped {}.\n", r.session_id))
+            let req = api::SessionRequest {
+                session_id: a.session_id,
+            };
+            run(
+                runtime,
+                &a.agent,
+                async move |e| api::session_stop(&e, req).await,
+                |r| format!("Stopped {}.\n", r.session_id),
+            )
         }
         SessionCommand::Attach(a) => session_attach(a, runtime),
     }
@@ -2346,7 +3312,9 @@ fn session(cmd: SessionCommand, runtime: &tokio::runtime::Runtime) -> u8 {
 fn session_attach(a: SessionIdArgs, runtime: &tokio::runtime::Runtime) -> u8 {
     let _guard = runtime.enter();
     let engine = Engine::new(a.agent.common.paths(), a.agent.demo);
-    let req = api::SessionRequest { session_id: a.session_id };
+    let req = api::SessionRequest {
+        session_id: a.session_id,
+    };
     let cmd = match runtime.block_on(api::session_attach(&engine, req)) {
         Ok(c) => c,
         Err(e) => return report_error(&a.agent, &e),
@@ -2358,14 +3326,22 @@ fn session_attach(a: SessionIdArgs, runtime: &tokio::runtime::Runtime) -> u8 {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        let err = std::process::Command::new(&cmd.program).args(&cmd.args).exec();
+        let err = std::process::Command::new(&cmd.program)
+            .args(&cmd.args)
+            .exec();
         eprintln!("error: couldn't start {}: {err}", cmd.program);
         1
     }
     #[cfg(not(unix))]
     {
-        match std::process::Command::new(&cmd.program).args(&cmd.args).status() {
-            Ok(status) => status.code().and_then(|c| u8::try_from(c).ok()).unwrap_or(1),
+        match std::process::Command::new(&cmd.program)
+            .args(&cmd.args)
+            .status()
+        {
+            Ok(status) => status
+                .code()
+                .and_then(|c| u8::try_from(c).ok())
+                .unwrap_or(1),
             Err(err) => {
                 eprintln!("error: couldn't start {}: {err}", cmd.program);
                 1
@@ -2394,7 +3370,10 @@ fn mcp(args: McpArgs, runtime: &tokio::runtime::Runtime) -> u8 {
 fn init(args: InitArgs) -> u8 {
     let paths = args.common.paths();
     if paths.inventory.exists() && !args.force {
-        eprintln!("error: {} already exists (use --force to overwrite)", display_path(&paths.inventory));
+        eprintln!(
+            "error: {} already exists (use --force to overwrite)",
+            display_path(&paths.inventory)
+        );
         return 2;
     }
     if let Err(e) = config::write_atomic(&paths.inventory, config::default_inventory().as_bytes()) {
@@ -2419,14 +3398,34 @@ mod tests {
     #[test]
     fn joins_exec_commands() {
         let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert_eq!(shell_join(&v(&["make test && make lint"])), "make test && make lint");
-        assert_eq!(shell_join(&v(&["echo", "hello world", "it's"])), "echo 'hello world' 'it'\\''s'");
-        assert_eq!(shell_join(&v(&["cargo", "test", "--release"])), "cargo test --release");
+        assert_eq!(
+            shell_join(&v(&["make test && make lint"])),
+            "make test && make lint"
+        );
+        assert_eq!(
+            shell_join(&v(&["echo", "hello world", "it's"])),
+            "echo 'hello world' 'it'\\''s'"
+        );
+        assert_eq!(
+            shell_join(&v(&["cargo", "test", "--release"])),
+            "cargo test --release"
+        );
     }
 
     #[test]
     fn parses_workspace_commands() {
-        let cli = Cli::try_parse_from(["muxin", "ws", "exec", "ws-abc123", "--env", "A=1", "--", "npm", "test"]).unwrap();
+        let cli = Cli::try_parse_from([
+            "muxin",
+            "ws",
+            "exec",
+            "ws-abc123",
+            "--env",
+            "A=1",
+            "--",
+            "npm",
+            "test",
+        ])
+        .unwrap();
         match cli.command {
             Some(Command::Workspace(WorkspaceCommand::Exec(a))) => {
                 assert_eq!(a.workspace_id, "ws-abc123");
@@ -2435,8 +3434,36 @@ mod tests {
             }
             _ => panic!("expected workspace exec"),
         }
-        assert!(Cli::try_parse_from(["muxin", "workspace", "sync", "ws-1", "."]).is_err(), "needs --push or --pull");
-        assert!(Cli::try_parse_from(["muxin", "workspace", "sync", "ws-1", ".", "--push", "--pull"]).is_err());
-        assert!(Cli::try_parse_from(["muxin", "workspace", "create", "--platform", "linux", "--repo", "acme/api", "--ref", "main", "--json"]).is_ok());
+        assert!(
+            Cli::try_parse_from(["muxin", "workspace", "sync", "ws-1", "."]).is_err(),
+            "needs --push or --pull"
+        );
+        assert!(
+            Cli::try_parse_from([
+                "muxin",
+                "workspace",
+                "sync",
+                "ws-1",
+                ".",
+                "--push",
+                "--pull"
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "muxin",
+                "workspace",
+                "create",
+                "--platform",
+                "linux",
+                "--repo",
+                "acme/api",
+                "--ref",
+                "main",
+                "--json"
+            ])
+            .is_ok()
+        );
     }
 }

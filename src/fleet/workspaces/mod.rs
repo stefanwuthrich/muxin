@@ -69,7 +69,11 @@ pub const WRITE_MAX: usize = 5 * 1024 * 1024;
 pub const LIST_DEPTH_DEFAULT: u32 = 2;
 pub const LIST_DEPTH_MAX: u32 = 10;
 pub const LIST_MAX_ENTRIES: usize = 2000;
-const CHANGES_LIMITS: Limits = Limits { head: 60 * 1024, tail: 4 * 1024, line: 4 * 1024 };
+const CHANGES_LIMITS: Limits = Limits {
+    head: 60 * 1024,
+    tail: 4 * 1024,
+    line: 4 * 1024,
+};
 const COMMAND_MAX: usize = 64 * 1024;
 const TAIL_LINE_MAX: usize = 400;
 /// Machines with less free disk than this aren't picked automatically.
@@ -177,24 +181,47 @@ pub enum SyncDirection {
 impl Engine {
     /// Creates a workspace and waits until it's ready (folder made, repo cloned).
     #[cfg_attr(not(test), allow(dead_code))]
-    pub async fn create_workspace(self: &Arc<Self>, req: CreateWorkspace) -> Result<WorkspaceInfo, String> {
-        self.create_workspace_with(req, WorkspaceIsolation::default()).await
+    pub async fn create_workspace(
+        self: &Arc<Self>,
+        req: CreateWorkspace,
+    ) -> Result<WorkspaceInfo, String> {
+        self.create_workspace_with(req, WorkspaceIsolation::default())
+            .await
     }
 
     /// Like `create_workspace`, choosing how commands run: on the host, or in a
     /// fresh docker container (folder mounted at /workspace).
-    pub async fn create_workspace_with(self: &Arc<Self>, req: CreateWorkspace, iso: WorkspaceIsolation) -> Result<WorkspaceInfo, String> {
+    pub async fn create_workspace_with(
+        self: &Arc<Self>,
+        req: CreateWorkspace,
+        iso: WorkspaceIsolation,
+    ) -> Result<WorkspaceInfo, String> {
         self.refresh_from_disk();
-        let docker = match clean_opt(iso.isolation).map(|s| s.to_ascii_lowercase()).as_deref() {
+        let docker = match clean_opt(iso.isolation)
+            .map(|s| s.to_ascii_lowercase())
+            .as_deref()
+        {
             None | Some("host") | Some("none") => false,
             Some("docker") | Some("container") => true,
-            Some(other) => return Err(format!("\"{other}\" isn't an isolation Muxin knows. Use \"host\" or \"docker\".")),
+            Some(other) => {
+                return Err(format!(
+                    "\"{other}\" isn't an isolation Muxin knows. Use \"host\" or \"docker\"."
+                ));
+            }
         };
         let image_req = clean_opt(iso.image);
         if !docker && image_req.is_some() {
-            return Err("An image only applies to docker workspaces; pass isolation \"docker\" too.".into());
+            return Err(
+                "An image only applies to docker workspaces; pass isolation \"docker\" too.".into(),
+            );
         }
-        let image = if docker { Some(validate_image(image_req.as_deref().unwrap_or(DEFAULT_IMAGE))?) } else { None };
+        let image = if docker {
+            Some(validate_image(
+                image_req.as_deref().unwrap_or(DEFAULT_IMAGE),
+            )?)
+        } else {
+            None
+        };
         let name = clean_opt(req.name);
         if let Some(n) = &name {
             if n.chars().count() > 80 || n.chars().any(char::is_control) {
@@ -223,7 +250,9 @@ impl Engine {
         // A worktree's repository is the checkout's; nothing is cloned.
         let repo = match &worktree_of {
             Some(_) => None,
-            None => clean_opt(req.repo.clone()).map(|r| normalize_repo(&r, &gh_host)).transpose()?,
+            None => clean_opt(req.repo.clone())
+                .map(|r| normalize_repo(&r, &gh_host))
+                .transpose()?,
         };
         if repo.is_none() && worktree_of.is_none() && (git_ref.is_some() || branch.is_some()) {
             return Err("gitRef and branch need a repo to clone.".into());
@@ -237,9 +266,17 @@ impl Engine {
                     .machines
                     .iter()
                     .find(|x| x.id == m || x.name.eq_ignore_ascii_case(&m))
-                    .ok_or_else(|| format!("Machine \"{m}\" not found. Known machines: {}.", machine_names(&snap.machines)))?;
+                    .ok_or_else(|| {
+                        format!(
+                            "Machine \"{m}\" not found. Known machines: {}.",
+                            machine_names(&snap.machines)
+                        )
+                    })?;
                 if found.host.is_empty() {
-                    return Err(format!("{} has no host in config.toml, so Muxin can't reach it.", found.name));
+                    return Err(format!(
+                        "{} has no host in config.toml, so Muxin can't reach it.",
+                        found.name
+                    ));
                 }
                 if !found.workspaces_allowed {
                     return Err(format!(
@@ -249,44 +286,87 @@ impl Engine {
                 }
                 found.id.clone()
             }
-            None => pick_machine_for(&snap.machines, clean_opt(req.platform).as_deref(), docker)?.id.clone(),
+            None => pick_machine_for(&snap.machines, clean_opt(req.platform).as_deref(), docker)?
+                .id
+                .clone(),
         };
-        let (spec, mut probe) = self.machine(&machine_id).ok_or("Machine not found in config.toml anymore.")?;
+        let (spec, mut probe) = self
+            .machine(&machine_id)
+            .ok_or("Machine not found in config.toml anymore.")?;
         if self.demo_world().is_none() && !probe.as_ref().is_some_and(|p| p.ok) {
             self.run_check(Some(vec![spec.id.clone()])).await;
             probe = self.machine(&spec.id).and_then(|(_, p)| p);
             match &probe {
                 Some(p) if p.ok => {}
-                Some(p) => return Err(format!("{} is unreachable: {}", spec.name, p.error.clone().unwrap_or_default())),
-                None => return Err(format!("{} is unreachable: the check didn't run.", spec.name)),
+                Some(p) => {
+                    return Err(format!(
+                        "{} is unreachable: {}",
+                        spec.name,
+                        p.error.clone().unwrap_or_default()
+                    ));
+                }
+                None => {
+                    return Err(format!(
+                        "{} is unreachable: the check didn't run.",
+                        spec.name
+                    ));
+                }
             }
         }
         let windows = remote::shell_for(&spec, probe.as_ref()) == Shell::Powershell;
         if docker && windows {
-            return Err(format!("Docker workspaces aren't supported on Windows machines yet ({}). Use isolation \"host\" there.", spec.name));
+            return Err(format!(
+                "Docker workspaces aren't supported on Windows machines yet ({}). Use isolation \"host\" there.",
+                spec.name
+            ));
         }
-        let machine = self.current().machines.iter().find(|m| m.id == spec.id).cloned();
+        let machine = self
+            .current()
+            .machines
+            .iter()
+            .find(|m| m.id == spec.id)
+            .cloned();
         // A worktree's repository is its checkout's: look at the machine's checkouts if that's not been done.
         if worktree_of.is_some() && self.checkouts_of(&spec.id).is_empty() {
             let _ = self.refresh_checkouts(&spec.id).await;
         }
 
         let id = self.unused_workspace_id();
-        let root = spec.workspace_root.clone().filter(|r| !r.trim().is_empty()).unwrap_or_else(|| {
-            if windows { DEFAULT_ROOT_WINDOWS.into() } else { DEFAULT_ROOT.into() }
-        });
+        let root = spec
+            .workspace_root
+            .clone()
+            .filter(|r| !r.trim().is_empty())
+            .unwrap_or_else(|| {
+                if windows {
+                    DEFAULT_ROOT_WINDOWS.into()
+                } else {
+                    DEFAULT_ROOT.into()
+                }
+            });
         let sep = if windows { "\\" } else { "/" };
         let now = Utc::now();
         let info = WorkspaceInfo {
             id: id.clone(),
-            name: name.unwrap_or_else(|| repo.as_ref().map(|r| r.short_name.clone()).unwrap_or_else(|| id.clone())),
+            name: name.unwrap_or_else(|| {
+                repo.as_ref()
+                    .map(|r| r.short_name.clone())
+                    .unwrap_or_else(|| id.clone())
+            }),
             machine_id: spec.id.clone(),
             machine_name: spec.name.clone(),
             host: spec.host.trim().to_string(),
-            platform: machine.as_ref().map(|m| m.platform.clone()).unwrap_or_default(),
+            platform: machine
+                .as_ref()
+                .map(|m| m.platform.clone())
+                .unwrap_or_default(),
             path: format!("{}{sep}{id}", root.trim_end_matches(['/', '\\'])),
             repo: match &worktree_of {
-                Some(src) => self.checkouts_of(&spec.id).into_iter().find(|c| same_folder(&c.path, src)).and_then(|c| c.repo).or_else(|| clean_opt(req.repo.clone())),
+                Some(src) => self
+                    .checkouts_of(&spec.id)
+                    .into_iter()
+                    .find(|c| same_folder(&c.path, src))
+                    .and_then(|c| c.repo)
+                    .or_else(|| clean_opt(req.repo.clone())),
                 None => repo.as_ref().map(|r| r.shown.clone()),
             },
             git_ref: git_ref.clone(),
@@ -309,7 +389,13 @@ impl Engine {
             worktree_of: worktree_of.clone(),
             git: None,
         };
-        let record = WorkspaceRecord { info, background_pids: Vec::new(), windows, next_log: 1, docker_socket: docker && iso.docker_socket };
+        let record = WorkspaceRecord {
+            info,
+            background_pids: Vec::new(),
+            windows,
+            next_log: 1,
+            docker_socket: docker && iso.docker_socket,
+        };
         self.update_workspaces(|list| list.push(record.clone()))?;
 
         let title = match &image {
@@ -318,8 +404,13 @@ impl Engine {
         };
         let op = self.begin_op("workspace", title, Some(spec.id.clone()), None);
         let result = match self.demo_world() {
-            Some(_) => demo::create(self, op, &record, repo.as_ref().map(|r| r.shown.as_str())).await.map_err(|e| (e, None)),
-            None => self.run_create(op, &spec, &record, &root, repo.as_ref()).await,
+            Some(_) => demo::create(self, op, &record, repo.as_ref().map(|r| r.shown.as_str()))
+                .await
+                .map_err(|e| (e, None)),
+            None => {
+                self.run_create(op, &spec, &record, &root, repo.as_ref())
+                    .await
+            }
         };
         let finished = match result {
             Ok(path) => {
@@ -351,11 +442,17 @@ impl Engine {
             }
         };
         finished?;
-        self.workspace_info(&id).ok_or_else(|| "The workspace was created but then disappeared.".to_string())
+        self.workspace_info(&id)
+            .ok_or_else(|| "The workspace was created but then disappeared.".to_string())
     }
 
     /// Runs a shell command in the workspace with the machine user's login environment.
-    pub async fn workspace_exec(self: &Arc<Self>, id: &str, command: &str, opts: ExecOptions) -> Result<ExecResult, String> {
+    pub async fn workspace_exec(
+        self: &Arc<Self>,
+        id: &str,
+        command: &str,
+        opts: ExecOptions,
+    ) -> Result<ExecResult, String> {
         let command = command.trim();
         if command.is_empty() {
             return Err("Give a command to run.".into());
@@ -371,7 +468,10 @@ impl Engine {
         for (k, v) in &opts.env {
             validate_env(k, v)?;
         }
-        let timeout = opts.timeout_secs.unwrap_or(EXEC_TIMEOUT_DEFAULT).clamp(1, EXEC_TIMEOUT_MAX);
+        let timeout = opts
+            .timeout_secs
+            .unwrap_or(EXEC_TIMEOUT_DEFAULT)
+            .clamp(1, EXEC_TIMEOUT_MAX);
         let started_at = Utc::now();
         let started = Instant::now();
 
@@ -391,12 +491,16 @@ impl Engine {
                 } else {
                     None
                 };
-                self.run_exec(&spec, &rec, command, &cwd, &opts.env, timeout, log).await?
+                self.run_exec(&spec, &rec, command, &cwd, &opts.env, timeout, log)
+                    .await?
             }
         };
 
         let duration_ms = started.elapsed().as_millis() as u64;
-        let result = ExecResult { duration_ms, ..result };
+        let result = ExecResult {
+            duration_ms,
+            ..result
+        };
         let entry = WorkspaceCommand {
             command: command.to_string(),
             exit_code: result.exit_code,
@@ -423,36 +527,66 @@ impl Engine {
         Ok(result)
     }
 
-    pub async fn workspace_read_file(&self, id: &str, path: &str, max_bytes: usize) -> Result<FileContent, String> {
+    pub async fn workspace_read_file(
+        &self,
+        id: &str,
+        path: &str,
+        max_bytes: usize,
+    ) -> Result<FileContent, String> {
         let rec = self.ready_workspace(id)?;
         let rel = rel_path(path)?;
         if rel.is_empty() {
             return Err("Give the path of a file in the workspace.".into());
         }
-        let max = if max_bytes == 0 { READ_DEFAULT } else { max_bytes.min(READ_MAX) };
+        let max = if max_bytes == 0 {
+            READ_DEFAULT
+        } else {
+            max_bytes.min(READ_MAX)
+        };
         if let Some(w) = self.demo_world() {
             return demo::read(w, &rec, &rel, max);
         }
         let spec = self.workspace_machine(&rec)?;
         let max_s = max.to_string();
         let out = self
-            .run_files(&spec, &rec, &[("OR_ACTION", Param::Str("read")), ("OR_REL", Param::Str(&rel)), ("OR_MAX", Param::Str(&max_s))])
+            .run_files(
+                &spec,
+                &rec,
+                &[
+                    ("OR_ACTION", Param::Str("read")),
+                    ("OR_REL", Param::Str(&rel)),
+                    ("OR_MAX", Param::Str(&max_s)),
+                ],
+            )
             .await?;
-        let size: u64 = field(&out.stdout, "size").and_then(|s| s.parse().ok()).unwrap_or(0);
+        let size: u64 = field(&out.stdout, "size")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
         let data = field(&out.stdout, "data").unwrap_or_default();
-        let bytes = B64.decode(data.trim()).map_err(|e| format!("Couldn't decode the file from the machine: {e}"))?;
+        let bytes = B64
+            .decode(data.trim())
+            .map_err(|e| format!("Couldn't decode the file from the machine: {e}"))?;
         Ok(file_content(rel, bytes, size, max))
     }
 
     /// Writes (or appends) a text file, creating parent folders. Returns the new size.
-    pub async fn workspace_write_file(&self, id: &str, path: &str, content: &str, append: bool) -> Result<u64, String> {
+    pub async fn workspace_write_file(
+        &self,
+        id: &str,
+        path: &str,
+        content: &str,
+        append: bool,
+    ) -> Result<u64, String> {
         let rec = self.ready_workspace(id)?;
         let rel = rel_path(path)?;
         if rel.is_empty() {
             return Err("Give the path of a file in the workspace.".into());
         }
         if content.len() > WRITE_MAX {
-            return Err(format!("That's more than {} — copy big files with workspace_sync instead.", crate::util::bytes(WRITE_MAX as u64)));
+            return Err(format!(
+                "That's more than {} — copy big files with workspace_sync instead.",
+                crate::util::bytes(WRITE_MAX as u64)
+            ));
         }
         let size = match self.demo_world() {
             Some(w) => demo::write(w, &rec, &rel, content, append),
@@ -471,24 +605,43 @@ impl Engine {
                         ],
                     )
                     .await?;
-                field(&out.stdout, "size").and_then(|s| s.parse().ok()).unwrap_or(content.len() as u64)
+                field(&out.stdout, "size")
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(content.len() as u64)
             }
         };
         self.touch_workspace(&rec.info.id);
         Ok(size)
     }
 
-    pub async fn workspace_list_files(&self, id: &str, path: &str, depth: u32) -> Result<Vec<FileEntry>, String> {
+    pub async fn workspace_list_files(
+        &self,
+        id: &str,
+        path: &str,
+        depth: u32,
+    ) -> Result<Vec<FileEntry>, String> {
         let rec = self.ready_workspace(id)?;
         let rel = rel_path(path)?;
-        let depth = if depth == 0 { LIST_DEPTH_DEFAULT } else { depth.min(LIST_DEPTH_MAX) };
+        let depth = if depth == 0 {
+            LIST_DEPTH_DEFAULT
+        } else {
+            depth.min(LIST_DEPTH_MAX)
+        };
         if let Some(w) = self.demo_world() {
             return demo::list(w, &rec, &rel, depth);
         }
         let spec = self.workspace_machine(&rec)?;
         let depth_s = depth.to_string();
         let out = self
-            .run_files(&spec, &rec, &[("OR_ACTION", Param::Str("list")), ("OR_REL", Param::Str(&rel)), ("OR_DEPTH", Param::Str(&depth_s))])
+            .run_files(
+                &spec,
+                &rec,
+                &[
+                    ("OR_ACTION", Param::Str("list")),
+                    ("OR_REL", Param::Str(&rel)),
+                    ("OR_DEPTH", Param::Str(&depth_s)),
+                ],
+            )
             .await?;
         Ok(parse_listing(&out.stdout, &rel))
     }
@@ -501,11 +654,37 @@ impl Engine {
         }
         let spec = self.workspace_machine(&rec)?;
         let (script, windows) = if rec.windows {
-            (with_params(Shell::Powershell, &[("OR_ACTION", Param::Str("changes")), ("OR_DIR", Param::Str(&rec.info.path))], OTHER_PS1), true)
+            (
+                with_params(
+                    Shell::Powershell,
+                    &[
+                        ("OR_ACTION", Param::Str("changes")),
+                        ("OR_DIR", Param::Str(&rec.info.path)),
+                    ],
+                    OTHER_PS1,
+                ),
+                true,
+            )
         } else {
-            (with_params(Shell::Sh, &[("OR_DIR", Param::Str(&rec.info.path))], CHANGES_SH), false)
+            (
+                with_params(
+                    Shell::Sh,
+                    &[("OR_DIR", Param::Str(&rec.info.path))],
+                    CHANGES_SH,
+                ),
+                false,
+            )
         };
-        let out = run_checked(&spec, windows, script, FILE_TIMEOUT, CHANGES_LIMITS, &[], None).await?;
+        let out = run_checked(
+            &spec,
+            windows,
+            script,
+            FILE_TIMEOUT,
+            CHANGES_LIMITS,
+            &[],
+            None,
+        )
+        .await?;
         let mut text = out.stdout;
         if out.truncated {
             text.push_str("\n[the diff was cut; run `git diff` with workspace_exec for the rest]");
@@ -514,7 +693,13 @@ impl Engine {
     }
 
     /// rsync between a folder on this computer and the workspace. Returns rsync's summary.
-    pub async fn workspace_sync(self: &Arc<Self>, id: &str, local_path: &str, direction: SyncDirection, delete: bool) -> Result<String, String> {
+    pub async fn workspace_sync(
+        self: &Arc<Self>,
+        id: &str,
+        local_path: &str,
+        direction: SyncDirection,
+        delete: bool,
+    ) -> Result<String, String> {
         let rec = self.ready_workspace(id)?;
         let local = expand_home(local_path.trim());
         if local.as_os_str().is_empty() {
@@ -538,23 +723,48 @@ impl Engine {
             .await
             .is_ok_and(|s| s.success());
         if !have_rsync {
-            return Err("rsync isn't installed on this computer, so Muxin can't sync folders.".into());
+            return Err(
+                "rsync isn't installed on this computer, so Muxin can't sync folders.".into(),
+            );
         }
         match direction {
-            SyncDirection::Push if !local.is_dir() => return Err(format!("{} isn't a folder on this computer.", local.display())),
-            SyncDirection::Pull => std::fs::create_dir_all(&local).map_err(|e| format!("Couldn't create {}: {e}", local.display()))?,
+            SyncDirection::Push if !local.is_dir() => {
+                return Err(format!(
+                    "{} isn't a folder on this computer.",
+                    local.display()
+                ));
+            }
+            SyncDirection::Pull => std::fs::create_dir_all(&local)
+                .map_err(|e| format!("Couldn't create {}: {e}", local.display()))?,
             _ => {}
         }
-        let args = rsync_args(&spec, &rec.info.path, &local.to_string_lossy(), direction, delete);
-        let run = tokio::process::Command::new("rsync").args(&args).kill_on_drop(true).output();
+        let args = rsync_args(
+            &spec,
+            &rec.info.path,
+            &local.to_string_lossy(),
+            direction,
+            delete,
+        );
+        let run = tokio::process::Command::new("rsync")
+            .args(&args)
+            .kill_on_drop(true)
+            .output();
         let output = tokio::time::timeout(SYNC_TIMEOUT, run)
             .await
             .map_err(|_| "The sync took longer than 30 minutes and was stopped.".to_string())?
             .map_err(|e| format!("Couldn't run rsync: {e}"))?;
         if !output.status.success() {
             let err = String::from_utf8_lossy(&output.stderr);
-            let tail: Vec<&str> = err.lines().filter(|l| !l.trim().is_empty()).rev().take(4).collect();
-            return Err(format!("rsync failed: {}", tail.into_iter().rev().collect::<Vec<_>>().join(" ")));
+            let tail: Vec<&str> = err
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .rev()
+                .take(4)
+                .collect();
+            return Err(format!(
+                "rsync failed: {}",
+                tail.into_iter().rev().collect::<Vec<_>>().join(" ")
+            ));
         }
         self.touch_workspace(&rec.info.id);
         let out = String::from_utf8_lossy(&output.stdout);
@@ -565,44 +775,119 @@ impl Engine {
     /// Sync with a Windows machine (no rsync there): the folder's contents
     /// copied over through the agents, as Copy files does. Files are added and
     /// replaced; nothing is deleted.
-    async fn sync_through_agent(self: &Arc<Self>, rec: &WorkspaceRecord, spec: &MachineSpec, local: &std::path::Path, direction: SyncDirection, delete: bool) -> Result<String, String> {
+    async fn sync_through_agent(
+        self: &Arc<Self>,
+        rec: &WorkspaceRecord,
+        spec: &MachineSpec,
+        local: &std::path::Path,
+        direction: SyncDirection,
+        delete: bool,
+    ) -> Result<String, String> {
         if delete {
-            return Err(format!("Syncing with {} adds and replaces files but doesn't delete any (it's a Windows machine): sync without delete.", spec.name));
+            return Err(format!(
+                "Syncing with {} adds and replaces files but doesn't delete any (it's a Windows machine): sync without delete.",
+                spec.name
+            ));
         }
-        let here = crate::config::Inventory::parse("[[machine]]\nname = \"This computer\"\nhost = \"local\"\n").map_err(|e| e.to_string())?.machines.remove(0);
-        let here = self.current().machines.iter().find(|m| m.local).and_then(|m| self.machine(&m.id)).map(|(s, _)| s).unwrap_or(here);
+        let here = crate::config::Inventory::parse(
+            "[[machine]]\nname = \"This computer\"\nhost = \"local\"\n",
+        )
+        .map_err(|e| e.to_string())?
+        .machines
+        .remove(0);
+        let here = self
+            .current()
+            .machines
+            .iter()
+            .find(|m| m.local)
+            .and_then(|m| self.machine(&m.id))
+            .map(|(s, _)| s)
+            .unwrap_or(here);
         let skip = [".muxen", ".git", "node_modules", "target"];
         let (from, dir, to, to_dir) = match direction {
             SyncDirection::Push => {
                 if !local.is_dir() {
-                    return Err(format!("{} isn't a folder on this computer.", local.display()));
+                    return Err(format!(
+                        "{} isn't a folder on this computer.",
+                        local.display()
+                    ));
                 }
-                (here.clone(), local.display().to_string(), spec.clone(), rec.info.path.clone())
+                (
+                    here.clone(),
+                    local.display().to_string(),
+                    spec.clone(),
+                    rec.info.path.clone(),
+                )
             }
             SyncDirection::Pull => {
-                std::fs::create_dir_all(local).map_err(|e| format!("Couldn't create {}: {e}", local.display()))?;
-                (spec.clone(), rec.info.path.clone(), here.clone(), local.display().to_string())
+                std::fs::create_dir_all(local)
+                    .map_err(|e| format!("Couldn't create {}: {e}", local.display()))?;
+                (
+                    spec.clone(),
+                    rec.info.path.clone(),
+                    here.clone(),
+                    local.display().to_string(),
+                )
             }
         };
         let listing = self.list_files(&from.id, &dir).await?;
-        let names: Vec<String> = listing.entries.iter().map(|e| e.name.clone()).filter(|n| !skip.contains(&n.as_str())).collect();
+        let names: Vec<String> = listing
+            .entries
+            .iter()
+            .map(|e| e.name.clone())
+            .filter(|n| !skip.contains(&n.as_str()))
+            .collect();
         if names.is_empty() {
             return Ok("Nothing to copy.".into());
         }
-        let op = self.begin_op("copy", format!("Sync {} with {}", rec.info.id, spec.name), Some(spec.id.clone()), None);
-        let result = self.run_copy(op, &from, &dir, &names, &to, &to_dir, &std::sync::atomic::AtomicBool::new(false)).await;
+        let op = self.begin_op(
+            "copy",
+            format!("Sync {} with {}", rec.info.id, spec.name),
+            Some(spec.id.clone()),
+            None,
+        );
+        let result = self
+            .run_copy(
+                op,
+                &from,
+                &dir,
+                &names,
+                &to,
+                &to_dir,
+                &std::sync::atomic::AtomicBool::new(false),
+            )
+            .await;
         self.op_finish(op, result.as_ref().map(|_| ()).map_err(|e| e.clone()));
         let bytes = result?;
         self.touch_workspace(&rec.info.id);
-        Ok(format!("Copied {} item{} ({}) {} {}.", names.len(), if names.len() == 1 { "" } else { "s" }, crate::util::bytes(bytes), if matches!(direction, SyncDirection::Push) { "to" } else { "from" }, spec.name))
+        Ok(format!(
+            "Copied {} item{} ({}) {} {}.",
+            names.len(),
+            if names.len() == 1 { "" } else { "s" },
+            crate::util::bytes(bytes),
+            if matches!(direction, SyncDirection::Push) {
+                "to"
+            } else {
+                "from"
+            },
+            spec.name
+        ))
     }
 
     /// Stops background commands and removes the workspace (and its folder unless `keep_files`).
-    pub async fn destroy_workspace(self: &Arc<Self>, id: &str, keep_files: bool) -> Result<(), String> {
+    pub async fn destroy_workspace(
+        self: &Arc<Self>,
+        id: &str,
+        keep_files: bool,
+    ) -> Result<(), String> {
         self.refresh_from_disk();
         let rec = self.find_workspace(id)?;
         let wid = rec.info.id.clone();
-        let title = if keep_files { format!("Forget workspace {wid}") } else { format!("Delete workspace {wid}") };
+        let title = if keep_files {
+            format!("Forget workspace {wid}")
+        } else {
+            format!("Delete workspace {wid}")
+        };
         let op = self.begin_op("workspace", title, Some(rec.info.machine_id.clone()), None);
         let previous = rec.info.status.clone();
         self.update_workspaces(|list| {
@@ -613,11 +898,22 @@ impl Engine {
 
         // A path still starting with "~" was never confirmed by the machine: no folder was made.
         let has_folder = !rec.info.path.starts_with('~');
-        let cleaned: Result<(), String> = match (self.demo_world(), self.machine(&rec.info.machine_id)) {
+        let cleaned: Result<(), String> = match (
+            self.demo_world(),
+            self.machine(&rec.info.machine_id),
+        ) {
             (Some(_), _) => demo::destroy(self, op, &rec, keep_files).await,
-            (None, Some((spec, _))) if spec.is_checkable() && has_folder => self.run_destroy(op, &spec, &rec, keep_files).await,
+            (None, Some((spec, _))) if spec.is_checkable() && has_folder => {
+                self.run_destroy(op, &spec, &rec, keep_files).await
+            }
             (None, Some(_)) => {
-                self.op_log(op, format!("No folder was created on {}; forgetting the workspace.", rec.info.machine_name));
+                self.op_log(
+                    op,
+                    format!(
+                        "No folder was created on {}; forgetting the workspace.",
+                        rec.info.machine_name
+                    ),
+                );
                 Ok(())
             }
             (None, None) => {
@@ -651,11 +947,18 @@ impl Engine {
     }
 
     /// Turns agent workspaces on or off for a machine (edits config.toml).
-    pub fn set_workspaces_allowed(self: &Arc<Self>, machine_id: &str, allowed: bool) -> Result<(), String> {
+    pub fn set_workspaces_allowed(
+        self: &Arc<Self>,
+        machine_id: &str,
+        allowed: bool,
+    ) -> Result<(), String> {
         if self.machine(machine_id).is_none() {
-            return Err(format!("Machine \"{machine_id}\" not found in config.toml."));
+            return Err(format!(
+                "Machine \"{machine_id}\" not found in config.toml."
+            ));
         }
-        let edit = |text: &str| crate::ops::inventory_edit::set_workspaces(text, machine_id, allowed);
+        let edit =
+            |text: &str| crate::ops::inventory_edit::set_workspaces(text, machine_id, allowed);
         match self.demo_world() {
             Some(w) => w.edit_inventory(edit)?,
             None => crate::ops::inventory_edit::edit_file(self.inventory_path(), edit)?,
@@ -672,11 +975,18 @@ impl Engine {
         if let Some(r) = records.iter().find(|r| r.info.id == id) {
             return Ok(r.clone());
         }
-        let by_name: Vec<&WorkspaceRecord> = records.iter().filter(|r| r.info.name.eq_ignore_ascii_case(id)).collect();
+        let by_name: Vec<&WorkspaceRecord> = records
+            .iter()
+            .filter(|r| r.info.name.eq_ignore_ascii_case(id))
+            .collect();
         match by_name.as_slice() {
             [one] => Ok((*one).clone()),
-            [] => Err(format!("Workspace \"{id}\" not found. Use list_workspaces to see the workspaces.")),
-            _ => Err(format!("Several workspaces are called \"{id}\"; use the id (ws-…).")),
+            [] => Err(format!(
+                "Workspace \"{id}\" not found. Use list_workspaces to see the workspaces."
+            )),
+            _ => Err(format!(
+                "Several workspaces are called \"{id}\"; use the id (ws-…)."
+            )),
         }
     }
 
@@ -686,7 +996,10 @@ impl Engine {
         let rec = self.find_workspace(id)?;
         match rec.info.status.as_str() {
             "ready" => Ok(rec),
-            "creating" => Err(format!("Workspace {} is being created; try again once it's ready.", rec.info.id)),
+            "creating" => Err(format!(
+                "Workspace {} is being created; try again once it's ready.",
+                rec.info.id
+            )),
             "destroying" => Err(format!("Workspace {} is being destroyed.", rec.info.id)),
             _ => Err(format!(
                 "Workspace {} failed to set up ({}). Destroy it and create a new one.",
@@ -710,11 +1023,19 @@ impl Engine {
     }
 
     fn workspace_info(&self, id: &str) -> Option<WorkspaceInfo> {
-        self.current().workspaces.iter().find(|w| w.id == id).cloned()
+        self.current()
+            .workspaces
+            .iter()
+            .find(|w| w.id == id)
+            .cloned()
     }
 
     fn unused_workspace_id(&self) -> String {
-        let taken: Vec<String> = self.workspace_records().into_iter().map(|r| r.info.id).collect();
+        let taken: Vec<String> = self
+            .workspace_records()
+            .into_iter()
+            .map(|r| r.info.id)
+            .collect();
         loop {
             let id = format!("ws-{}", random_id(6));
             if !taken.contains(&id) {
@@ -739,76 +1060,95 @@ impl Engine {
         root: &str,
         repo: Option<&Repo>,
     ) -> Result<String, (String, Option<String>)> {
-        self.op_log(op, format!("▸ Creating {} on {} ({})", rec.info.id, spec.name, spec.host.trim()));
+        self.op_log(
+            op,
+            format!(
+                "▸ Creating {} on {} ({})",
+                rec.info.id,
+                spec.name,
+                spec.host.trim()
+            ),
+        );
         let folder: Arc<std::sync::Mutex<Option<String>>> = Arc::default();
         let attempt = |auth: Option<String>| {
             let folder = folder.clone();
             async move {
-            let auth_s = auth.clone().unwrap_or_default();
-            let repo_url = repo.map(|r| r.url.clone()).unwrap_or_default();
-            let repo_shown = repo.map(|r| r.shown.clone()).unwrap_or_default();
-            let git_ref = rec.info.git_ref.clone().unwrap_or_default();
-            let branch = rec.info.branch.clone().unwrap_or_default();
-            let container = rec.info.container.clone().unwrap_or_default();
-            let image = rec.info.image.clone().unwrap_or_default();
-            let mut params = vec![
-                ("OR_ROOT", Param::Str(root)),
-                ("OR_ID", Param::Str(&rec.info.id)),
-                ("OR_REPO", Param::Str(&repo_url)),
-                ("OR_REPO_SHOWN", Param::Str(&repo_shown)),
-                ("OR_REF", Param::Str(&git_ref)),
-                ("OR_BRANCH", Param::Str(&branch)),
-                ("OR_AUTH", Param::Str(&auth_s)),
-            ];
-            let worktree_of = rec.info.worktree_of.clone().unwrap_or_default();
-            let script = if !worktree_of.is_empty() {
-                // A worktree of a checkout there: nothing to clone.
+                let auth_s = auth.clone().unwrap_or_default();
+                let repo_url = repo.map(|r| r.url.clone()).unwrap_or_default();
+                let repo_shown = repo.map(|r| r.shown.clone()).unwrap_or_default();
+                let git_ref = rec.info.git_ref.clone().unwrap_or_default();
+                let branch = rec.info.branch.clone().unwrap_or_default();
+                let container = rec.info.container.clone().unwrap_or_default();
+                let image = rec.info.image.clone().unwrap_or_default();
                 let mut params = vec![
                     ("OR_ROOT", Param::Str(root)),
                     ("OR_ID", Param::Str(&rec.info.id)),
-                    ("OR_SRC", Param::Str(&worktree_of)),
+                    ("OR_REPO", Param::Str(&repo_url)),
+                    ("OR_REPO_SHOWN", Param::Str(&repo_shown)),
                     ("OR_REF", Param::Str(&git_ref)),
                     ("OR_BRANCH", Param::Str(&branch)),
+                    ("OR_AUTH", Param::Str(&auth_s)),
                 ];
-                if rec.windows {
-                    params.insert(0, ("OR_ACTION", Param::Str("worktree")));
+                let worktree_of = rec.info.worktree_of.clone().unwrap_or_default();
+                let script = if !worktree_of.is_empty() {
+                    // A worktree of a checkout there: nothing to clone.
+                    let mut params = vec![
+                        ("OR_ROOT", Param::Str(root)),
+                        ("OR_ID", Param::Str(&rec.info.id)),
+                        ("OR_SRC", Param::Str(&worktree_of)),
+                        ("OR_REF", Param::Str(&git_ref)),
+                        ("OR_BRANCH", Param::Str(&branch)),
+                    ];
+                    if rec.windows {
+                        params.insert(0, ("OR_ACTION", Param::Str("worktree")));
+                        with_params(Shell::Powershell, &params, OTHER_PS1)
+                    } else {
+                        with_params(Shell::Sh, &params, WORKTREE_SH)
+                    }
+                } else if rec.windows {
+                    params.insert(0, ("OR_ACTION", Param::Str("create")));
                     with_params(Shell::Powershell, &params, OTHER_PS1)
                 } else {
-                    with_params(Shell::Sh, &params, WORKTREE_SH)
-                }
-            } else if rec.windows {
-                params.insert(0, ("OR_ACTION", Param::Str("create")));
-                with_params(Shell::Powershell, &params, OTHER_PS1)
-            } else {
-                params.extend([
-                    ("OR_CONTAINER", Param::Str(&container)),
-                    ("OR_IMAGE", Param::Str(&image)),
-                    ("OR_SOCKET", Param::Bool(rec.docker_socket)),
-                ]);
-                with_params(Shell::Sh, &params, &create_script(!container.is_empty()))
-            };
-            let mut secrets = Vec::new();
-            if let Some(a) = &auth {
-                secrets.push(a.clone());
-                if let Some(enc) = a.strip_prefix("AUTHORIZATION: basic ") {
-                    secrets.push(enc.to_string());
-                    if let Some(tok) = B64.decode(enc).ok().and_then(|b| String::from_utf8(b).ok()) {
-                        if let Some(t) = tok.strip_prefix("x-access-token:") {
-                            secrets.push(t.to_string());
+                    params.extend([
+                        ("OR_CONTAINER", Param::Str(&container)),
+                        ("OR_IMAGE", Param::Str(&image)),
+                        ("OR_SOCKET", Param::Bool(rec.docker_socket)),
+                    ]);
+                    with_params(Shell::Sh, &params, &create_script(!container.is_empty()))
+                };
+                let mut secrets = Vec::new();
+                if let Some(a) = &auth {
+                    secrets.push(a.clone());
+                    if let Some(enc) = a.strip_prefix("AUTHORIZATION: basic ") {
+                        secrets.push(enc.to_string());
+                        if let Some(tok) =
+                            B64.decode(enc).ok().and_then(|b| String::from_utf8(b).ok())
+                        {
+                            if let Some(t) = tok.strip_prefix("x-access-token:") {
+                                secrets.push(t.to_string());
+                            }
                         }
                     }
                 }
-            }
-            let me = self.clone();
-            let log = move |line: &str| match line.strip_prefix("path=") {
-                Some(p) => {
-                    *folder.lock().unwrap() = Some(p.trim().to_string());
-                    me.op_log(op, format!("Folder: {p}"))
-                }
-                None if line == "ready" => {}
-                None => me.op_log(op, line.to_string()),
-            };
-            run_checked(spec, rec.windows, script, CREATE_TIMEOUT, Limits::OUTPUT, &secrets, Some(&log)).await
+                let me = self.clone();
+                let log = move |line: &str| match line.strip_prefix("path=") {
+                    Some(p) => {
+                        *folder.lock().unwrap() = Some(p.trim().to_string());
+                        me.op_log(op, format!("Folder: {p}"))
+                    }
+                    None if line == "ready" => {}
+                    None => me.op_log(op, line.to_string()),
+                };
+                run_checked(
+                    spec,
+                    rec.windows,
+                    script,
+                    CREATE_TIMEOUT,
+                    Limits::OUTPUT,
+                    &secrets,
+                    Some(&log),
+                )
+                .await
             }
         };
         let fail = |message: String| (message, folder.lock().unwrap().clone());
@@ -818,18 +1158,29 @@ impl Engine {
             Err(e) => {
                 // A private GitHub repo: try again with the user's token, passed only through the environment.
                 let retry = match repo {
-                    Some(r) if r.on_github && e.code == Some(4) => {
-                        self.github().git_credentials(&self.settings().github).await.filter(|(host, _)| *host == r.host)
-                    }
+                    Some(r) if r.on_github && e.code == Some(4) => self
+                        .github()
+                        .git_credentials(&self.settings().github)
+                        .await
+                        .filter(|(host, _)| *host == r.host),
                     _ => None,
                 };
-                let Some((_, token)) = retry else { return Err(fail(e.message)) };
-                self.op_log(op, "▸ The clone needs credentials; retrying with your GitHub token");
-                let header = format!("AUTHORIZATION: basic {}", B64.encode(format!("x-access-token:{token}")));
+                let Some((_, token)) = retry else {
+                    return Err(fail(e.message));
+                };
+                self.op_log(
+                    op,
+                    "▸ The clone needs credentials; retrying with your GitHub token",
+                );
+                let header = format!(
+                    "AUTHORIZATION: basic {}",
+                    B64.encode(format!("x-access-token:{token}"))
+                );
                 attempt(Some(header)).await.map_err(|e| fail(e.message))?
             }
         };
-        field(&out.stdout, "path").ok_or_else(|| fail("The machine didn't report the workspace folder.".to_string()))
+        field(&out.stdout, "path")
+            .ok_or_else(|| fail("The machine didn't report the workspace folder.".to_string()))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -845,7 +1196,11 @@ impl Engine {
     ) -> Result<ExecResult, String> {
         let timeout_s = timeout.to_string();
         let log_s = log.clone().unwrap_or_default();
-        let shell = if rec.windows { Shell::Powershell } else { Shell::Sh };
+        let shell = if rec.windows {
+            Shell::Powershell
+        } else {
+            Shell::Sh
+        };
         let exports = env_exports(shell, env);
         let mut params = vec![
             ("OR_DIR", Param::Str(&rec.info.path)),
@@ -862,7 +1217,11 @@ impl Engine {
         }
         let script = match (&rec.info.container, shell) {
             (Some(container), Shell::Sh) => {
-                let image = rec.info.image.clone().unwrap_or_else(|| DEFAULT_IMAGE.to_string());
+                let image = rec
+                    .info
+                    .image
+                    .clone()
+                    .unwrap_or_else(|| DEFAULT_IMAGE.to_string());
                 let names: Vec<&str> = env.iter().map(|(k, _)| k.as_str()).collect();
                 let names = names.join(" ");
                 let all = [
@@ -878,7 +1237,11 @@ impl Engine {
                     ("OR_SOCKET", Param::Bool(rec.docker_socket)),
                     ("OR_ENV", Param::Str(&names)),
                 ];
-                with_params(shell, &all, &format!("{exports}{LIB_SH}\n{DOCKER_SH}\n{EXEC_DOCKER_SH}"))
+                with_params(
+                    shell,
+                    &all,
+                    &format!("{exports}{LIB_SH}\n{DOCKER_SH}\n{EXEC_DOCKER_SH}"),
+                )
             }
             (_, Shell::Sh) => with_params(shell, &params, &format!("{exports}{LIB_SH}\n{EXEC_SH}")),
             (_, Shell::Powershell) => with_params(shell, &params, &format!("{exports}{EXEC_PS1}")),
@@ -898,25 +1261,44 @@ impl Engine {
         exec_result(out, &spec.name, log)
     }
 
-    async fn run_files(&self, spec: &MachineSpec, rec: &WorkspaceRecord, params: &[(&str, Param<'_>)]) -> Result<Output, String> {
+    async fn run_files(
+        &self,
+        spec: &MachineSpec,
+        rec: &WorkspaceRecord,
+        params: &[(&str, Param<'_>)],
+    ) -> Result<Output, String> {
         let mut all = vec![("OR_DIR", Param::Str(&rec.info.path))];
         for (k, v) in params {
-            all.push((k, match v {
-                Param::Str(s) => Param::Str(s),
-                Param::List(l) => Param::List(l),
-                Param::Bool(b) => Param::Bool(*b),
-            }));
+            all.push((
+                k,
+                match v {
+                    Param::Str(s) => Param::Str(s),
+                    Param::List(l) => Param::List(l),
+                    Param::Bool(b) => Param::Bool(*b),
+                },
+            ));
         }
         let (script, windows) = if rec.windows {
             (with_params(Shell::Powershell, &all, FILES_PS1), true)
         } else {
             (with_params(Shell::Sh, &all, FILES_SH), false)
         };
-        run_checked(spec, windows, script, FILE_TIMEOUT, Limits::DATA, &[], None).await.map_err(|e| e.message)
+        run_checked(spec, windows, script, FILE_TIMEOUT, Limits::DATA, &[], None)
+            .await
+            .map_err(|e| e.message)
     }
 
-    async fn run_destroy(self: &Arc<Self>, op: u64, spec: &MachineSpec, rec: &WorkspaceRecord, keep: bool) -> Result<(), String> {
-        self.op_log(op, format!("▸ Cleaning up on {} ({})", spec.name, spec.host.trim()));
+    async fn run_destroy(
+        self: &Arc<Self>,
+        op: u64,
+        spec: &MachineSpec,
+        rec: &WorkspaceRecord,
+        keep: bool,
+    ) -> Result<(), String> {
+        self.op_log(
+            op,
+            format!("▸ Cleaning up on {} ({})", spec.name, spec.host.trim()),
+        );
         let pids: Vec<String> = rec.background_pids.iter().map(u32::to_string).collect();
         let pids = pids.join(" ");
         let script = if rec.windows {
@@ -928,7 +1310,10 @@ impl Engine {
                     ("OR_ID", Param::Str(&rec.info.id)),
                     ("OR_PIDS", Param::Str(&pids)),
                     ("OR_KEEP", Param::Bool(keep)),
-                    ("OR_SRC", Param::Str(rec.info.worktree_of.as_deref().unwrap_or_default())),
+                    (
+                        "OR_SRC",
+                        Param::Str(rec.info.worktree_of.as_deref().unwrap_or_default()),
+                    ),
                 ],
                 OTHER_PS1,
             )
@@ -944,14 +1329,28 @@ impl Engine {
                     ("OR_KEEP", Param::Bool(keep)),
                     ("OR_CONTAINER", Param::Str(&container)),
                     ("OR_IMAGE", Param::Str(&image)),
-                    ("OR_SRC", Param::Str(rec.info.worktree_of.as_deref().unwrap_or_default())),
+                    (
+                        "OR_SRC",
+                        Param::Str(rec.info.worktree_of.as_deref().unwrap_or_default()),
+                    ),
                 ],
                 &format!("{LIB_SH}\n{DESTROY_SH}"),
             )
         };
         let me = self.clone();
         let log = move |line: &str| me.op_log(op, line.to_string());
-        run_checked(spec, rec.windows, script, DESTROY_TIMEOUT, Limits::OUTPUT, &[], Some(&log)).await.map(|_| ()).map_err(|e| e.message)
+        run_checked(
+            spec,
+            rec.windows,
+            script,
+            DESTROY_TIMEOUT,
+            Limits::OUTPUT,
+            &[],
+            Some(&log),
+        )
+        .await
+        .map(|_| ())
+        .map_err(|e| e.message)
     }
 }
 
@@ -975,7 +1374,11 @@ pub(crate) fn demo_seed(world: &crate::demo::World) -> Vec<WorkspaceRecord> {
 
 /// What the snapshot shows: stored records with current machine names and a
 /// ready-to-run shell command, most recently used first.
-pub(crate) fn snapshot_infos(records: &[WorkspaceRecord], machines: &[Machine], specs: &[MachineSpec]) -> Vec<WorkspaceInfo> {
+pub(crate) fn snapshot_infos(
+    records: &[WorkspaceRecord],
+    machines: &[Machine],
+    specs: &[MachineSpec],
+) -> Vec<WorkspaceInfo> {
     let mut out: Vec<WorkspaceInfo> = records
         .iter()
         .map(|r| {
@@ -1020,18 +1423,43 @@ async fn run_checked(
     on_line: Option<&(dyn Fn(&str) + Send + Sync)>,
 ) -> Result<Output, ScriptError> {
     let marker = transport::new_marker();
-    let out = transport::run(spec, windows, &marker, transport::with_marker(&marker, windows, &script), timeout, limits, secrets, on_line)
-        .await
-        .map_err(|message| ScriptError { message, code: None })?;
+    let out = transport::run(
+        spec,
+        windows,
+        &marker,
+        transport::with_marker(&marker, windows, &script),
+        timeout,
+        limits,
+        secrets,
+        on_line,
+    )
+    .await
+    .map_err(|message| ScriptError {
+        message,
+        code: None,
+    })?;
     if out.timed_out {
-        return Err(ScriptError { message: format!("{} is unreachable: no answer within {}s.", spec.name, timeout.as_secs()), code: None });
+        return Err(ScriptError {
+            message: format!(
+                "{} is unreachable: no answer within {}s.",
+                spec.name,
+                timeout.as_secs()
+            ),
+            code: None,
+        });
     }
     if !out.started {
-        return Err(ScriptError { message: format!("{} is unreachable: {}", spec.name, out.reason()), code: out.status });
+        return Err(ScriptError {
+            message: format!("{} is unreachable: {}", spec.name, out.reason()),
+            code: out.status,
+        });
     }
     match out.status {
         Some(0) => Ok(out),
-        code => Err(ScriptError { message: out.reason(), code }),
+        code => Err(ScriptError {
+            message: out.reason(),
+            code,
+        }),
     }
 }
 
@@ -1052,17 +1480,37 @@ fn exec_result(out: Output, machine: &str, log: Option<String>) -> Result<ExecRe
         "error: couldn't pull",
         "error: couldn't start a container",
     ];
-    let setup_error = out.exit == Some(97) && out.stderr.lines().next().is_some_and(|l| SETUP.iter().any(|p| l.starts_with(p)));
+    let setup_error = out.exit == Some(97)
+        && out
+            .stderr
+            .lines()
+            .next()
+            .is_some_and(|l| SETUP.iter().any(|p| l.starts_with(p)));
     if setup_error {
         return Err(out.reason());
     }
     if out.exit.is_none() && !out.timed_out {
-        return Err(format!("The ssh connection to {machine} dropped while the command ran: {}", out.reason()));
+        return Err(format!(
+            "The ssh connection to {machine} dropped while the command ran: {}",
+            out.reason()
+        ));
     }
-    let background_pid = if log.is_some() { field(&out.stdout, "pid").and_then(|p| p.parse().ok()) } else { None };
+    let background_pid = if log.is_some() {
+        field(&out.stdout, "pid").and_then(|p| p.parse().ok())
+    } else {
+        None
+    };
     Ok(ExecResult {
-        exit_code: if out.timed_out || log.is_some() { None } else { out.exit },
-        stdout: if log.is_some() { String::new() } else { out.stdout },
+        exit_code: if out.timed_out || log.is_some() {
+            None
+        } else {
+            out.exit
+        },
+        stdout: if log.is_some() {
+            String::new()
+        } else {
+            out.stdout
+        },
         stderr: out.stderr,
         duration_ms: 0,
         timed_out: out.timed_out,
@@ -1085,7 +1533,9 @@ fn env_exports(shell: Shell, env: &[(String, String)]) -> String {
 /// The value of a `key=value` line in script output.
 fn field(text: &str, key: &str) -> Option<String> {
     let prefix = format!("{key}=");
-    text.lines().find_map(|l| l.strip_prefix(&prefix)).map(|v| v.trim().to_string())
+    text.lines()
+        .find_map(|l| l.strip_prefix(&prefix))
+        .map(|v| v.trim().to_string())
 }
 
 fn file_content(path: String, bytes: Vec<u8>, size: u64, max: usize) -> FileContent {
@@ -1102,8 +1552,20 @@ fn file_content(path: String, bytes: Vec<u8>, size: u64, max: usize) -> FileCont
         Err(_) => None,
     };
     match text.filter(|t| !t.contains('\0')) {
-        Some(content) => FileContent { path, content, size, truncated, binary: false },
-        None => FileContent { path, content: String::new(), size, truncated, binary: true },
+        Some(content) => FileContent {
+            path,
+            content,
+            size,
+            truncated,
+            binary: false,
+        },
+        None => FileContent {
+            path,
+            content: String::new(),
+            size,
+            truncated,
+            binary: true,
+        },
     }
 }
 
@@ -1121,8 +1583,16 @@ fn parse_listing(text: &str, base: &str) -> Vec<FileEntry> {
             if rel.is_empty() {
                 return None;
             }
-            let path = if base.is_empty() { rel.to_string() } else { format!("{base}/{rel}") };
-            Some(FileEntry { path, kind: kind.into(), size: if kind == "dir" { 0 } else { size } })
+            let path = if base.is_empty() {
+                rel.to_string()
+            } else {
+                format!("{base}/{rel}")
+            };
+            Some(FileEntry {
+                path,
+                kind: kind.into(),
+                size: if kind == "dir" { 0 } else { size },
+            })
         })
         .take(LIST_MAX_ENTRIES)
         .collect()
@@ -1134,7 +1604,13 @@ fn output_tail(stdout: &str, stderr: &str) -> Vec<String> {
         .lines()
         .chain(stderr.lines())
         .filter(|l| !l.trim().is_empty())
-        .map(|l| if l.chars().count() > TAIL_LINE_MAX { format!("{}…", l.chars().take(TAIL_LINE_MAX).collect::<String>()) } else { l.to_string() })
+        .map(|l| {
+            if l.chars().count() > TAIL_LINE_MAX {
+                format!("{}…", l.chars().take(TAIL_LINE_MAX).collect::<String>())
+            } else {
+                l.to_string()
+            }
+        })
         .collect();
     lines[lines.len().saturating_sub(registry::TAIL_LINES)..].to_vec()
 }
@@ -1149,14 +1625,22 @@ pub fn rel_path(p: &str) -> Result<String, String> {
     let p = p.trim();
     let drive = p.len() >= 2 && p.as_bytes()[1] == b':' && p.as_bytes()[0].is_ascii_alphabetic();
     if p.starts_with('/') || p.starts_with('\\') || p.starts_with('~') || drive {
-        return Err(format!("\"{p}\" isn't inside the workspace. Paths are relative to the workspace folder."));
+        return Err(format!(
+            "\"{p}\" isn't inside the workspace. Paths are relative to the workspace folder."
+        ));
     }
     let mut parts = Vec::new();
     for seg in p.split(['/', '\\']) {
         match seg {
             "" | "." => {}
-            ".." => return Err(format!("\"{p}\" leaves the workspace. Paths can't use \"..\".")),
-            s if s.chars().any(char::is_control) => return Err(format!("\"{p}\" has control characters.")),
+            ".." => {
+                return Err(format!(
+                    "\"{p}\" leaves the workspace. Paths can't use \"..\"."
+                ));
+            }
+            s if s.chars().any(char::is_control) => {
+                return Err(format!("\"{p}\" has control characters."));
+            }
             s => parts.push(s),
         }
     }
@@ -1166,10 +1650,15 @@ pub fn rel_path(p: &str) -> Result<String, String> {
 fn validate_env(name: &str, value: &str) -> Result<(), String> {
     let ok = !name.is_empty()
         && name.len() <= 128
-        && name.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
         && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
     if !ok {
-        return Err(format!("\"{name}\" isn't a valid environment variable name."));
+        return Err(format!(
+            "\"{name}\" isn't a valid environment variable name."
+        ));
     }
     if value.contains('\0') {
         return Err(format!("The value of {name} contains a NUL byte."));
@@ -1183,8 +1672,13 @@ fn validate_git_ref(r: &str) -> Result<(), String> {
         || r.contains("..")
         || r.ends_with('/')
         || r.ends_with(".lock")
-        || r.chars().any(|c| c.is_whitespace() || c.is_control() || "~^:?*[\\".contains(c));
-    if bad { Err(format!("\"{r}\" isn't a valid git branch, tag or commit.")) } else { Ok(()) }
+        || r.chars()
+            .any(|c| c.is_whitespace() || c.is_control() || "~^:?*[\\".contains(c));
+    if bad {
+        Err(format!("\"{r}\" isn't a valid git branch, tag or commit."))
+    } else {
+        Ok(())
+    }
 }
 
 /// A repository to clone.
@@ -1201,8 +1695,18 @@ struct Repo {
 }
 
 pub(crate) fn github_web_host(api_url: &str) -> String {
-    let host = api_url.split("://").nth(1).unwrap_or(api_url).split('/').next().unwrap_or("api.github.com");
-    if host == "api.github.com" { "github.com".into() } else { host.to_string() }
+    let host = api_url
+        .split("://")
+        .nth(1)
+        .unwrap_or(api_url)
+        .split('/')
+        .next()
+        .unwrap_or("api.github.com");
+    if host == "api.github.com" {
+        "github.com".into()
+    } else {
+        host.to_string()
+    }
 }
 
 /// "owner/repo" means GitHub; anything else must look like a git URL or a path on the machine.
@@ -1212,12 +1716,21 @@ fn normalize_repo(raw: &str, gh_host: &str) -> Result<Repo, String> {
         return Err(format!("\"{raw}\" isn't a repository Muxin can clone."));
     }
     let short = |s: &str| {
-        s.trim_end_matches('/').rsplit(['/', ':']).next().unwrap_or(s).trim_end_matches(".git").to_string()
+        s.trim_end_matches('/')
+            .rsplit(['/', ':'])
+            .next()
+            .unwrap_or(s)
+            .trim_end_matches(".git")
+            .to_string()
     };
     let simple = raw.split('/').count() == 2
         && !raw.contains(':')
         && !raw.starts_with('.')
-        && raw.split('/').all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c)));
+        && raw.split('/').all(|p| {
+            !p.is_empty()
+                && p.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
+        });
     if simple {
         let path = raw.trim_end_matches(".git");
         return Ok(Repo {
@@ -1228,11 +1741,15 @@ fn normalize_repo(raw: &str, gh_host: &str) -> Result<Repo, String> {
             on_github: true,
         });
     }
-    let is_url = ["https://", "http://", "ssh://", "git://", "file://"].iter().any(|p| raw.starts_with(p));
+    let is_url = ["https://", "http://", "ssh://", "git://", "file://"]
+        .iter()
+        .any(|p| raw.starts_with(p));
     let scp_like = raw.contains('@') && raw.contains(':') && !raw.contains("://");
     let path_like = raw.starts_with('/') || raw.starts_with("~/");
     if !(is_url || scp_like || path_like) {
-        return Err(format!("\"{raw}\" isn't a repository. Use owner/repo for GitHub, or a git URL."));
+        return Err(format!(
+            "\"{raw}\" isn't a repository. Use owner/repo for GitHub, or a git URL."
+        ));
     }
     // Never echo credentials embedded in a URL.
     let shown = match raw.split_once("://") {
@@ -1244,7 +1761,15 @@ fn normalize_repo(raw: &str, gh_host: &str) -> Result<Repo, String> {
     };
     let host = raw
         .split_once("://")
-        .map(|(_, rest)| rest.split('/').next().unwrap_or("").rsplit('@').next().unwrap_or("").to_string())
+        .map(|(_, rest)| {
+            rest.split('/')
+                .next()
+                .unwrap_or("")
+                .rsplit('@')
+                .next()
+                .unwrap_or("")
+                .to_string()
+        })
         .unwrap_or_default();
     Ok(Repo {
         url: raw.to_string(),
@@ -1256,13 +1781,20 @@ fn normalize_repo(raw: &str, gh_host: &str) -> Result<Repo, String> {
 }
 
 fn machine_names(machines: &[Machine]) -> String {
-    machines.iter().map(|m| m.id.as_str()).collect::<Vec<_>>().join(", ")
+    machines
+        .iter()
+        .map(|m| m.id.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// "macos" → "darwin", "x86_64" → "x64", ... so agents can say it however they like.
 fn normalize_platform(p: &str) -> String {
     let p = p.trim().to_ascii_lowercase().replace('_', "-");
-    let (os, arch) = p.split_once('-').map(|(o, a)| (o.to_string(), Some(a.to_string()))).unwrap_or((p.clone(), None));
+    let (os, arch) = p
+        .split_once('-')
+        .map(|(o, a)| (o.to_string(), Some(a.to_string())))
+        .unwrap_or((p.clone(), None));
     let os = match os.as_str() {
         "mac" | "macos" | "osx" | "apple" => "darwin".to_string(),
         "win" | "win32" => "windows".to_string(),
@@ -1281,34 +1813,64 @@ fn normalize_platform(p: &str) -> String {
 
 /// The online machine that allows workspaces with the most headroom.
 #[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn pick_machine<'a>(machines: &'a [Machine], platform: Option<&str>) -> Result<&'a Machine, String> {
+pub(crate) fn pick_machine<'a>(
+    machines: &'a [Machine],
+    platform: Option<&str>,
+) -> Result<&'a Machine, String> {
     pick_machine_for(machines, platform, false)
 }
 
 /// Like `pick_machine`; for docker workspaces, prefers machines whose last
 /// check found docker (when no check has reported docker yet, any will do —
 /// the create step checks for real).
-pub(crate) fn pick_machine_for<'a>(machines: &'a [Machine], platform: Option<&str>, docker: bool) -> Result<&'a Machine, String> {
+pub(crate) fn pick_machine_for<'a>(
+    machines: &'a [Machine],
+    platform: Option<&str>,
+    docker: bool,
+) -> Result<&'a Machine, String> {
     let want = platform.map(normalize_platform);
     let platform_ok = |m: &Machine| want.as_deref().is_none_or(|w| m.platform.starts_with(w));
-    let disk_ok = |m: &Machine| m.probe.as_ref().and_then(|p| p.disk_free).is_none_or(|f| f >= MIN_FREE_DISK);
+    let disk_ok = |m: &Machine| {
+        m.probe
+            .as_ref()
+            .and_then(|p| p.disk_free)
+            .is_none_or(|f| f >= MIN_FREE_DISK)
+    };
     let mut candidates: Vec<&Machine> = machines
         .iter()
-        .filter(|m| m.status == "online" && m.workspaces_allowed && platform_ok(m) && disk_ok(m) && !(docker && m.platform.starts_with("windows")))
+        .filter(|m| {
+            m.status == "online"
+                && m.workspaces_allowed
+                && platform_ok(m)
+                && disk_ok(m)
+                && !(docker && m.platform.starts_with("windows"))
+        })
         .collect();
-    if docker && candidates.iter().any(|m| m.probe.as_ref().is_some_and(|p| p.docker.is_some())) {
+    if docker
+        && candidates
+            .iter()
+            .any(|m| m.probe.as_ref().is_some_and(|p| p.docker.is_some()))
+    {
         candidates.retain(|m| m.probe.as_ref().is_some_and(|p| p.docker.is_some()));
     }
     let score = |m: &Machine| {
         let p = m.probe.as_ref();
         let cpu = p.and_then(|p| p.cpu_pct).unwrap_or(50.0);
-        let mem = p.and_then(|p| Some(p.mem_used? as f64 / p.mem_total?.max(1) as f64 * 100.0)).unwrap_or(50.0);
-        let low_disk = p.and_then(|p| p.disk_free).is_some_and(|f| f < 20_000_000_000);
+        let mem = p
+            .and_then(|p| Some(p.mem_used? as f64 / p.mem_total?.max(1) as f64 * 100.0))
+            .unwrap_or(50.0);
+        let low_disk = p
+            .and_then(|p| p.disk_free)
+            .is_some_and(|f| f < 20_000_000_000);
         cpu + mem + m.summary.working as f64 * 20.0 + if low_disk { 100.0 } else { 0.0 }
     };
     candidates
         .into_iter()
-        .min_by(|a, b| score(a).total_cmp(&score(b)).then_with(|| a.name.cmp(&b.name)))
+        .min_by(|a, b| {
+            score(a)
+                .total_cmp(&score(b))
+                .then_with(|| a.name.cmp(&b.name))
+        })
         .ok_or_else(|| {
             let what = match (&want, docker) {
                 (Some(w), true) => format!("allows workspaces, runs {w} and can run docker"),
@@ -1319,12 +1881,26 @@ pub(crate) fn pick_machine_for<'a>(machines: &'a [Machine], platform: Option<&st
             let online: Vec<String> = machines
                 .iter()
                 .filter(|m| m.status == "online")
-                .map(|m| format!("{} ({}{})", m.id, m.platform, if m.workspaces_allowed { "" } else { ", workspaces off" }))
+                .map(|m| {
+                    format!(
+                        "{} ({}{})",
+                        m.id,
+                        m.platform,
+                        if m.workspaces_allowed {
+                            ""
+                        } else {
+                            ", workspaces off"
+                        }
+                    )
+                })
                 .collect();
             if online.is_empty() {
                 format!("No machine is online right now. Run check_machines, or add a machine.")
             } else {
-                format!("No online machine {what} and has free disk. Online: {}.", online.join(", "))
+                format!(
+                    "No online machine {what} and has free disk. Online: {}.",
+                    online.join(", ")
+                )
             }
         })
 }
@@ -1332,7 +1908,11 @@ pub(crate) fn pick_machine_for<'a>(machines: &'a [Machine], platform: Option<&st
 /// A command a human can paste to get a shell inside the workspace.
 pub(crate) fn shell_command(spec: &MachineSpec, path: &str, windows: bool) -> String {
     if spec.is_local() {
-        return if windows { format!("Set-Location {}", ps_quote(path)) } else { format!("cd {} && exec \"$SHELL\" -l", sh_quote(path)) };
+        return if windows {
+            format!("Set-Location {}", ps_quote(path))
+        } else {
+            format!("cd {} && exec \"$SHELL\" -l", sh_quote(path))
+        };
     }
     let mut parts = vec!["ssh".to_string(), "-t".to_string()];
     if let Some(port) = spec.port {
@@ -1363,19 +1943,36 @@ fn validate_image(image: &str) -> Result<String, String> {
     let ok = !image.is_empty()
         && image.len() <= 255
         && !image.starts_with(['-', '.', '/', ':', '@'])
-        && image.chars().all(|c| c.is_ascii_alphanumeric() || "-_./:@".contains(c));
-    if ok { Ok(image.to_string()) } else { Err(format!("\"{image}\" isn't a docker image name (like node:22 or ghcr.io/acme/dev:latest).")) }
+        && image
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_./:@".contains(c));
+    if ok {
+        Ok(image.to_string())
+    } else {
+        Err(format!(
+            "\"{image}\" isn't a docker image name (like node:22 or ghcr.io/acme/dev:latest)."
+        ))
+    }
 }
 
 /// The create script: make the folder (and clone) on the host, then, for docker
 /// workspaces, check docker first and start the container last.
 /// The same folder, however it's written: "~/code/api" is "/home/me/code/api/".
 pub(crate) fn same_folder(a: &str, b: &str) -> bool {
-    let (a, b) = (a.trim_end_matches(['/', '\\']), b.trim_end_matches(['/', '\\']));
+    let (a, b) = (
+        a.trim_end_matches(['/', '\\']),
+        b.trim_end_matches(['/', '\\']),
+    );
     let home_relative = |short: &str, full: &str| {
-        let Some(rest) = short.strip_prefix('~').filter(|r| r.starts_with(['/', '\\'])) else { return false };
+        let Some(rest) = short
+            .strip_prefix('~')
+            .filter(|r| r.starts_with(['/', '\\']))
+        else {
+            return false;
+        };
         // What's before the rest is a home folder: /home/me, /Users/me, /root, C:\Users\me.
-        full.strip_suffix(rest).is_some_and(|home| !home.is_empty() && home.matches(['/', '\\']).count() <= 2)
+        full.strip_suffix(rest)
+            .is_some_and(|home| !home.is_empty() && home.matches(['/', '\\']).count() <= 2)
     };
     a == b || home_relative(a, b) || home_relative(b, a)
 }
@@ -1392,7 +1989,9 @@ fn create_script(docker: bool) -> String {
 
 /// A shell inside a docker workspace's container, for a human.
 pub(crate) fn docker_shell_command(spec: &MachineSpec, container: &str) -> String {
-    let inner = format!("docker start {container} >/dev/null && docker exec -it -w /workspace {container} sh -c 'exec bash 2>/dev/null || exec sh'");
+    let inner = format!(
+        "docker start {container} >/dev/null && docker exec -it -w /workspace {container} sh -c 'exec bash 2>/dev/null || exec sh'"
+    );
     if spec.is_local() {
         return inner;
     }
@@ -1410,11 +2009,27 @@ pub(crate) fn docker_shell_command(spec: &MachineSpec, container: &str) -> Strin
 }
 
 fn display_arg(a: &str) -> String {
-    if a.chars().all(|c| c.is_ascii_alphanumeric() || "-_./=:@~,".contains(c)) { a.to_string() } else { sh_quote(a) }
+    if a.chars()
+        .all(|c| c.is_ascii_alphanumeric() || "-_./=:@~,".contains(c))
+    {
+        a.to_string()
+    } else {
+        sh_quote(a)
+    }
 }
 
-fn rsync_args(spec: &MachineSpec, remote_path: &str, local: &str, direction: SyncDirection, delete: bool) -> Vec<String> {
-    let mut args = vec!["-az".to_string(), "--stats".to_string(), "--exclude=/.muxen/".to_string()];
+fn rsync_args(
+    spec: &MachineSpec,
+    remote_path: &str,
+    local: &str,
+    direction: SyncDirection,
+    delete: bool,
+) -> Vec<String> {
+    let mut args = vec![
+        "-az".to_string(),
+        "--stats".to_string(),
+        "--exclude=/.muxen/".to_string(),
+    ];
     if delete {
         args.push("--delete".into());
     }
@@ -1426,7 +2041,11 @@ fn rsync_args(spec: &MachineSpec, remote_path: &str, local: &str, direction: Syn
         let ssh: Vec<String> = ssh.iter().map(|a| display_arg(a)).collect();
         args.push("-e".into());
         args.push(format!("ssh {}", ssh.join(" ")));
-        format!("{}:{}/", spec.host.trim(), remote_path.trim_end_matches('/'))
+        format!(
+            "{}:{}/",
+            spec.host.trim(),
+            remote_path.trim_end_matches('/')
+        )
     };
     let local = format!("{}/", local.trim_end_matches('/'));
     match direction {
@@ -1453,9 +2072,14 @@ fn expand_home(p: &str) -> std::path::PathBuf {
 /// Lowercase base36, from a small per-process generator (no extra dependency).
 pub(crate) fn random_id(len: usize) -> String {
     static STATE: AtomicU64 = AtomicU64::new(0);
-    let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(1)
+    let seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(1)
         ^ (std::process::id() as u64).rotate_left(32);
-    let mut x = STATE.fetch_add(0x9E37_79B9_7F4A_7C15, Ordering::Relaxed).wrapping_add(seed);
+    let mut x = STATE
+        .fetch_add(0x9E37_79B9_7F4A_7C15, Ordering::Relaxed)
+        .wrapping_add(seed);
     const DIGITS: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
     (0..len)
         .map(|_| {

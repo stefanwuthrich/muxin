@@ -51,7 +51,10 @@ struct Tally {
 impl Tally {
     fn add(&mut self, at: &str, tool: &'static str, model: &str, cwd: &str, sum: Sum) {
         let hour = at.get(..13).unwrap_or(at).to_string();
-        self.hours.entry((hour, tool, model.to_string())).or_default().add(&sum);
+        self.hours
+            .entry((hour, tool, model.to_string()))
+            .or_default()
+            .add(&sum);
         let f = self.folders.entry((tool, cwd.to_string())).or_default();
         f.0.add(&sum);
         if at > f.1.as_str() {
@@ -72,7 +75,11 @@ pub fn usage(req: &Value) -> Value {
     let mut tally = Tally::default();
     let mut found = Vec::new();
 
-    let claude_dirs = [std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from), Some(home.join(".claude")), Some(home.join(".config/claude"))];
+    let claude_dirs = [
+        std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from),
+        Some(home.join(".claude")),
+        Some(home.join(".config/claude")),
+    ];
     let mut seen = HashSet::new();
     for dir in claude_dirs.into_iter().flatten() {
         let files = jsonl_files(&dir.join("projects"), 2, since);
@@ -124,7 +131,9 @@ pub fn usage(req: &Value) -> Value {
 /// `.jsonl` files under `dir` (down to `depth` folders) changed since `since`.
 fn jsonl_files(dir: &Path, depth: usize, since: SystemTime) -> Vec<PathBuf> {
     let mut out = Vec::new();
-    let Ok(entries) = std::fs::read_dir(dir) else { return out };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return out;
+    };
     for e in entries.flatten() {
         let path = e.path();
         let Ok(meta) = e.metadata() else { continue };
@@ -132,7 +141,9 @@ fn jsonl_files(dir: &Path, depth: usize, since: SystemTime) -> Vec<PathBuf> {
             if depth > 1 {
                 out.extend(jsonl_files(&path, depth - 1, since));
             }
-        } else if path.extension().is_some_and(|x| x == "jsonl") && meta.modified().is_ok_and(|m| m >= since) {
+        } else if path.extension().is_some_and(|x| x == "jsonl")
+            && meta.modified().is_ok_and(|m| m >= since)
+        {
             out.push(path);
         }
     }
@@ -144,7 +155,9 @@ fn n(v: &Value) -> u64 {
 }
 
 fn claude_file(path: &Path, cutoff: &str, seen: &mut HashSet<String>, tally: &mut Tally) {
-    let Ok(file) = std::fs::File::open(path) else { return };
+    let Ok(file) = std::fs::File::open(path) else {
+        return;
+    };
     for line in BufReader::new(file).lines().map_while(Result::ok) {
         // A response (with its usage); the fields needed are read straight off
         // the line, which also carries the response's whole text.
@@ -157,16 +170,43 @@ fn claude_file(path: &Path, cutoff: &str, seen: &mut HashSet<String>, tally: &mu
             continue;
         }
         // The same response, once per content block: count it once.
-        let id = line.find("\"id\":\"msg_").map(|i| &line[i + 6..]).and_then(|r| r.split('"').next()).unwrap_or("");
+        let id = line
+            .find("\"id\":\"msg_")
+            .map(|i| &line[i + 6..])
+            .and_then(|r| r.split('"').next())
+            .unwrap_or("");
         let key = format!("{id}:{}", field(&line, "\"requestId\":\"").unwrap_or(""));
         if key != ":" && !seen.insert(key) {
             continue;
         }
-        let Some(u) = line.find("\"usage\":{").and_then(|i| serde_json::Deserializer::from_str(&line[i + 8..]).into_iter::<Value>().next()).and_then(Result::ok) else { continue };
+        let Some(u) = line
+            .find("\"usage\":{")
+            .and_then(|i| {
+                serde_json::Deserializer::from_str(&line[i + 8..])
+                    .into_iter::<Value>()
+                    .next()
+            })
+            .and_then(Result::ok)
+        else {
+            continue;
+        };
         let created = n(&u["cache_creation_input_tokens"]);
         let hour = n(&u["cache_creation"]["ephemeral_1h_input_tokens"]).min(created);
-        let sum = Sum { input: n(&u["input_tokens"]), output: n(&u["output_tokens"]), cache_read: n(&u["cache_read_input_tokens"]), cache_write: created - hour, cache_write_1h: hour, requests: 1 };
-        tally.add(at, "claude", model, field(&line, "\"cwd\":\"").unwrap_or(""), sum);
+        let sum = Sum {
+            input: n(&u["input_tokens"]),
+            output: n(&u["output_tokens"]),
+            cache_read: n(&u["cache_read_input_tokens"]),
+            cache_write: created - hour,
+            cache_write_1h: hour,
+            requests: 1,
+        };
+        tally.add(
+            at,
+            "claude",
+            model,
+            field(&line, "\"cwd\":\"").unwrap_or(""),
+            sum,
+        );
     }
 }
 
@@ -180,10 +220,14 @@ fn field<'a>(line: &'a str, key: &str) -> Option<&'a str> {
 }
 
 fn codex_file(path: &Path, cutoff: &str, tally: &mut Tally) {
-    let Ok(file) = std::fs::File::open(path) else { return };
+    let Ok(file) = std::fs::File::open(path) else {
+        return;
+    };
     let (mut cwd, mut model, mut total) = (String::new(), String::new(), 0u64);
     for line in BufReader::new(file).lines().map_while(Result::ok) {
-        let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+        let Ok(v) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
         let p = &v["payload"];
         match v["type"].as_str().unwrap_or("") {
             "session_meta" => cwd = p["cwd"].as_str().unwrap_or("").to_string(),
@@ -218,7 +262,13 @@ fn codex_file(path: &Path, cutoff: &str, tally: &mut Tally) {
                     cache_write_1h: 0,
                     requests: 1,
                 };
-                tally.add(at, "codex", if model.is_empty() { "unknown" } else { &model }, &cwd, sum);
+                tally.add(
+                    at,
+                    "codex",
+                    if model.is_empty() { "unknown" } else { &model },
+                    &cwd,
+                    sum,
+                );
             }
             _ => {}
         }
@@ -227,7 +277,10 @@ fn codex_file(path: &Path, cutoff: &str, tally: &mut Tally) {
 
 /// A time as "YYYY-MM-DDTHH" in UTC (how the logs' times start).
 fn utc_hour(t: SystemTime) -> String {
-    let secs = t.duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let secs = t
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     let (days, hour) = (secs / 86_400, (secs % 86_400) / 3600);
     // Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
     let z = days as i64 + 719_468;
@@ -249,8 +302,14 @@ mod tests {
     #[test]
     fn writes_utc_hours() {
         assert_eq!(utc_hour(UNIX_EPOCH), "1970-01-01T00");
-        assert_eq!(utc_hour(UNIX_EPOCH + Duration::from_secs(1_791_220_000)), "2026-10-05T17");
-        assert_eq!(utc_hour(UNIX_EPOCH + Duration::from_secs(951_782_400)), "2000-02-29T00");
+        assert_eq!(
+            utc_hour(UNIX_EPOCH + Duration::from_secs(1_791_220_000)),
+            "2026-10-05T17"
+        );
+        assert_eq!(
+            utc_hour(UNIX_EPOCH + Duration::from_secs(951_782_400)),
+            "2000-02-29T00"
+        );
     }
 
     #[test]
@@ -276,11 +335,35 @@ mod tests {
         let mut seen = HashSet::new();
         claude_file(&claude, "2026-10-01T00", &mut seen, &mut tally);
         codex_file(&codex, "2026-10-01T00", &mut tally);
-        let c = tally.hours[&("2026-10-12T17".to_string(), "claude", "claude-opus-5-5".to_string())];
-        assert_eq!((c.input, c.output, c.cache_read, c.cache_write, c.cache_write_1h, c.requests), (5, 100, 1000, 100, 200, 1));
-        let x = tally.hours[&("2026-10-12T18".to_string(), "codex", "gpt-6.1-sol".to_string())];
-        assert_eq!((x.input, x.cache_read, x.output, x.requests), (200, 600, 100, 1));
-        assert_eq!(tally.folders[&("codex", "/w2".to_string())].1, "2026-10-12T18:00:05Z");
+        let c = tally.hours[&(
+            "2026-10-12T17".to_string(),
+            "claude",
+            "claude-opus-5-5".to_string(),
+        )];
+        assert_eq!(
+            (
+                c.input,
+                c.output,
+                c.cache_read,
+                c.cache_write,
+                c.cache_write_1h,
+                c.requests
+            ),
+            (5, 100, 1000, 100, 200, 1)
+        );
+        let x = tally.hours[&(
+            "2026-10-12T18".to_string(),
+            "codex",
+            "gpt-6.1-sol".to_string(),
+        )];
+        assert_eq!(
+            (x.input, x.cache_read, x.output, x.requests),
+            (200, 600, 100, 1)
+        );
+        assert_eq!(
+            tally.folders[&("codex", "/w2".to_string())].1,
+            "2026-10-12T18:00:05Z"
+        );
         // Too old: not counted.
         let mut old = Tally::default();
         claude_file(&claude, "2026-10-13T00", &mut HashSet::new(), &mut old);

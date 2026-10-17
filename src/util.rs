@@ -9,7 +9,11 @@ pub fn slug(s: &str) -> String {
         }
     }
     let out = out.trim_end_matches('-').to_string();
-    if out.is_empty() { "machine".into() } else { out }
+    if out.is_empty() {
+        "machine".into()
+    } else {
+        out
+    }
 }
 
 /// ("Darwin", "arm64") -> "darwin-arm64", ("Linux", "x86_64") -> "linux-x64", ("windows", "AMD64") -> "windows-x64"
@@ -38,7 +42,11 @@ pub fn bytes(n: u64) -> String {
         v /= 1000.0;
         unit += 1;
     }
-    if v < 10.0 && unit > 0 { format!("{v:.1} {}", UNITS[unit]) } else { format!("{v:.0} {}", UNITS[unit]) }
+    if v < 10.0 && unit > 0 {
+        format!("{v:.1} {}", UNITS[unit])
+    } else {
+        format!("{v:.0} {}", UNITS[unit])
+    }
 }
 
 /// 83_400 -> "23h 10m", 10_022_400 -> "116d 0h", 95 -> "1m"
@@ -61,7 +69,11 @@ pub fn short_duration(secs: u64) -> String {
         format!("{}m", secs / 60)
     } else if secs < 86_400 {
         let (h, m) = (secs / 3600, (secs % 3600) / 60);
-        if m == 0 { format!("{h}h") } else { format!("{h}h {m}m") }
+        if m == 0 {
+            format!("{h}h")
+        } else {
+            format!("{h}h {m}m")
+        }
     } else {
         format!("{}d", secs / 86_400)
     }
@@ -93,7 +105,10 @@ pub fn random_token(len: usize) -> String {
     const DIGITS: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
     let mut bytes = vec![0u8; len];
     let _ = ring::rand::SystemRandom::new().fill(&mut bytes);
-    bytes.iter().map(|b| DIGITS[*b as usize % DIGITS.len()] as char).collect()
+    bytes
+        .iter()
+        .map(|b| DIGITS[*b as usize % DIGITS.len()] as char)
+        .collect()
 }
 
 /// Opens a web page in the user's browser.

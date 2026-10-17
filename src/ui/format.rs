@@ -8,7 +8,11 @@ pub fn ago(t: Option<DateTime<Utc>>) -> String {
         None => "never".into(),
         Some(t) => {
             let secs = (Utc::now() - t).num_seconds().max(0) as u64;
-            if secs < 10 { "just now".into() } else { format!("{} ago", util::short_duration(secs)) }
+            if secs < 10 {
+                "just now".into()
+            } else {
+                format!("{} ago", util::short_duration(secs))
+            }
         }
     }
 }
@@ -51,13 +55,18 @@ pub fn disk_low(m: &Machine) -> bool {
 /// Whether Muxin can show the machine's desktop (Linux with X11, macOS).
 pub fn has_desktop(m: &Machine) -> bool {
     // A Linux machine needs an X server; one checked before checks said is given the benefit of the doubt.
-    m.platform.starts_with("darwin") || ((m.platform.starts_with("linux") || m.platform.starts_with("windows")) && m.probe.as_ref().and_then(|p| p.desktop) != Some(false))
+    m.platform.starts_with("darwin")
+        || ((m.platform.starts_with("linux") || m.platform.starts_with("windows"))
+            && m.probe.as_ref().and_then(|p| p.desktop) != Some(false))
 }
 
 /// Gradient for a machine's icon tile, by OS.
 pub fn machine_tile(m: &Machine) -> (u32, u32) {
     use super::kit::tiles;
-    if m.cloud.as_ref().is_some_and(|c| c.provider == "digitalocean") {
+    if m.cloud
+        .as_ref()
+        .is_some_and(|c| c.provider == "digitalocean")
+    {
         tiles::DIGITALOCEAN
     } else if m.platform.starts_with("darwin") {
         tiles::MACOS
@@ -90,7 +99,11 @@ pub fn machine_subtitle_in(m: &Machine, nested: bool) -> (String, &'static str) 
         if is_powered_off(m) {
             return ("Powered off".into(), "muted");
         }
-        return match (m.unreachable.as_ref().map(|u| u.kind.as_str()), is_just_offline(m), seen) {
+        return match (
+            m.unreachable.as_ref().map(|u| u.kind.as_str()),
+            is_just_offline(m),
+            seen,
+        ) {
             (Some("installing"), _, _) => ("Installing…".into(), "muted"),
             (Some("stopped" | "host-down"), _, _) => (unreachable_reason(m), "muted"),
             (_, true, Some(t)) => (format!("Offline · seen {}", ago(Some(t))), "muted"),
@@ -99,13 +112,22 @@ pub fn machine_subtitle_in(m: &Machine, nested: bool) -> (String, &'static str) 
         };
     }
     // Where it runs takes the place of its architecture.
-    let place = m.parent.as_ref().map(|p| match (nested, p.relation.as_str()) {
-        (true, "vm") => "VM".to_string(),
-        (true, "container") => "Container".to_string(),
-        (true, _) => String::new(),
-        (false, _) => p.label(),
+    let place = m
+        .parent
+        .as_ref()
+        .map(|p| match (nested, p.relation.as_str()) {
+            (true, "vm") => "VM".to_string(),
+            (true, "container") => "Container".to_string(),
+            (true, _) => String::new(),
+            (false, _) => p.label(),
+        });
+    let arch = place.unwrap_or_else(|| {
+        m.platform
+            .split_once('-')
+            .map(|(_, a)| a)
+            .unwrap_or("")
+            .to_string()
     });
-    let arch = place.unwrap_or_else(|| m.platform.split_once('-').map(|(_, a)| a).unwrap_or("").to_string());
     let os = os_label(m);
     let line = match (os.is_empty(), arch.is_empty()) {
         (false, false) => format!("{os} · {arch}"),
@@ -119,7 +141,12 @@ pub fn machine_subtitle_in(m: &Machine, nested: bool) -> (String, &'static str) 
 
 /// "Ubuntu 26.04", "macOS 27", "Windows 11", else the OS family from the platform.
 fn os_label(m: &Machine) -> String {
-    match m.probe.as_ref().and_then(|p| p.os_version.as_deref()).filter(|v| !v.is_empty()) {
+    match m
+        .probe
+        .as_ref()
+        .and_then(|p| p.os_version.as_deref())
+        .filter(|v| !v.is_empty())
+    {
         Some(v) => short_os(v),
         None if m.platform.starts_with("darwin") => "macOS".into(),
         None if m.platform.starts_with("linux") => "Linux".into(),
@@ -145,14 +172,18 @@ fn short_os(v: &str) -> String {
 }
 
 pub fn machine_icon(m: &Machine) -> &'static str {
-    if m.cloud.as_ref().is_some_and(|c| c.provider == "digitalocean") {
+    if m.cloud
+        .as_ref()
+        .is_some_and(|c| c.provider == "digitalocean")
+    {
         return "brand-digitalocean";
     }
     let name = m.name.to_ascii_lowercase();
     let laptop = m.probe.as_ref().and_then(|p| p.form_factor.as_deref()) == Some("laptop");
     if name.contains("nas") || name.contains("storage") {
         "hard-drive"
-    } else if laptop || name.contains("laptop") || name.contains("macbook") || name.contains("book") {
+    } else if laptop || name.contains("laptop") || name.contains("macbook") || name.contains("book")
+    {
         "laptop"
     } else if m.platform.starts_with("windows") || m.platform.starts_with("darwin") {
         // A Mac or PC on a desk; Linux boxes are mostly servers.
@@ -171,7 +202,10 @@ mod tests {
         assert_eq!(short_os("Ubuntu 26.04.1 LTS"), "Ubuntu 26.04");
         assert_eq!(short_os("macOS 27.0.1"), "macOS 27");
         assert_eq!(short_os("Microsoft Windows 11 Pro"), "Windows 11");
-        assert_eq!(short_os("Debian GNU/Linux 12 (bookworm)"), "Debian GNU/Linux 12");
+        assert_eq!(
+            short_os("Debian GNU/Linux 12 (bookworm)"),
+            "Debian GNU/Linux 12"
+        );
         assert_eq!(short_os("Arch Linux"), "Arch Linux");
     }
 }
@@ -179,12 +213,21 @@ mod tests {
 /// Offline in the everyday sense (shut down, asleep, off the network), as
 /// opposed to on but refusing us: nothing for the user to fix.
 pub fn is_just_offline(m: &Machine) -> bool {
-    m.status == "offline" && m.unreachable.as_ref().is_some_and(|u| matches!(u.kind.as_str(), "offline" | "powered-off" | "stopped" | "host-down" | "installing"))
+    m.status == "offline"
+        && m.unreachable.as_ref().is_some_and(|u| {
+            matches!(
+                u.kind.as_str(),
+                "offline" | "powered-off" | "stopped" | "host-down" | "installing"
+            )
+        })
 }
 
 /// A cloud machine that's powered off (and still billed).
 pub fn is_powered_off(m: &Machine) -> bool {
-    m.status == "offline" && m.unreachable.as_ref().is_some_and(|u| u.kind == "powered-off")
+    m.status == "offline"
+        && m.unreachable
+            .as_ref()
+            .is_some_and(|u| u.kind == "powered-off")
 }
 
 /// A VM or container on another machine that's stopped there.
@@ -200,7 +243,11 @@ pub fn unreachable_word(m: &Machine) -> &'static str {
         "Powered off"
     } else if is_stopped(m) {
         "Stopped"
-    } else if m.unreachable.as_ref().is_some_and(|u| u.kind == "installing") {
+    } else if m
+        .unreachable
+        .as_ref()
+        .is_some_and(|u| u.kind == "installing")
+    {
         "Installing"
     } else if is_just_offline(m) {
         "Offline"
@@ -211,11 +258,21 @@ pub fn unreachable_word(m: &Machine) -> &'static str {
 
 /// Why it can't be reached, short enough for the sidebar.
 pub fn unreachable_reason(m: &Machine) -> String {
-    let parent = m.parent.as_ref().map(|p| p.name.as_str()).unwrap_or("Its host");
+    let parent = m
+        .parent
+        .as_ref()
+        .map(|p| p.name.as_str())
+        .unwrap_or("Its host");
     match m.unreachable.as_ref().map(|u| u.kind.as_str()) {
         Some("stopped") => return "Stopped".into(),
         Some("installing") => return "Installing…".into(),
-        Some("host-down") => return m.unreachable.as_ref().map(|u| u.title.clone()).unwrap_or_else(|| format!("{parent} is offline")),
+        Some("host-down") => {
+            return m
+                .unreachable
+                .as_ref()
+                .map(|u| u.title.clone())
+                .unwrap_or_else(|| format!("{parent} is offline"));
+        }
         _ => {}
     }
     match m.unreachable.as_ref().map(|u| u.kind.as_str()) {
@@ -230,4 +287,3 @@ pub fn unreachable_reason(m: &Machine) -> String {
     }
     .into()
 }
-

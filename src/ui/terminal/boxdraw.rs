@@ -20,7 +20,12 @@ struct Arms {
 }
 
 const fn a(up: u8, right: u8, down: u8, left: u8) -> Arms {
-    Arms { up, right, down, left }
+    Arms {
+        up,
+        right,
+        down,
+        left,
+    }
 }
 
 /// U+2500..=U+257F; dashed lines are drawn solid, diagonals are left to the font.
@@ -87,14 +92,25 @@ pub(super) fn draw(c: char, o: Point<Pixels>, w: f32, h: f32, color: Hsla, out: 
         block(cp, o, w, h, color, out);
         return;
     }
-    let Some(arms) = LINES.get((cp.wrapping_sub(0x2500)) as usize).copied().flatten() else { return };
+    let Some(arms) = LINES
+        .get((cp.wrapping_sub(0x2500)) as usize)
+        .copied()
+        .flatten()
+    else {
+        return;
+    };
     // Light lines are about a twelfth of the font's height, at least a pixel.
     let light = (h / 14.).round().max(1.);
     let heavy = light * 2.;
     let gap = light; // between the two strokes of a double line
     let (x0, y0) = (f32::from(o.x), f32::from(o.y));
     let (cx, cy) = (x0 + (w / 2.).floor(), y0 + (h / 2.).floor());
-    let rect = |x: f32, y: f32, rw: f32, rh: f32| Shape::Rect(Bounds::new(point(px(x), px(y)), size(px(rw), px(rh))), color);
+    let rect = |x: f32, y: f32, rw: f32, rh: f32| {
+        Shape::Rect(
+            Bounds::new(point(px(x), px(y)), size(px(rw), px(rh))),
+            color,
+        )
+    };
 
     // Rounded corners: a quarter curve between the two arms.
     if (0x256D..=0x2570).contains(&cp) {
@@ -102,10 +118,34 @@ pub(super) fn draw(c: char, o: Point<Pixels>, w: f32, h: f32, color: Hsla, out: 
         let half = light / 2.;
         let (cxl, cyl) = (cx + half, cy + half);
         let (from, ctrl, to, edge_a, edge_b) = match cp {
-            0x256D => (point(cxl + r, cyl), point(cxl, cyl), point(cxl, cyl + r), point(x0 + w, cyl), point(cxl, y0 + h)),
-            0x256E => (point(cxl - r, cyl), point(cxl, cyl), point(cxl, cyl + r), point(x0, cyl), point(cxl, y0 + h)),
-            0x256F => (point(cxl - r, cyl), point(cxl, cyl), point(cxl, cyl - r), point(x0, cyl), point(cxl, y0)),
-            _ => (point(cxl + r, cyl), point(cxl, cyl), point(cxl, cyl - r), point(x0 + w, cyl), point(cxl, y0)),
+            0x256D => (
+                point(cxl + r, cyl),
+                point(cxl, cyl),
+                point(cxl, cyl + r),
+                point(x0 + w, cyl),
+                point(cxl, y0 + h),
+            ),
+            0x256E => (
+                point(cxl - r, cyl),
+                point(cxl, cyl),
+                point(cxl, cyl + r),
+                point(x0, cyl),
+                point(cxl, y0 + h),
+            ),
+            0x256F => (
+                point(cxl - r, cyl),
+                point(cxl, cyl),
+                point(cxl, cyl - r),
+                point(x0, cyl),
+                point(cxl, y0),
+            ),
+            _ => (
+                point(cxl + r, cyl),
+                point(cxl, cyl),
+                point(cxl, cyl - r),
+                point(x0 + w, cyl),
+                point(cxl, y0),
+            ),
         };
         let mut b = PathBuilder::stroke(px(light));
         b.move_to(point(px(edge_a.x), px(edge_a.y)));
@@ -171,8 +211,17 @@ pub(super) fn draw(c: char, o: Point<Pixels>, w: f32, h: f32, color: Hsla, out: 
 fn block(cp: u32, o: Point<Pixels>, w: f32, h: f32, color: Hsla, out: &mut Vec<Shape>) {
     let (x0, y0) = (f32::from(o.x), f32::from(o.y));
     let mut fill = |fx: f32, fy: f32, fw: f32, fh: f32, alpha: f32| {
-        let c = Hsla { a: color.a * alpha, ..color };
-        out.push(Shape::Rect(Bounds::new(point(px(x0 + fx * w), px(y0 + fy * h)), size(px(fw * w), px(fh * h))), c));
+        let c = Hsla {
+            a: color.a * alpha,
+            ..color
+        };
+        out.push(Shape::Rect(
+            Bounds::new(
+                point(px(x0 + fx * w), px(y0 + fy * h)),
+                size(px(fw * w), px(fh * h)),
+            ),
+            c,
+        ));
     };
     let eighth = |n: u32| n as f32 / 8.;
     match cp {

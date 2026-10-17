@@ -5,10 +5,10 @@ use std::ops::Range;
 
 use gpui::{
     App, Bounds, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler, Entity,
-    EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId, KeyBinding, LayoutId,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, ShapedLine,
-    SharedString, Style, TextRun, UTF16Selection, Window, actions, div, fill, point, prelude::*, px,
-    relative, size,
+    EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId, KeyBinding,
+    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point,
+    ShapedLine, SharedString, Style, TextRun, UTF16Selection, Window, actions, div, fill, point,
+    prelude::*, px, relative, size,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -16,7 +16,22 @@ use super::theme::{ActiveTheme, mono_font, ui_font};
 
 actions!(
     text_input,
-    [Backspace, Delete, Left, Right, SelectLeft, SelectRight, SelectAll, Home, End, Paste, Cut, Copy, Enter, Escape]
+    [
+        Backspace,
+        Delete,
+        Left,
+        Right,
+        SelectLeft,
+        SelectRight,
+        SelectAll,
+        Home,
+        End,
+        Paste,
+        Cut,
+        Copy,
+        Enter,
+        Escape
+    ]
 );
 
 const CONTEXT: &str = "TextInput";
@@ -108,7 +123,14 @@ impl TextInput {
     /// Where a text offset is on screen: the same, unless each character is
     /// shown as one "•" (3 bytes).
     fn to_display(&self, offset: usize) -> usize {
-        if self.secret { self.content[..offset.min(self.content.len())].chars().count() * '•'.len_utf8() } else { offset }
+        if self.secret {
+            self.content[..offset.min(self.content.len())]
+                .chars()
+                .count()
+                * '•'.len_utf8()
+        } else {
+            offset
+        }
     }
 
     fn from_display(&self, index: usize) -> usize {
@@ -116,7 +138,11 @@ impl TextInput {
             return index;
         }
         let n = index / '•'.len_utf8();
-        self.content.char_indices().nth(n).map(|(i, _)| i).unwrap_or(self.content.len())
+        self.content
+            .char_indices()
+            .nth(n)
+            .map(|(i, _)| i)
+            .unwrap_or(self.content.len())
     }
 
     pub fn with_text(mut self, text: impl Into<SharedString>) -> Self {
@@ -135,7 +161,11 @@ impl TextInput {
         &self.content
     }
 
-    pub fn set_placeholder(&mut self, placeholder: impl Into<SharedString>, cx: &mut Context<Self>) {
+    pub fn set_placeholder(
+        &mut self,
+        placeholder: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
         self.placeholder = placeholder.into();
         cx.notify();
     }
@@ -207,7 +237,12 @@ impl TextInput {
         cx.emit(InputEvent::Cancel);
     }
 
-    fn on_mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn on_mouse_down(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         window.focus(&self.focus_handle);
         self.is_selecting = true;
         if event.modifiers.shift {
@@ -235,13 +270,17 @@ impl TextInput {
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
         if !self.selected_range.is_empty() && !self.secret {
-            cx.write_to_clipboard(ClipboardItem::new_string(self.content[self.selected_range.clone()].to_string()));
+            cx.write_to_clipboard(ClipboardItem::new_string(
+                self.content[self.selected_range.clone()].to_string(),
+            ));
         }
     }
 
     fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
         if !self.selected_range.is_empty() && !self.secret {
-            cx.write_to_clipboard(ClipboardItem::new_string(self.content[self.selected_range.clone()].to_string()));
+            cx.write_to_clipboard(ClipboardItem::new_string(
+                self.content[self.selected_range.clone()].to_string(),
+            ));
             self.replace_text_in_range(None, "", window, cx)
         }
     }
@@ -252,14 +291,19 @@ impl TextInput {
     }
 
     fn cursor_offset(&self) -> usize {
-        if self.selection_reversed { self.selected_range.start } else { self.selected_range.end }
+        if self.selection_reversed {
+            self.selected_range.start
+        } else {
+            self.selected_range.end
+        }
     }
 
     fn index_for_mouse_position(&self, position: Point<Pixels>) -> usize {
         if self.content.is_empty() {
             return 0;
         }
-        let (Some(bounds), Some(line)) = (self.last_bounds.as_ref(), self.last_layout.as_ref()) else {
+        let (Some(bounds), Some(line)) = (self.last_bounds.as_ref(), self.last_layout.as_ref())
+        else {
             return 0;
         };
         if position.y < bounds.top() {
@@ -319,7 +363,11 @@ impl TextInput {
     }
 
     fn previous_boundary(&self, offset: usize) -> usize {
-        self.content.grapheme_indices(true).rev().find_map(|(idx, _)| (idx < offset).then_some(idx)).unwrap_or(0)
+        self.content
+            .grapheme_indices(true)
+            .rev()
+            .find_map(|(idx, _)| (idx < offset).then_some(idx))
+            .unwrap_or(0)
     }
 
     fn next_boundary(&self, offset: usize) -> usize {
@@ -343,25 +391,43 @@ impl EntityInputHandler for TextInput {
         Some(self.content[range].to_string())
     }
 
-    fn selected_text_range(&mut self, _: bool, _: &mut Window, _: &mut Context<Self>) -> Option<UTF16Selection> {
-        Some(UTF16Selection { range: self.range_to_utf16(&self.selected_range), reversed: self.selection_reversed })
+    fn selected_text_range(
+        &mut self,
+        _: bool,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> Option<UTF16Selection> {
+        Some(UTF16Selection {
+            range: self.range_to_utf16(&self.selected_range),
+            reversed: self.selection_reversed,
+        })
     }
 
     fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
-        self.marked_range.as_ref().map(|range| self.range_to_utf16(range))
+        self.marked_range
+            .as_ref()
+            .map(|range| self.range_to_utf16(range))
     }
 
     fn unmark_text(&mut self, _: &mut Window, _: &mut Context<Self>) {
         self.marked_range = None;
     }
 
-    fn replace_text_in_range(&mut self, range_utf16: Option<Range<usize>>, new_text: &str, _: &mut Window, cx: &mut Context<Self>) {
+    fn replace_text_in_range(
+        &mut self,
+        range_utf16: Option<Range<usize>>,
+        new_text: &str,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let range = range_utf16
             .as_ref()
             .map(|r| self.range_from_utf16(r))
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
-        self.content = (self.content[0..range.start].to_owned() + new_text + &self.content[range.end..]).into();
+        self.content =
+            (self.content[0..range.start].to_owned() + new_text + &self.content[range.end..])
+                .into();
         self.selected_range = range.start + new_text.len()..range.start + new_text.len();
         self.marked_range.take();
         cx.emit(InputEvent::Changed);
@@ -381,8 +447,11 @@ impl EntityInputHandler for TextInput {
             .map(|r| self.range_from_utf16(r))
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
-        self.content = (self.content[0..range.start].to_owned() + new_text + &self.content[range.end..]).into();
-        self.marked_range = (!new_text.is_empty()).then(|| range.start..range.start + new_text.len());
+        self.content =
+            (self.content[0..range.start].to_owned() + new_text + &self.content[range.end..])
+                .into();
+        self.marked_range =
+            (!new_text.is_empty()).then(|| range.start..range.start + new_text.len());
         self.selected_range = new_selected_range_utf16
             .as_ref()
             .map(|r| self.range_from_utf16(r))
@@ -392,19 +461,38 @@ impl EntityInputHandler for TextInput {
         cx.notify();
     }
 
-    fn bounds_for_range(&mut self, range_utf16: Range<usize>, bounds: Bounds<Pixels>, _: &mut Window, _: &mut Context<Self>) -> Option<Bounds<Pixels>> {
+    fn bounds_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        bounds: Bounds<Pixels>,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> Option<Bounds<Pixels>> {
         let last_layout = self.last_layout.as_ref()?;
         let range = self.range_from_utf16(&range_utf16);
         Some(Bounds::from_corners(
-            point(bounds.left() + last_layout.x_for_index(self.to_display(range.start)) - self.scroll_x, bounds.top()),
-            point(bounds.left() + last_layout.x_for_index(self.to_display(range.end)) - self.scroll_x, bounds.bottom()),
+            point(
+                bounds.left() + last_layout.x_for_index(self.to_display(range.start))
+                    - self.scroll_x,
+                bounds.top(),
+            ),
+            point(
+                bounds.left() + last_layout.x_for_index(self.to_display(range.end)) - self.scroll_x,
+                bounds.bottom(),
+            ),
         ))
     }
 
-    fn character_index_for_point(&mut self, point: Point<Pixels>, _: &mut Window, _: &mut Context<Self>) -> Option<usize> {
+    fn character_index_for_point(
+        &mut self,
+        point: Point<Pixels>,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> Option<usize> {
         let line_point = self.last_bounds?.localize(&point)?;
         let last_layout = self.last_layout.as_ref()?;
-        let utf8_index = self.from_display(last_layout.index_for_x(point.x - line_point.x + self.scroll_x)?);
+        let utf8_index =
+            self.from_display(last_layout.index_for_x(point.x - line_point.x + self.scroll_x)?);
         Some(self.offset_to_utf16(utf8_index))
     }
 }
@@ -471,7 +559,10 @@ impl Element for TextElement {
 
         let (display_text, text_color) = match (content.is_empty(), input.secret) {
             (true, _) => (input.placeholder.clone(), theme.text_placeholder),
-            (false, true) => (SharedString::from("•".repeat(content.chars().count())), style.color),
+            (false, true) => (
+                SharedString::from("•".repeat(content.chars().count())),
+                style.color,
+            ),
             (false, false) => (content, style.color),
         };
 
@@ -485,13 +576,23 @@ impl Element for TextElement {
         };
         let runs = match input.marked_range.as_ref() {
             Some(marked) if !input.content.is_empty() && !input.secret => vec![
-                TextRun { len: marked.start, ..run.clone() },
                 TextRun {
-                    len: marked.end - marked.start,
-                    underline: Some(gpui::UnderlineStyle { color: Some(run.color), thickness: px(1.0), wavy: false }),
+                    len: marked.start,
                     ..run.clone()
                 },
-                TextRun { len: display_text.len() - marked.end, ..run },
+                TextRun {
+                    len: marked.end - marked.start,
+                    underline: Some(gpui::UnderlineStyle {
+                        color: Some(run.color),
+                        thickness: px(1.0),
+                        wavy: false,
+                    }),
+                    ..run.clone()
+                },
+                TextRun {
+                    len: display_text.len() - marked.end,
+                    ..run
+                },
             ]
             .into_iter()
             .filter(|run| run.len > 0)
@@ -500,9 +601,15 @@ impl Element for TextElement {
         };
 
         let font_size = style.font_size.to_pixels(window.rem_size());
-        let line = window.text_system().shape_line(display_text, font_size, &runs, None);
+        let line = window
+            .text_system()
+            .shape_line(display_text, font_size, &runs, None);
 
-        let cursor_pos = if input.content.is_empty() { px(0.) } else { line.x_for_index(input.to_display(cursor)) };
+        let cursor_pos = if input.content.is_empty() {
+            px(0.)
+        } else {
+            line.x_for_index(input.to_display(cursor))
+        };
         // Longer than the field: scrolled just enough to keep the cursor in view.
         let room = (bounds.size.width - px(2.)).max(px(0.));
         let mut scroll = input.scroll_x;
@@ -521,7 +628,10 @@ impl Element for TextElement {
             (
                 None,
                 Some(fill(
-                    Bounds::new(point(bounds.left() + cursor_pos - scroll, bounds.top() + px(2.)), size(px(1.5), bounds.size.height - px(4.))),
+                    Bounds::new(
+                        point(bounds.left() + cursor_pos - scroll, bounds.top() + px(2.)),
+                        size(px(1.5), bounds.size.height - px(4.)),
+                    ),
                     theme.accent,
                 )),
             )
@@ -529,15 +639,29 @@ impl Element for TextElement {
             (
                 Some(fill(
                     Bounds::from_corners(
-                        point(bounds.left() + line.x_for_index(input.to_display(selected_range.start)) - scroll, bounds.top()),
-                        point(bounds.left() + line.x_for_index(input.to_display(selected_range.end)) - scroll, bounds.bottom()),
+                        point(
+                            bounds.left()
+                                + line.x_for_index(input.to_display(selected_range.start))
+                                - scroll,
+                            bounds.top(),
+                        ),
+                        point(
+                            bounds.left() + line.x_for_index(input.to_display(selected_range.end))
+                                - scroll,
+                            bounds.bottom(),
+                        ),
                     ),
                     theme.selection,
                 )),
                 None,
             )
         };
-        PrepaintState { line: Some(line), cursor, selection, scroll }
+        PrepaintState {
+            line: Some(line),
+            cursor,
+            selection,
+            scroll,
+        }
     }
 
     fn paint(
@@ -551,15 +675,26 @@ impl Element for TextElement {
         cx: &mut App,
     ) {
         let focus_handle = self.input.read(cx).focus_handle.clone();
-        window.handle_input(&focus_handle, ElementInputHandler::new(bounds, self.input.clone()), cx);
+        window.handle_input(
+            &focus_handle,
+            ElementInputHandler::new(bounds, self.input.clone()),
+            cx,
+        );
         let scroll = prepaint.scroll;
-        let Some(line) = prepaint.line.take() else { return };
+        let Some(line) = prepaint.line.take() else {
+            return;
+        };
         // Text scrolled out of the field isn't drawn over its frame.
         window.with_content_mask(Some(gpui::ContentMask { bounds }), |window| {
             if let Some(selection) = prepaint.selection.take() {
                 window.paint_quad(selection)
             }
-            let _ = line.paint(point(bounds.origin.x - scroll, bounds.origin.y), window.line_height(), window, cx);
+            let _ = line.paint(
+                point(bounds.origin.x - scroll, bounds.origin.y),
+                window.line_height(),
+                window,
+                cx,
+            );
         });
         if focus_handle.is_focused(window) {
             if let Some(cursor) = prepaint.cursor.take() {
@@ -607,7 +742,15 @@ impl Render for TextInput {
             .h(px(28.))
             .px(px(8.))
             .rounded(px(6.))
-            .when(!self.bare, |d| d.border_1().border_color(if focused { theme.border_focused } else { theme.border_variant }).bg(theme.canvas))
+            .when(!self.bare, |d| {
+                d.border_1()
+                    .border_color(if focused {
+                        theme.border_focused
+                    } else {
+                        theme.border_variant
+                    })
+                    .bg(theme.canvas)
+            })
             .when(self.bare, |d| d.px(px(0.)))
             .text_color(theme.text)
             .font_family(if self.mono { mono_font() } else { ui_font() })

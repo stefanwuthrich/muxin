@@ -9,7 +9,7 @@ use super::format;
 use super::kit::{self, Button, ButtonStyle, card, icon, kv, section_title};
 use super::overview::{callout, page};
 use super::root::{Root, Route};
-use super::theme::{ActiveTheme, mono_font, Theme};
+use super::theme::{ActiveTheme, Theme, mono_font};
 use crate::fleet::model::{WorkspaceCommand, WorkspaceInfo};
 
 /// Per-view state for the workspace pages, kept on the root view.
@@ -26,7 +26,11 @@ impl Root {
     pub(super) fn render_workspaces(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let s = self.snapshot.clone();
-        let rows: Vec<AnyElement> = s.workspaces.iter().map(|w| self.workspace_card(&theme, w, cx)).collect();
+        let rows: Vec<AnyElement> = s
+            .workspaces
+            .iter()
+            .map(|w| self.workspace_card(&theme, w, cx))
+            .collect();
         let allowed = s.machines.iter().filter(|m| m.workspaces_allowed).count();
 
         page("workspaces-page", &self.page_scroll)
@@ -66,7 +70,12 @@ impl Root {
             )
     }
 
-    fn workspace_card(&self, theme: &Theme, w: &WorkspaceInfo, cx: &mut Context<Self>) -> AnyElement {
+    fn workspace_card(
+        &self,
+        theme: &Theme,
+        w: &WorkspaceInfo,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let id = w.id.clone();
         let shell = w.shell.clone();
         let last = w.history.last();
@@ -220,12 +229,30 @@ impl Root {
                             .flex()
                             .items_center()
                             .gap(px(10.))
-                            .child(div().text_size(px(22.)).font_weight(FontWeight::SEMIBOLD).child(w.name.clone()))
-                            .child(div().font_family(mono_font()).text_size(px(12.)).text_color(theme.text_placeholder).child(w.id.clone()))
-                            .when(w.isolation == "docker", |d| d.child(docker_pill(&theme, &w)))
+                            .child(
+                                div()
+                                    .text_size(px(22.))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(w.name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .font_family(mono_font())
+                                    .text_size(px(12.))
+                                    .text_color(theme.text_placeholder)
+                                    .child(w.id.clone()),
+                            )
+                            .when(w.isolation == "docker", |d| {
+                                d.child(docker_pill(&theme, &w))
+                            })
                             .child(status_pill(&theme, &w)),
                     )
-                    .child(div().text_size(px(12.5)).text_color(theme.text_muted).child(workspace_subtitle(&w))),
+                    .child(
+                        div()
+                            .text_size(px(12.5))
+                            .text_color(theme.text_muted)
+                            .child(workspace_subtitle(&w)),
+                    ),
             )
             .child(
                 div()
@@ -237,26 +264,34 @@ impl Root {
                             .icon("square-terminal")
                             .style(ButtonStyle::Primary)
                             .disabled(w.status != "ready")
-                            .on_click(cx.listener(move |this, _, window, cx| this.new_workspace_session(&ws, window, cx)))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.new_workspace_session(&ws, window, cx)
+                            }))
                     })
                     .child({
                         let (mid, path) = (w.machine_id.clone(), w.path.clone());
                         Button::new("ws-editor", "Open in editor")
                             .icon("code")
                             .disabled(w.status != "ready")
-                            .on_click(cx.listener(move |this, e: &gpui::ClickEvent, _, cx| this.pick_editor(&mid, &path, e.position(), cx)))
+                            .on_click(cx.listener(move |this, e: &gpui::ClickEvent, _, cx| {
+                                this.pick_editor(&mid, &path, e.position(), cx)
+                            }))
                     })
                     .child(
                         Button::new("ws-copy-shell", "Copy shell command")
                             .icon("terminal")
-                            .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(shell.clone()))),
+                            .on_click(move |_, _, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(shell.clone()))
+                            }),
                     )
                     .child({
                         let wid = w.id.clone();
                         Button::new("ws-changes", "Changes")
                             .icon("git-branch")
                             .loading(self.ws_ui.loading_changes.contains(&w.id))
-                            .on_click(cx.listener(move |this, _, _, cx| this.load_workspace_changes(&wid, cx)))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.load_workspace_changes(&wid, cx)
+                            }))
                     })
                     .child({
                         let wid = w.id.clone();
@@ -265,7 +300,9 @@ impl Root {
                             .style(ButtonStyle::Danger)
                             .tooltip("Destroy workspace")
                             .disabled(w.status == "destroying")
-                            .on_click(cx.listener(move |this, _, window, cx| this.confirm_destroy_workspace(&wid, &name, window, cx)))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.confirm_destroy_workspace(&wid, &name, window, cx)
+                            }))
                     }),
             );
 
@@ -283,8 +320,15 @@ impl Root {
                     .cursor_pointer()
                     .text_color(theme.text_accent)
                     .child(w.machine_name.clone())
-                    .child(div().font_family(mono_font()).text_color(theme.text_placeholder).child(format!("{} · {}", w.host, w.platform)))
-                    .on_click(cx.listener(move |this, _, window, cx| this.navigate(Route::Machine(machine_id.clone()), window, cx))),
+                    .child(
+                        div()
+                            .font_family(mono_font())
+                            .text_color(theme.text_placeholder)
+                            .child(format!("{} · {}", w.host, w.platform)),
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.navigate(Route::Machine(machine_id.clone()), window, cx)
+                    })),
             ))
             .child(kv(
                 &theme,
@@ -294,9 +338,13 @@ impl Root {
                     .items_center()
                     .gap(px(6.))
                     .child(kit::mono(w.path.clone()))
-                    .child(Button::icon_only("ws-copy-path", "copy").tooltip("Copy path").on_click(move |_, _, cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(path.clone()))
-                    })),
+                    .child(
+                        Button::icon_only("ws-copy-path", "copy")
+                            .tooltip("Copy path")
+                            .on_click(move |_, _, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(path.clone()))
+                            }),
+                    ),
             ))
             .child(kv(
                 &theme,
@@ -305,28 +353,63 @@ impl Root {
                     kit::mono(format!(
                         "Docker · {}{}",
                         w.image.clone().unwrap_or_default(),
-                        w.container.as_ref().map(|c| format!(" · {c}")).unwrap_or_default()
+                        w.container
+                            .as_ref()
+                            .map(|c| format!(" · {c}"))
+                            .unwrap_or_default()
                     ))
                     .into_any_element()
                 } else {
                     div().child("Directly on the machine").into_any_element()
                 },
             ))
-            .children(w.repo.clone().map(|r| kv(&theme, "Repository", kit::mono(r))))
-            .children(w.git_ref.clone().map(|r| kv(&theme, "Checked out", kit::mono(r))))
+            .children(
+                w.repo
+                    .clone()
+                    .map(|r| kv(&theme, "Repository", kit::mono(r))),
+            )
+            .children(
+                w.git_ref
+                    .clone()
+                    .map(|r| kv(&theme, "Checked out", kit::mono(r))),
+            )
             .children(w.branch.clone().map(|b| kv(&theme, "Branch", kit::mono(b))))
             .children(w.owner.clone().map(|o| kv(&theme, "Created by", o)))
-            .child(kv(&theme, "Created", format!("{} · last used {}", format::ago(Some(w.created_at)), format::ago(Some(w.last_used_at)))));
+            .child(kv(
+                &theme,
+                "Created",
+                format!(
+                    "{} · last used {}",
+                    format::ago(Some(w.created_at)),
+                    format::ago(Some(w.last_used_at))
+                ),
+            ));
 
         let mut body = page("workspace-page", &self.page_scroll).child(header);
         if let Some(err) = &w.error {
-            body = body.child(callout(&theme, "error", "Workspace error", err.clone(), None));
+            body = body.child(callout(
+                &theme,
+                "error",
+                "Workspace error",
+                err.clone(),
+                None,
+            ));
         }
         body = body.child(details);
         // Sessions working in this folder.
-        let here: Vec<_> = self.snapshot.sessions.iter().filter(|x| x.machine_id == w.machine_id && x.cwd.starts_with(&w.path)).cloned().collect();
+        let here: Vec<_> = self
+            .snapshot
+            .sessions
+            .iter()
+            .filter(|x| x.machine_id == w.machine_id && x.cwd.starts_with(&w.path))
+            .cloned()
+            .collect();
         if !here.is_empty() {
-            let rows: Vec<AnyElement> = here.iter().enumerate().map(|(i, x)| self.machine_session_row(&theme, x, i, false, cx)).collect();
+            let rows: Vec<AnyElement> = here
+                .iter()
+                .enumerate()
+                .map(|(i, x)| self.machine_session_row(&theme, x, i, false, cx))
+                .collect();
             body = body.child(
                 div()
                     .flex()
@@ -359,8 +442,13 @@ impl Root {
             );
         }
 
-        let history: Vec<AnyElement> =
-            w.history.iter().enumerate().rev().map(|(i, c)| self.history_row(&theme, &w.id, i, c, cx)).collect();
+        let history: Vec<AnyElement> = w
+            .history
+            .iter()
+            .enumerate()
+            .rev()
+            .map(|(i, c)| self.history_row(&theme, &w.id, i, c, cx))
+            .collect();
         body.child(
             div()
                 .flex()
@@ -370,13 +458,26 @@ impl Root {
                 .child(
                     card(&theme)
                         .children(history)
-                        .when(w.history.is_empty(), |d| d.child(kit::empty_state(&theme, "terminal", "Nothing has run here yet."))),
+                        .when(w.history.is_empty(), |d| {
+                            d.child(kit::empty_state(
+                                &theme,
+                                "terminal",
+                                "Nothing has run here yet.",
+                            ))
+                        }),
                 ),
         )
         .into_any_element()
     }
 
-    fn history_row(&self, theme: &Theme, ws: &str, i: usize, c: &WorkspaceCommand, cx: &mut Context<Self>) -> AnyElement {
+    fn history_row(
+        &self,
+        theme: &Theme,
+        ws: &str,
+        i: usize,
+        c: &WorkspaceCommand,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let key = (ws.to_string(), i);
         let open = self.ws_ui.expanded.contains(&key);
         let toggle = key.clone();
@@ -396,15 +497,50 @@ impl Root {
                     .py(px(8.))
                     .cursor_pointer()
                     .hover(|st| st.bg(theme.ghost_hover))
-                    .child(icon(if open { "chevron-down" } else { "chevron-right" }, 12., theme.text_placeholder))
-                    .child(div().flex_1().min_w(px(0.)).truncate().font_family(mono_font()).text_size(px(12.5)).child(c.command.clone()))
-                    .children(c.by.clone().map(|b| div().text_size(px(11.)).text_color(theme.text_placeholder).child(b)))
-                    .child(div().w(px(64.)).flex_none().text_size(px(11.5)).text_color(theme.text_placeholder).child(if c.background {
-                        "background".to_string()
-                    } else {
-                        crate::util::short_duration(c.duration_ms / 1000)
+                    .child(icon(
+                        if open {
+                            "chevron-down"
+                        } else {
+                            "chevron-right"
+                        },
+                        12.,
+                        theme.text_placeholder,
+                    ))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .truncate()
+                            .font_family(mono_font())
+                            .text_size(px(12.5))
+                            .child(c.command.clone()),
+                    )
+                    .children(c.by.clone().map(|b| {
+                        div()
+                            .text_size(px(11.))
+                            .text_color(theme.text_placeholder)
+                            .child(b)
                     }))
-                    .child(div().w(px(70.)).flex_none().text_size(px(11.5)).text_color(theme.text_placeholder).child(format::ago(Some(c.started_at))))
+                    .child(
+                        div()
+                            .w(px(64.))
+                            .flex_none()
+                            .text_size(px(11.5))
+                            .text_color(theme.text_placeholder)
+                            .child(if c.background {
+                                "background".to_string()
+                            } else {
+                                crate::util::short_duration(c.duration_ms / 1000)
+                            }),
+                    )
+                    .child(
+                        div()
+                            .w(px(70.))
+                            .flex_none()
+                            .text_size(px(11.5))
+                            .text_color(theme.text_placeholder)
+                            .child(format::ago(Some(c.started_at))),
+                    )
                     .child(exit_badge(theme, c))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if !this.ws_ui.expanded.remove(&toggle) {
@@ -426,15 +562,31 @@ impl Root {
                         .line_height(px(17.))
                         .text_color(theme.text_muted)
                         .children(c.output_tail.iter().map(|l| div().child(l.clone())))
-                        .when(c.output_tail.is_empty(), |d| d.child(div().text_color(theme.text_placeholder).child("(no output)"))),
+                        .when(c.output_tail.is_empty(), |d| {
+                            d.child(
+                                div()
+                                    .text_color(theme.text_placeholder)
+                                    .child("(no output)"),
+                            )
+                        }),
                 )
             })
             .into_any_element()
     }
 
     /// The machine page's list of workspaces, plus the switch that allows them.
-    pub(super) fn machine_workspaces(&self, theme: &Theme, s: &crate::fleet::model::Snapshot, m: &crate::fleet::model::Machine, cx: &mut Context<Self>) -> AnyElement {
-        let mine: Vec<&WorkspaceInfo> = s.workspaces.iter().filter(|w| w.machine_id == m.id).collect();
+    pub(super) fn machine_workspaces(
+        &self,
+        theme: &Theme,
+        s: &crate::fleet::model::Snapshot,
+        m: &crate::fleet::model::Machine,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let mine: Vec<&WorkspaceInfo> = s
+            .workspaces
+            .iter()
+            .filter(|w| w.machine_id == m.id)
+            .collect();
         let rows: Vec<AnyElement> = mine
             .iter()
             .enumerate()
@@ -450,17 +602,43 @@ impl Root {
                     .cursor_pointer()
                     .hover(|st| st.bg(theme.ghost_hover))
                     .when(i > 0, |d| d.border_t_1().border_color(theme.border_variant))
-                    .child(kit::tile("terminal", kit::tiles::WORKSPACES.0, kit::tiles::WORKSPACES.1, 18.))
+                    .child(kit::tile(
+                        "terminal",
+                        kit::tiles::WORKSPACES.0,
+                        kit::tiles::WORKSPACES.1,
+                        18.,
+                    ))
                     .child(div().text_size(px(13.)).child(w.name.clone()))
-                    .child(div().font_family(mono_font()).text_size(px(11.)).text_color(theme.text_placeholder).child(w.id.clone()))
+                    .child(
+                        div()
+                            .font_family(mono_font())
+                            .text_size(px(11.))
+                            .text_color(theme.text_placeholder)
+                            .child(w.id.clone()),
+                    )
                     .child(div().flex_1())
-                    .children(w.owner.clone().map(|o| div().text_size(px(11.5)).text_color(theme.text_placeholder).child(o)))
-                    .child(div().text_size(px(11.5)).text_color(theme.text_placeholder).child(format!("used {}", format::ago(Some(w.last_used_at)))))
+                    .children(w.owner.clone().map(|o| {
+                        div()
+                            .text_size(px(11.5))
+                            .text_color(theme.text_placeholder)
+                            .child(o)
+                    }))
+                    .child(
+                        div()
+                            .text_size(px(11.5))
+                            .text_color(theme.text_placeholder)
+                            .child(format!("used {}", format::ago(Some(w.last_used_at)))),
+                    )
                     .child(status_pill(theme, w))
-                    .on_click(cx.listener(move |this, _, window, cx| this.navigate(Route::Workspace(id.clone()), window, cx)))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.navigate(Route::Workspace(id.clone()), window, cx)
+                    }))
                     .on_mouse_down(gpui::MouseButton::Right, {
                         let wid = w.id.clone();
-                        super::menu::on_right_click(move || super::menu::MenuTarget::Workspace(wid.clone()), cx)
+                        super::menu::on_right_click(
+                            move || super::menu::MenuTarget::Workspace(wid.clone()),
+                            cx,
+                        )
                     })
                     .into_any_element()
             })
@@ -483,16 +661,26 @@ impl Root {
                             .flex()
                             .items_center()
                             .gap(px(12.))
-                            .child(kit::checkbox(theme, "ws-allow", allowed, "Allow agents to create workspaces here", cx.listener(move |this, value: &bool, _, cx| {
-                                if let Err(e) = this.engine.set_workspaces_allowed(&machine_id, *value) {
-                                    this.notify_user(e, true, cx);
-                                }
-                            })))
+                            .child(kit::checkbox(
+                                theme,
+                                "ws-allow",
+                                allowed,
+                                "Allow agents to create workspaces here",
+                                cx.listener(move |this, value: &bool, _, cx| {
+                                    if let Err(e) =
+                                        this.engine.set_workspaces_allowed(&machine_id, *value)
+                                    {
+                                        this.notify_user(e, true, cx);
+                                    }
+                                }),
+                            ))
                             .child(
                                 Button::new("ws-new-here", "New workspace")
                                     .icon("plus")
                                     .disabled(!allowed || m.is_down())
-                                    .on_click(cx.listener(move |this, _, window, cx| this.show_new_workspace(Some(new_on.clone()), window, cx))),
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.show_new_workspace(Some(new_on.clone()), window, cx)
+                                    })),
                             ),
                     ),
             )
@@ -501,7 +689,11 @@ impl Root {
                     .child(kit::empty_state(
                         theme,
                         "terminal",
-                        if allowed { "No workspaces here. Agents create them with workspace_create." } else { "Agents can't create workspaces on this machine." },
+                        if allowed {
+                            "No workspaces here. Agents create them with workspace_create."
+                        } else {
+                            "Agents can't create workspaces on this machine."
+                        },
                     ))
                     .into_any_element()
             } else {
@@ -537,7 +729,12 @@ impl Root {
 fn workspace_subtitle(w: &WorkspaceInfo) -> String {
     let mut parts = vec![w.machine_name.clone()];
     if let Some(repo) = &w.repo {
-        let at = w.branch.as_ref().or(w.git_ref.as_ref()).map(|r| format!(" @ {r}")).unwrap_or_default();
+        let at = w
+            .branch
+            .as_ref()
+            .or(w.git_ref.as_ref())
+            .map(|r| format!(" @ {r}"))
+            .unwrap_or_default();
         parts.push(format!("{repo}{at}"));
     }
     if let Some(src) = &w.worktree_of {
@@ -549,7 +746,12 @@ fn workspace_subtitle(w: &WorkspaceInfo) -> String {
 /// A worktree whose pull request is merged: its work is done, so it can go.
 fn merged_pull(w: &WorkspaceInfo) -> Option<u64> {
     w.worktree_of.as_ref()?;
-    w.git.as_ref()?.pull.as_ref().filter(|p| p.state == "merged").map(|p| p.number)
+    w.git
+        .as_ref()?
+        .pull
+        .as_ref()
+        .filter(|p| p.state == "merged")
+        .map(|p| p.number)
 }
 
 fn status_pill(theme: &Theme, w: &WorkspaceInfo) -> AnyElement {
@@ -559,7 +761,11 @@ fn status_pill(theme: &Theme, w: &WorkspaceInfo) -> AnyElement {
             .flex()
             .items_center()
             .gap(px(5.))
-            .child(kit::spinner(SharedString::from(format!("ws-spin-{}", w.id)), 11., theme.accent))
+            .child(kit::spinner(
+                SharedString::from(format!("ws-spin-{}", w.id)),
+                11.,
+                theme.accent,
+            ))
             .child(kit::pill("creating", theme.accent))
             .into_any_element(),
         "destroying" => kit::pill("destroying", theme.warning).into_any_element(),
@@ -604,9 +810,19 @@ fn diff_line(theme: &Theme, line: &str, failed: bool) -> AnyElement {
     } else {
         theme.text_muted
     };
-    div().text_color(color).child(line.to_string()).into_any_element()
+    div()
+        .text_color(color)
+        .child(line.to_string())
+        .into_any_element()
 }
 
 fn docker_pill(theme: &Theme, w: &WorkspaceInfo) -> AnyElement {
-    kit::pill(format!("docker · {}", w.image.clone().unwrap_or_else(|| "container".into())), theme.info).into_any_element()
+    kit::pill(
+        format!(
+            "docker · {}",
+            w.image.clone().unwrap_or_else(|| "container".into())
+        ),
+        theme.info,
+    )
+    .into_any_element()
 }

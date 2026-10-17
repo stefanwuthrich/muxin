@@ -60,7 +60,10 @@ fn store() -> Option<PathBuf> {
 }
 
 fn load() -> HashMap<String, Paired> {
-    store().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+    store()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
 }
 
 pub fn paired(machine_id: &str) -> Option<Paired> {
@@ -74,7 +77,8 @@ pub fn save(machine_id: &str, entry: Option<Paired>) -> Result<(), String> {
         Some(e) => all.insert(machine_id.to_string(), e),
         None => all.remove(machine_id),
     };
-    crate::config::write_atomic(&path, &serde_json::to_vec_pretty(&all).unwrap_or_default()).map_err(|e| e.to_string())?;
+    crate::config::write_atomic(&path, &serde_json::to_vec_pretty(&all).unwrap_or_default())
+        .map_err(|e| e.to_string())?;
     failures().lock().unwrap().remove(machine_id);
     Ok(())
 }
@@ -91,18 +95,29 @@ pub fn retry_all() {
 }
 
 pub fn fingerprint(der: &[u8]) -> String {
-    ring::digest::digest(&ring::digest::SHA256, der).as_ref().iter().map(|b| format!("{b:02x}")).collect()
+    ring::digest::digest(&ring::digest::SHA256, der)
+        .as_ref()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// This app's certificate and key, made on first use.
 fn identity() -> Result<(CertificateDer<'static>, PrivateKeyDer<'static>), String> {
-    let dir = DIR.get().ok_or("Muxin's config folder isn't set")?.join("identity");
+    let dir = DIR
+        .get()
+        .ok_or("Muxin's config folder isn't set")?
+        .join("identity");
     let (cert_path, key_path) = (dir.join("cert.der"), dir.join("key.der"));
     if let (Ok(cert), Ok(key)) = (std::fs::read(&cert_path), std::fs::read(&key_path)) {
-        return Ok((CertificateDer::from(cert), PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key))));
+        return Ok((
+            CertificateDer::from(cert),
+            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key)),
+        ));
     }
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let made = rcgen::generate_simple_self_signed(vec!["muxen-app".to_string()]).map_err(|e| e.to_string())?;
+    let made = rcgen::generate_simple_self_signed(vec!["muxen-app".to_string()])
+        .map_err(|e| e.to_string())?;
     let (cert, key) = (made.cert.der().to_vec(), made.key_pair.serialize_der());
     {
         use std::io::Write;
@@ -112,10 +127,15 @@ fn identity() -> Result<(CertificateDer<'static>, PrivateKeyDer<'static>), Strin
         opts.create(true).truncate(true).write(true);
         #[cfg(unix)]
         opts.mode(0o600);
-        opts.open(&key_path).and_then(|mut f| f.write_all(&key)).map_err(|e| e.to_string())?;
+        opts.open(&key_path)
+            .and_then(|mut f| f.write_all(&key))
+            .map_err(|e| e.to_string())?;
     }
     std::fs::write(&cert_path, &cert).map_err(|e| e.to_string())?;
-    Ok((CertificateDer::from(cert), PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key))))
+    Ok((
+        CertificateDer::from(cert),
+        PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key)),
+    ))
 }
 
 /// This app's fingerprint, which paired agents trust.
@@ -131,19 +151,38 @@ struct PinnedAgent {
 }
 
 impl ServerCertVerifier for PinnedAgent {
-    fn verify_server_cert(&self, cert: &CertificateDer<'_>, _: &[CertificateDer<'_>], _: &ServerName<'_>, _: &[u8], _: UnixTime) -> Result<ServerCertVerified, rustls::Error> {
+    fn verify_server_cert(
+        &self,
+        cert: &CertificateDer<'_>,
+        _: &[CertificateDer<'_>],
+        _: &ServerName<'_>,
+        _: &[u8],
+        _: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
         if fingerprint(cert.as_ref()) == self.fingerprint {
             Ok(ServerCertVerified::assertion())
         } else {
-            Err(rustls::Error::General("that isn't the agent this machine was paired with".into()))
+            Err(rustls::Error::General(
+                "that isn't the agent this machine was paired with".into(),
+            ))
         }
     }
 
-    fn verify_tls12_signature(&self, message: &[u8], cert: &CertificateDer<'_>, dss: &DigitallySignedStruct) -> Result<HandshakeSignatureValid, rustls::Error> {
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
         verify_tls12_signature(message, cert, dss, &self.algorithms)
     }
 
-    fn verify_tls13_signature(&self, message: &[u8], cert: &CertificateDer<'_>, dss: &DigitallySignedStruct) -> Result<HandshakeSignatureValid, rustls::Error> {
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
         verify_tls13_signature(message, cert, dss, &self.algorithms)
     }
 
@@ -177,12 +216,22 @@ pub fn fresh_sockets() {
 
 /// One client endpoint per address family, shared by every connection.
 fn endpoint(v6: bool) -> Result<quinn::Endpoint, String> {
-    let (cell, bind) = if v6 { (&V6, "[::]:0") } else { (&V4, "0.0.0.0:0") };
+    let (cell, bind) = if v6 {
+        (&V6, "[::]:0")
+    } else {
+        (&V4, "0.0.0.0:0")
+    };
     if let Some(e) = cell.get() {
         return Ok(e.clone());
     }
     let socket = udp_socket(bind.parse().expect("valid address")).map_err(|e| e.to_string())?;
-    let e = quinn::Endpoint::new(quinn::EndpointConfig::default(), None, socket, Arc::new(quinn::TokioRuntime)).map_err(|e| e.to_string())?;
+    let e = quinn::Endpoint::new(
+        quinn::EndpointConfig::default(),
+        None,
+        socket,
+        Arc::new(quinn::TokioRuntime),
+    )
+    .map_err(|e| e.to_string())?;
     Ok(cell.get_or_init(|| e).clone())
 }
 
@@ -200,12 +249,20 @@ fn udp_socket(addr: SocketAddr) -> std::io::Result<std::net::UdpSocket> {
 
 /// Opens a direct connection to a paired machine (or says why not).
 pub async fn connect(machine_id: &str, p: &Paired) -> Result<quinn::Connection, String> {
-    if failures().lock().unwrap().get(machine_id).is_some_and(|t| t.elapsed() < RETRY_AFTER) {
+    if failures()
+        .lock()
+        .unwrap()
+        .get(machine_id)
+        .is_some_and(|t| t.elapsed() < RETRY_AFTER)
+    {
         return Err("a direct connection failed a moment ago".into());
     }
     let result = try_connect(p).await;
     if result.is_err() {
-        failures().lock().unwrap().insert(machine_id.to_string(), Instant::now());
+        failures()
+            .lock()
+            .unwrap()
+            .insert(machine_id.to_string(), Instant::now());
     }
     result
 }
@@ -216,22 +273,41 @@ async fn try_connect(p: &Paired) -> Result<quinn::Connection, String> {
     // addresses right away, its Tailscale ones a moment later, then wherever
     // its name leads (a VPN, the internet). The first to answer wins; the
     // others are dropped.
-    let parse = |ips: &[String]| -> Vec<SocketAddr> { ips.iter().filter_map(|ip| ip.parse().ok()).map(|ip| SocketAddr::new(ip, p.port)).collect() };
+    let parse = |ips: &[String]| -> Vec<SocketAddr> {
+        ips.iter()
+            .filter_map(|ip| ip.parse().ok())
+            .map(|ip| SocketAddr::new(ip, p.port))
+            .collect()
+    };
     let (lan, tailnet) = (parse(&p.lan), parse(&p.tailnet));
     let mut attempts: FuturesUnordered<Attempt> = FuturesUnordered::new();
     for a in &lan {
-        attempts.push(attempt(&config, *a, Duration::ZERO, Duration::from_millis(1500), p.port));
+        attempts.push(attempt(
+            &config,
+            *a,
+            Duration::ZERO,
+            Duration::from_millis(1500),
+            p.port,
+        ));
     }
     for a in tailnet.iter().filter(|a| !lan.contains(a)) {
         // IPv4 a touch sooner: same path, a shorter address to show.
-        let delay = HEAD_START + if a.is_ipv6() { Duration::from_millis(50) } else { Duration::ZERO };
+        let delay = HEAD_START
+            + if a.is_ipv6() {
+                Duration::from_millis(50)
+            } else {
+                Duration::ZERO
+            };
         attempts.push(attempt(&config, *a, delay, Duration::from_secs(4), p.port));
     }
     let (host, port, config2) = (p.host.clone(), p.port, config.clone());
     let known: Vec<SocketAddr> = lan.iter().chain(&tailnet).copied().collect();
     attempts.push(Box::pin(async move {
         tokio::time::sleep(HEAD_START * 2).await;
-        let mut by_name: Vec<SocketAddr> = tokio::net::lookup_host((host.as_str(), port)).await.map(|a| a.collect()).unwrap_or_default();
+        let mut by_name: Vec<SocketAddr> = tokio::net::lookup_host((host.as_str(), port))
+            .await
+            .map(|a| a.collect())
+            .unwrap_or_default();
         // IPv4 first: home networks and VPNs route it most reliably.
         by_name.sort_by_key(|a| a.is_ipv6());
         by_name.retain(|a| !known.contains(a));
@@ -254,15 +330,24 @@ async fn try_connect(p: &Paired) -> Result<quinn::Connection, String> {
     Err(errors.join("; "))
 }
 
-type Attempt = std::pin::Pin<Box<dyn std::future::Future<Output = Result<quinn::Connection, String>> + Send>>;
+type Attempt =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<quinn::Connection, String>> + Send>>;
 
 /// One try at one address, after `delay`.
-fn attempt(config: &quinn::ClientConfig, addr: SocketAddr, delay: Duration, limit: Duration, port: u16) -> Attempt {
+fn attempt(
+    config: &quinn::ClientConfig,
+    addr: SocketAddr,
+    delay: Duration,
+    limit: Duration,
+    port: u16,
+) -> Attempt {
     let config = config.clone();
     Box::pin(async move {
         tokio::time::sleep(delay).await;
         let ep = endpoint(addr.is_ipv6())?;
-        let connecting = ep.connect_with(config, addr, "muxen-agent").map_err(|e| format!("{addr}: {e}"))?;
+        let connecting = ep
+            .connect_with(config, addr, "muxen-agent")
+            .map_err(|e| format!("{addr}: {e}"))?;
         match tokio::time::timeout(limit, connecting).await {
             Ok(Ok(conn)) => Ok(conn),
             Ok(Err(e)) => Err(format!("{addr}: {e}")),
@@ -274,9 +359,23 @@ fn attempt(config: &quinn::ClientConfig, addr: SocketAddr, delay: Duration, limi
 /// Whether the machine answers on its local network right now: for moving a
 /// connection that went through Tailscale back to the short way.
 pub async fn lan_answers(p: &Paired) -> bool {
-    let Ok(config) = client_config(p) else { return false };
-    let mut attempts: FuturesUnordered<Attempt> =
-        p.lan.iter().filter_map(|ip| ip.parse().ok()).map(|ip| attempt(&config, SocketAddr::new(ip, p.port), Duration::ZERO, Duration::from_millis(800), p.port)).collect();
+    let Ok(config) = client_config(p) else {
+        return false;
+    };
+    let mut attempts: FuturesUnordered<Attempt> = p
+        .lan
+        .iter()
+        .filter_map(|ip| ip.parse().ok())
+        .map(|ip| {
+            attempt(
+                &config,
+                SocketAddr::new(ip, p.port),
+                Duration::ZERO,
+                Duration::from_millis(800),
+                p.port,
+            )
+        })
+        .collect();
     while let Some(result) = attempts.next().await {
         if let Ok(conn) = result {
             conn.close(0u32.into(), b"just looking");
@@ -289,7 +388,10 @@ pub async fn lan_answers(p: &Paired) -> bool {
 fn client_config(p: &Paired) -> Result<quinn::ClientConfig, String> {
     let (cert, key) = identity()?;
     let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let verifier = PinnedAgent { fingerprint: p.fingerprint.clone(), algorithms: provider.signature_verification_algorithms };
+    let verifier = PinnedAgent {
+        fingerprint: p.fingerprint.clone(),
+        algorithms: provider.signature_verification_algorithms,
+    };
     let mut tls = rustls::ClientConfig::builder_with_provider(provider)
         .with_protocol_versions(&[&rustls::version::TLS13])
         .map_err(|e| e.to_string())?
@@ -298,7 +400,8 @@ fn client_config(p: &Paired) -> Result<quinn::ClientConfig, String> {
         .with_client_auth_cert(vec![cert], key)
         .map_err(|e| e.to_string())?;
     tls.alpn_protocols = vec![ALPN.to_vec()];
-    let crypto = quinn::crypto::rustls::QuicClientConfig::try_from(tls).map_err(|e| e.to_string())?;
+    let crypto =
+        quinn::crypto::rustls::QuicClientConfig::try_from(tls).map_err(|e| e.to_string())?;
     let mut config = quinn::ClientConfig::new(Arc::new(crypto));
     let mut transport = quinn::TransportConfig::default();
     transport.keep_alive_interval(Some(Duration::from_secs(4)));
@@ -308,13 +411,25 @@ fn client_config(p: &Paired) -> Result<quinn::ClientConfig, String> {
     transport.stream_receive_window(quinn::VarInt::from_u32(16 << 20));
     transport.receive_window(quinn::VarInt::from_u32(32 << 20));
     transport.send_window(32 << 20);
-    transport.max_idle_timeout(Some(Duration::from_secs(12).try_into().map_err(|_| "bad timeout")?));
+    transport.max_idle_timeout(Some(
+        Duration::from_secs(12)
+            .try_into()
+            .map_err(|_| "bad timeout")?,
+    ));
     config.transport_config(Arc::new(transport));
     Ok(config)
 }
 
 /// The machine's address as ssh resolves it (aliases in ~/.ssh/config included).
 pub async fn resolve_host(spec: &MachineSpec) -> Option<String> {
-    let out = tokio::process::Command::new("ssh").arg("-G").args(probe::ssh_args(spec)).output().await.ok()?;
-    String::from_utf8_lossy(&out.stdout).lines().find_map(|l| l.strip_prefix("hostname ").map(|h| h.trim().to_string())).filter(|h| !h.is_empty())
+    let out = tokio::process::Command::new("ssh")
+        .arg("-G")
+        .args(probe::ssh_args(spec))
+        .output()
+        .await
+        .ok()?;
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .find_map(|l| l.strip_prefix("hostname ").map(|h| h.trim().to_string()))
+        .filter(|h| !h.is_empty())
 }

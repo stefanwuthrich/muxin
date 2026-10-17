@@ -16,7 +16,10 @@ use crate::fleet::model::{Operation, Snapshot, WorkspaceCommand, WorkspaceInfo};
 pub enum ActivityItem {
     Op(u64),
     /// A command in a workspace's history.
-    Command { workspace: String, index: usize },
+    Command {
+        workspace: String,
+        index: usize,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -45,7 +48,10 @@ impl Entry<'_> {
     fn item(&self) -> ActivityItem {
         match self {
             Entry::Op(o) => ActivityItem::Op(o.id),
-            Entry::Command(w, i, _) => ActivityItem::Command { workspace: w.id.clone(), index: *i },
+            Entry::Command(w, i, _) => ActivityItem::Command {
+                workspace: w.id.clone(),
+                index: *i,
+            },
         }
     }
 
@@ -66,7 +72,12 @@ fn feed(s: &Snapshot, filter: ActivityFilter) -> Vec<Entry<'_>> {
     }
     if filter != ActivityFilter::Operations {
         for w in &s.workspaces {
-            entries.extend(w.history.iter().enumerate().map(|(i, c)| Entry::Command(w, i, c)));
+            entries.extend(
+                w.history
+                    .iter()
+                    .enumerate()
+                    .map(|(i, c)| Entry::Command(w, i, c)),
+            );
         }
     }
     if filter == ActivityFilter::Failed {
@@ -96,7 +107,11 @@ impl Root {
         }
         let entries = feed(&s, self.activity_filter);
         let selected = self.selected_activity(&s);
-        let running = s.operations.iter().filter(|o| o.status == "running").count();
+        let running = s
+            .operations
+            .iter()
+            .filter(|o| o.status == "running")
+            .count();
 
         let filters = [
             (ActivityFilter::All, "All"),
@@ -124,7 +139,12 @@ impl Root {
                     .cursor_pointer()
                     .text_size(px(12.5))
                     .text_color(if active { theme.text } else { theme.text_muted })
-                    .when(active, |d| d.bg(theme.surface).border_1().border_color(theme.border).shadow_sm())
+                    .when(active, |d| {
+                        d.bg(theme.surface)
+                            .border_1()
+                            .border_color(theme.border)
+                            .shadow_sm()
+                    })
                     .child(label)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.activity_filter = f;
@@ -132,15 +152,26 @@ impl Root {
                     }))
             }));
 
-        let list: Vec<AnyElement> = entries.iter().map(|e| self.feed_row(&theme, e, selected.as_ref() == Some(&e.item()), cx)).collect();
+        let list: Vec<AnyElement> = entries
+            .iter()
+            .map(|e| self.feed_row(&theme, e, selected.as_ref() == Some(&e.item()), cx))
+            .collect();
         let empty = entries.is_empty();
         let detail = match &selected {
-            Some(ActivityItem::Op(id)) => s.operations.iter().find(|o| o.id == *id).map(|o| self.op_detail(&theme, o, cx)),
+            Some(ActivityItem::Op(id)) => s
+                .operations
+                .iter()
+                .find(|o| o.id == *id)
+                .map(|o| self.op_detail(&theme, o, cx)),
             Some(ActivityItem::Command { workspace, index }) => s
                 .workspaces
                 .iter()
                 .find(|w| &w.id == workspace)
-                .and_then(|w| w.history.get(*index).map(|c| command_detail(&theme, w, c, cx))),
+                .and_then(|w| {
+                    w.history
+                        .get(*index)
+                        .map(|c| command_detail(&theme, w, c, cx))
+                }),
             None => None,
         };
         let has_detail = detail.is_some();
@@ -190,21 +221,38 @@ impl Root {
                     .px(px(28.))
                     .pb(px(24.))
                     .child(
-                        card(&theme).w(px((self.content_width * 0.36).clamp(260., 380.))).flex_none().overflow_hidden().child(
-                            div().id("activity-feed").size_full().overflow_y_scroll().p(px(6.)).children(list),
-                        ),
+                        card(&theme)
+                            .w(px((self.content_width * 0.36).clamp(260., 380.)))
+                            .flex_none()
+                            .overflow_hidden()
+                            .child(
+                                div()
+                                    .id("activity-feed")
+                                    .size_full()
+                                    .overflow_y_scroll()
+                                    .p(px(6.))
+                                    .children(list),
+                            ),
                     )
-                    .child(div().flex().flex_col().flex_1().min_w(px(0.)).children(detail).when(!has_detail, |d| {
-                        d.child(
-                            card(&theme)
-                                .flex_1()
-                                .items_center()
-                                .justify_center()
-                                .text_size(px(12.5))
-                                .text_color(theme.text_placeholder)
-                                .child("Select an entry to see its output."),
-                        )
-                    }))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .children(detail)
+                            .when(!has_detail, |d| {
+                                d.child(
+                                    card(&theme)
+                                        .flex_1()
+                                        .items_center()
+                                        .justify_center()
+                                        .text_size(px(12.5))
+                                        .text_color(theme.text_placeholder)
+                                        .child("Select an entry to see its output."),
+                                )
+                            }),
+                    )
                     .into_any_element()
             })
             .into_any_element()
@@ -213,7 +261,12 @@ impl Root {
     /// First run: what shows up here, and three ways to make something happen.
     fn activity_welcome(&self, theme: &Theme, s: &Snapshot, cx: &mut Context<Self>) -> AnyElement {
         let width = self.content_width.min(480.);
-        let target = s.machines.iter().find(|m| m.status == "online").or(s.machines.first()).map(|m| (m.id.clone(), m.name.clone()));
+        let target = s
+            .machines
+            .iter()
+            .find(|m| m.status == "online")
+            .or(s.machines.first())
+            .map(|m| (m.id.clone(), m.name.clone()));
         let install_detail = match &target {
             Some((_, name)) => format!("Register a GitHub Actions runner on {name}."),
             None => "Add a machine first, then put a runner on it.".into(),
@@ -296,7 +349,13 @@ impl Root {
             .into_any_element()
     }
 
-    fn feed_row(&self, theme: &Theme, e: &Entry, selected: bool, cx: &mut Context<Self>) -> AnyElement {
+    fn feed_row(
+        &self,
+        theme: &Theme,
+        e: &Entry,
+        selected: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let item = e.item();
         let (status, title, subtitle) = match e {
             Entry::Op(o) => {
@@ -304,14 +363,20 @@ impl Root {
                     (Some(p), "running") => progress_text(p),
                     _ => format::ago(Some(o.started_at)),
                 };
-                (op_status_icon(theme, o), o.title.clone(), format!("{} · {when}", kind_label(&o.kind)))
+                (
+                    op_status_icon(theme, o),
+                    o.title.clone(),
+                    format!("{} · {when}", kind_label(&o.kind)),
+                )
             }
             Entry::Command(w, _, c) => (
                 command_icon(theme, c),
                 c.command.clone(),
                 format!(
                     "{} in {} · {}",
-                    c.by.clone().or_else(|| w.owner.clone()).unwrap_or_else(|| "someone".into()),
+                    c.by.clone()
+                        .or_else(|| w.owner.clone())
+                        .unwrap_or_else(|| "someone".into()),
                     w.name,
                     format::ago(Some(c.started_at))
                 ),
@@ -337,10 +402,25 @@ impl Root {
                     .flex_1()
                     .min_w(px(0.))
                     .gap(px(2.))
-                    .child(div().truncate().text_size(px(12.5)).when(is_command, |d| d.font_family(mono_font())).child(title))
-                    .child(div().truncate().text_size(px(11.)).text_color(theme.text_placeholder).child(subtitle))
+                    .child(
+                        div()
+                            .truncate()
+                            .text_size(px(12.5))
+                            .when(is_command, |d| d.font_family(mono_font()))
+                            .child(title),
+                    )
+                    .child(
+                        div()
+                            .truncate()
+                            .text_size(px(11.))
+                            .text_color(theme.text_placeholder)
+                            .child(subtitle),
+                    )
                     .children(match e {
-                        Entry::Op(o) if o.status == "running" => o.progress.as_ref().map(|p| div().pt(px(3.)).child(progress_bar(theme, p))),
+                        Entry::Op(o) if o.status == "running" => o
+                            .progress
+                            .as_ref()
+                            .map(|p| div().pt(px(3.)).child(progress_bar(theme, p))),
                         _ => None,
                     }),
             )
@@ -354,38 +434,60 @@ impl Root {
 
     fn op_detail(&self, theme: &Theme, op: &Operation, cx: &mut Context<Self>) -> AnyElement {
         let copy_text = op.log.join("\n");
-        let machine = op
-            .machine_id
-            .clone()
-            .and_then(|id| self.snapshot.machines.iter().find(|m| m.id == id).map(|m| (id, m.name.clone())));
+        let machine = op.machine_id.clone().and_then(|id| {
+            self.snapshot
+                .machines
+                .iter()
+                .find(|m| m.id == id)
+                .map(|m| (id, m.name.clone()))
+        });
         let runner = op.runner_id.clone();
         let when = match op.finished_at {
             Some(t) => format!(
                 "{} {} · took {}",
-                if op.status == "succeeded" { "Finished" } else { "Failed" },
+                if op.status == "succeeded" {
+                    "Finished"
+                } else {
+                    "Failed"
+                },
                 format::ago(Some(t)),
                 crate::util::short_duration((t - op.started_at).num_seconds().max(0) as u64)
             ),
             None => format!("Running for {}", format::elapsed(op.started_at)),
         };
         // A copy under way: how far, and a way to stop it.
-        let progress = op.progress.clone().filter(|_| op.status == "running").map(|p| {
-            let id = op.id;
-            div()
-                .flex()
-                .items_center()
-                .gap(px(10.))
-                .px(px(14.))
-                .pt(px(10.))
-                .child(div().flex_1().child(progress_bar(theme, &p)))
-                .child(div().flex_none().font_family(mono_font()).text_size(px(11.5)).text_color(theme.text_muted).child(progress_text(&p)))
-                .when(op.cancellable, |d| {
-                    d.child(Button::new("op-stop", "Stop").icon("x").on_click(cx.listener(move |this, _, _, cx| {
-                        this.engine.cancel_op(id);
-                        cx.notify()
-                    })))
-                })
-        });
+        let progress = op
+            .progress
+            .clone()
+            .filter(|_| op.status == "running")
+            .map(|p| {
+                let id = op.id;
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.))
+                    .px(px(14.))
+                    .pt(px(10.))
+                    .child(div().flex_1().child(progress_bar(theme, &p)))
+                    .child(
+                        div()
+                            .flex_none()
+                            .font_family(mono_font())
+                            .text_size(px(11.5))
+                            .text_color(theme.text_muted)
+                            .child(progress_text(&p)),
+                    )
+                    .when(op.cancellable, |d| {
+                        d.child(
+                            Button::new("op-stop", "Stop")
+                                .icon("x")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.engine.cancel_op(id);
+                                    cx.notify()
+                                })),
+                        )
+                    })
+            });
         let lines: Vec<AnyElement> = op.log.iter().map(|l| log_line(theme, l)).collect();
         let meta = div()
             .flex()
@@ -401,7 +503,9 @@ impl Root {
                     .cursor_pointer()
                     .text_color(theme.text_accent)
                     .child(name)
-                    .on_click(cx.listener(move |this, _, window, cx| this.navigate(Route::Machine(id.clone()), window, cx)))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.navigate(Route::Machine(id.clone()), window, cx)
+                    }))
             }))
             .children(runner.map(|id| {
                 div()
@@ -409,7 +513,9 @@ impl Root {
                     .cursor_pointer()
                     .text_color(theme.text_accent)
                     .child(id.rsplit('/').next().unwrap_or_default().to_string())
-                    .on_click(cx.listener(move |this, _, window, cx| this.navigate(Route::Runner(id.clone()), window, cx)))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.navigate(Route::Runner(id.clone()), window, cx)
+                    }))
             }))
             .into_any_element();
         let log = div()
@@ -423,21 +529,62 @@ impl Root {
             .text_size(px(12.))
             .line_height(px(19.))
             .children(lines)
-            .when_some(op.error.clone().filter(|e| !op.log.iter().any(|l| l.contains(e.as_str()))), |d, e| {
-                d.child(div().mt(px(6.)).flex().gap(px(6.)).text_color(theme.error).child(icon("circle-x", 13., theme.error)).child(e))
-            })
-            .when(op.log.is_empty() && op.status == "running", |d| d.child(div().text_color(theme.text_placeholder).child("Waiting for output…")));
-        let body = div().flex_1().min_h(px(0.)).flex().flex_col().children(progress).child(log).into_any_element();
-        detail_frame(theme, op_status_icon(theme, op), op.title.clone(), meta, copy_text, body)
+            .when_some(
+                op.error
+                    .clone()
+                    .filter(|e| !op.log.iter().any(|l| l.contains(e.as_str()))),
+                |d, e| {
+                    d.child(
+                        div()
+                            .mt(px(6.))
+                            .flex()
+                            .gap(px(6.))
+                            .text_color(theme.error)
+                            .child(icon("circle-x", 13., theme.error))
+                            .child(e),
+                    )
+                },
+            )
+            .when(op.log.is_empty() && op.status == "running", |d| {
+                d.child(
+                    div()
+                        .text_color(theme.text_placeholder)
+                        .child("Waiting for output…"),
+                )
+            });
+        let body = div()
+            .flex_1()
+            .min_h(px(0.))
+            .flex()
+            .flex_col()
+            .children(progress)
+            .child(log)
+            .into_any_element();
+        detail_frame(
+            theme,
+            op_status_icon(theme, op),
+            op.title.clone(),
+            meta,
+            copy_text,
+            body,
+        )
     }
 }
 
-fn command_detail(theme: &Theme, w: &WorkspaceInfo, c: &WorkspaceCommand, cx: &mut Context<Root>) -> AnyElement {
+fn command_detail(
+    theme: &Theme,
+    w: &WorkspaceInfo,
+    c: &WorkspaceCommand,
+    cx: &mut Context<Root>,
+) -> AnyElement {
     let ws = w.id.clone();
     let outcome = match (c.background, c.timed_out, c.exit_code) {
         (true, _, _) => "started in the background".to_string(),
         (_, true, _) => "timed out".to_string(),
-        (_, _, Some(code)) => format!("exit {code} in {}", crate::util::short_duration(c.duration_ms / 1000)),
+        (_, _, Some(code)) => format!(
+            "exit {code} in {}",
+            crate::util::short_duration(c.duration_ms / 1000)
+        ),
         _ => "running".to_string(),
     };
     let meta = div()
@@ -449,7 +596,9 @@ fn command_detail(theme: &Theme, w: &WorkspaceInfo, c: &WorkspaceCommand, cx: &m
         .text_color(theme.text_placeholder)
         .child(format!(
             "{} · {} · {outcome}",
-            c.by.clone().or_else(|| w.owner.clone()).unwrap_or_else(|| "someone".into()),
+            c.by.clone()
+                .or_else(|| w.owner.clone())
+                .unwrap_or_else(|| "someone".into()),
             format::ago(Some(c.started_at)),
         ))
         .child(
@@ -458,13 +607,30 @@ fn command_detail(theme: &Theme, w: &WorkspaceInfo, c: &WorkspaceCommand, cx: &m
                 .cursor_pointer()
                 .text_color(theme.text_accent)
                 .child(format!("{} on {}", w.name, w.machine_name))
-                .on_click(cx.listener(move |this, _, window, cx| this.navigate(Route::Workspace(ws.clone()), window, cx))),
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.navigate(Route::Workspace(ws.clone()), window, cx)
+                })),
         )
         .into_any_element();
-    let mut lines: Vec<AnyElement> = vec![div().text_color(theme.text_accent).child(format!("$ {}", c.command)).into_any_element()];
-    lines.extend(c.output_tail.iter().map(|l| div().text_color(theme.text_muted).child(l.clone()).into_any_element()));
+    let mut lines: Vec<AnyElement> = vec![
+        div()
+            .text_color(theme.text_accent)
+            .child(format!("$ {}", c.command))
+            .into_any_element(),
+    ];
+    lines.extend(c.output_tail.iter().map(|l| {
+        div()
+            .text_color(theme.text_muted)
+            .child(l.clone())
+            .into_any_element()
+    }));
     if c.output_tail.is_empty() {
-        lines.push(div().text_color(theme.text_placeholder).child("(no output)").into_any_element());
+        lines.push(
+            div()
+                .text_color(theme.text_placeholder)
+                .child("(no output)")
+                .into_any_element(),
+        );
     }
     let body = div()
         .id("cmd-output")
@@ -477,11 +643,25 @@ fn command_detail(theme: &Theme, w: &WorkspaceInfo, c: &WorkspaceCommand, cx: &m
         .line_height(px(19.))
         .children(lines)
         .into_any_element();
-    detail_frame(theme, command_icon(theme, c), c.command.clone(), meta, c.output_tail.join("\n"), body)
+    detail_frame(
+        theme,
+        command_icon(theme, c),
+        c.command.clone(),
+        meta,
+        c.output_tail.join("\n"),
+        body,
+    )
 }
 
 /// Header (status, title, meta, copy) above a scrolling output pane.
-fn detail_frame(theme: &Theme, status: AnyElement, title: String, meta: AnyElement, copy_text: String, body: AnyElement) -> AnyElement {
+fn detail_frame(
+    theme: &Theme,
+    status: AnyElement,
+    title: String,
+    meta: AnyElement,
+    copy_text: String,
+    body: AnyElement,
+) -> AnyElement {
     card(theme)
         .flex_1()
         .min_h(px(0.))
@@ -504,14 +684,32 @@ fn detail_frame(theme: &Theme, status: AnyElement, title: String, meta: AnyEleme
                         .flex_1()
                         .min_w(px(0.))
                         .gap(px(3.))
-                        .child(div().truncate().text_size(px(14.)).font_weight(FontWeight::MEDIUM).child(title))
+                        .child(
+                            div()
+                                .truncate()
+                                .text_size(px(14.))
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(title),
+                        )
                         .child(meta),
                 )
-                .child(Button::icon_only("detail-copy", "copy").tooltip("Copy output").on_click(move |_, _, cx| {
-                    cx.write_to_clipboard(ClipboardItem::new_string(copy_text.clone()))
-                })),
+                .child(
+                    Button::icon_only("detail-copy", "copy")
+                        .tooltip("Copy output")
+                        .on_click(move |_, _, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(copy_text.clone()))
+                        }),
+                ),
         )
-        .child(div().flex().flex_col().flex_1().min_h(px(0.)).bg(theme.sidebar).child(body))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_h(px(0.))
+                .bg(theme.sidebar)
+                .child(body),
+        )
         .into_any_element()
 }
 
@@ -554,7 +752,10 @@ fn log_line(theme: &Theme, line: &str) -> AnyElement {
     } else {
         theme.text_muted
     };
-    div().text_color(color).child(line.to_string()).into_any_element()
+    div()
+        .text_color(color)
+        .child(line.to_string())
+        .into_any_element()
 }
 
 /// A row on the first-run card: tile, title, one line of detail, trailing icon.
@@ -587,8 +788,20 @@ fn start_row(
                 .flex_col()
                 .gap(px(2.))
                 .w(px(text_w))
-                .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(theme.text).child(title))
-                .child(div().w(px(text_w)).text_size(px(12.)).text_color(theme.text_muted).child(detail)),
+                .child(
+                    div()
+                        .text_size(px(13.))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(theme.text)
+                        .child(title),
+                )
+                .child(
+                    div()
+                        .w(px(text_w))
+                        .text_size(px(12.))
+                        .text_color(theme.text_muted)
+                        .child(detail),
+                ),
         )
         .child(div().flex_1())
         .child(icon(trailing, 14., theme.text_placeholder))
@@ -597,10 +810,26 @@ fn start_row(
 /// The filter matched nothing (but there is other activity).
 fn filtered_empty(theme: &Theme, filter: ActivityFilter) -> AnyElement {
     let (icon_name, title, body) = match filter {
-        ActivityFilter::Failed => ("circle-check", "Nothing failed", "Failed operations and agent commands that exit non-zero show up here."),
-        ActivityFilter::Operations => ("activity", "No operations yet", "Runner installs, restarts, log requests and workspace setup show up here."),
-        ActivityFilter::Agents => ("terminal", "No agent commands yet", "Commands agents run in workspaces show up here with their output."),
-        ActivityFilter::All => ("activity", "Nothing here", "Activity shows up here as it happens."),
+        ActivityFilter::Failed => (
+            "circle-check",
+            "Nothing failed",
+            "Failed operations and agent commands that exit non-zero show up here.",
+        ),
+        ActivityFilter::Operations => (
+            "activity",
+            "No operations yet",
+            "Runner installs, restarts, log requests and workspace setup show up here.",
+        ),
+        ActivityFilter::Agents => (
+            "terminal",
+            "No agent commands yet",
+            "Commands agents run in workspaces show up here with their output.",
+        ),
+        ActivityFilter::All => (
+            "activity",
+            "Nothing here",
+            "Activity shows up here as it happens.",
+        ),
     };
     div()
         .flex_1()
@@ -612,15 +841,34 @@ fn filtered_empty(theme: &Theme, filter: ActivityFilter) -> AnyElement {
         .px(px(28.))
         .pb(px(80.))
         .child(kit::color_tile(icon_name, 44.).mb(px(4.)))
-        .child(div().text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).text_color(theme.text).child(title))
-        .child(div().w(px(340.)).text_center().text_size(px(12.5)).text_color(theme.text_muted).child(body))
+        .child(
+            div()
+                .text_size(px(15.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(theme.text)
+                .child(title),
+        )
+        .child(
+            div()
+                .w(px(340.))
+                .text_center()
+                .text_size(px(12.5))
+                .text_color(theme.text_muted)
+                .child(body),
+        )
         .into_any_element()
 }
 
 /// `claude mcp add` for this binary, quoted when its path has spaces.
 fn mcp_add_command() -> String {
-    let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "muxin".into());
-    let exe = if exe.contains(' ') { format!("'{exe}'") } else { exe };
+    let exe = std::env::current_exe()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "muxin".into());
+    let exe = if exe.contains(' ') {
+        format!("'{exe}'")
+    } else {
+        exe
+    };
     format!("claude mcp add muxin -- {exe} mcp")
 }
 

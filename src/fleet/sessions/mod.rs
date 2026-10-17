@@ -44,13 +44,48 @@ pub struct AgentKind {
 }
 
 pub const AGENTS: &[AgentKind] = &[
-    AgentKind { id: "claude", name: "Claude Code", command: "claude", prompt_arg: true },
-    AgentKind { id: "codex", name: "Codex", command: "codex", prompt_arg: true },
-    AgentKind { id: "opencode", name: "OpenCode", command: "opencode", prompt_arg: false },
-    AgentKind { id: "gemini", name: "Gemini CLI", command: "gemini", prompt_arg: false },
-    AgentKind { id: "amp", name: "Amp", command: "amp", prompt_arg: false },
-    AgentKind { id: "pi", name: "Pi", command: "pi", prompt_arg: true },
-    AgentKind { id: "shell", name: "Shell", command: "", prompt_arg: false },
+    AgentKind {
+        id: "claude",
+        name: "Claude Code",
+        command: "claude",
+        prompt_arg: true,
+    },
+    AgentKind {
+        id: "codex",
+        name: "Codex",
+        command: "codex",
+        prompt_arg: true,
+    },
+    AgentKind {
+        id: "opencode",
+        name: "OpenCode",
+        command: "opencode",
+        prompt_arg: false,
+    },
+    AgentKind {
+        id: "gemini",
+        name: "Gemini CLI",
+        command: "gemini",
+        prompt_arg: false,
+    },
+    AgentKind {
+        id: "amp",
+        name: "Amp",
+        command: "amp",
+        prompt_arg: false,
+    },
+    AgentKind {
+        id: "pi",
+        name: "Pi",
+        command: "pi",
+        prompt_arg: true,
+    },
+    AgentKind {
+        id: "shell",
+        name: "Shell",
+        command: "",
+        prompt_arg: false,
+    },
 ];
 
 pub fn agent(id: &str) -> Option<&'static AgentKind> {
@@ -59,11 +94,18 @@ pub fn agent(id: &str) -> Option<&'static AgentKind> {
 
 /// An agent's command line with its first prompt, when its CLI takes one as
 /// an argument; else the plain command and the prompt to type in once it's up.
-pub fn launch_line(kind: &AgentKind, prompt: Option<&str>, windows: bool) -> (String, Option<String>) {
+pub fn launch_line(
+    kind: &AgentKind,
+    prompt: Option<&str>,
+    windows: bool,
+) -> (String, Option<String>) {
     let prompt = prompt.map(str::trim).filter(|p| !p.is_empty());
     match (kind.command, prompt) {
         ("", p) => (String::new(), p.map(str::to_string)),
-        (c, Some(p)) if kind.prompt_arg => (format!("{c} {}", if windows { ps_quote(p) } else { sh_quote(p) }), None),
+        (c, Some(p)) if kind.prompt_arg => (
+            format!("{c} {}", if windows { ps_quote(p) } else { sh_quote(p) }),
+            None,
+        ),
         (c, p) => (c.to_string(), p.map(str::to_string)),
     }
 }
@@ -196,20 +238,38 @@ pub struct AttachCommand {
 impl Engine {
     /// Sets up the machine's agent if needed, then re-reads its sessions (and,
     /// now and then, which agent CLIs are installed).
-    pub async fn refresh_sessions(self: &Arc<Self>, machine_id: &str) -> Result<MachineSessions, String> {
+    pub async fn refresh_sessions(
+        self: &Arc<Self>,
+        machine_id: &str,
+    ) -> Result<MachineSessions, String> {
         if let Some(world) = self.demo_world() {
-            let found = self.sessions_of(machine_id).unwrap_or_else(|| world.sessions(machine_id));
+            let found = self
+                .sessions_of(machine_id)
+                .unwrap_or_else(|| world.sessions(machine_id));
             self.maybe_look_at_git(machine_id, Some(&found), &found);
             return Ok(found);
         }
-        let (spec, probe) = self.machine(machine_id).ok_or_else(|| format!("No machine called {machine_id}."))?;
+        let (spec, probe) = self
+            .machine(machine_id)
+            .ok_or_else(|| format!("No machine called {machine_id}."))?;
         if !spec.is_checkable() {
             return Err(format!("{} has no host to connect to.", spec.name));
         }
         spec.refuse_if_disconnected()?;
         let previous = self.sessions_of(&spec.id);
-        let detect = previous.as_ref().and_then(|p| p.agents_checked_at).is_none_or(|t| Utc::now() - t > AGENTS_EVERY);
-        let agents: Vec<&str> = if detect { AGENTS.iter().map(|a| a.command).filter(|c| !c.is_empty()).collect() } else { Vec::new() };
+        let detect = previous
+            .as_ref()
+            .and_then(|p| p.agents_checked_at)
+            .is_none_or(|t| Utc::now() - t > AGENTS_EVERY);
+        let agents: Vec<&str> = if detect {
+            AGENTS
+                .iter()
+                .map(|a| a.command)
+                .filter(|c| !c.is_empty())
+                .collect()
+        } else {
+            Vec::new()
+        };
         let result = match agent::ensure(&spec, probe.as_ref()).await {
             Ok(()) => agent::ctl(&spec, &json!({ "op": "discover", "agents": agents })).await,
             Err(e) => Err(e),
@@ -219,7 +279,12 @@ impl Engine {
                 let mut found = parse_discovery(&spec, &reply);
                 // Agents before 0.1.1 keep sessions whose shell exited (or whose
                 // agent quit cleanly); close those like the current one does.
-                let done: Vec<String> = found.sessions.iter().filter(|s| closes_on_exit(s)).map(|s| s.name.clone()).collect();
+                let done: Vec<String> = found
+                    .sessions
+                    .iter()
+                    .filter(|s| closes_on_exit(s))
+                    .map(|s| s.name.clone())
+                    .collect();
                 for name in &done {
                     let _ = agent::ctl(&spec, &json!({ "op": "stop", "name": name })).await;
                 }
@@ -256,7 +321,8 @@ impl Engine {
     /// One more look at a machine's sessions a moment after a busy one should
     /// have gone quiet (one pending look per machine).
     fn settle_sessions(self: &Arc<Self>, machine_id: &str) {
-        static PENDING: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> = std::sync::OnceLock::new();
+        static PENDING: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+            std::sync::OnceLock::new();
         let pending = PENDING.get_or_init(Default::default);
         if !pending.lock().unwrap().insert(machine_id.to_string()) {
             return;
@@ -272,18 +338,39 @@ impl Engine {
     /// Starts an agent (or shell) in a new session and returns it.
     pub async fn start_session(self: &Arc<Self>, req: StartSession) -> Result<SessionInfo, String> {
         let kind = agent(&req.agent).ok_or_else(|| {
-            format!("Unknown agent \"{}\". Use one of: {}.", req.agent, AGENTS.iter().map(|a| a.id).collect::<Vec<_>>().join(", "))
+            format!(
+                "Unknown agent \"{}\". Use one of: {}.",
+                req.agent,
+                AGENTS.iter().map(|a| a.id).collect::<Vec<_>>().join(", ")
+            )
         })?;
-        let (spec, probe) = self.machine(&req.machine_id).ok_or_else(|| format!("No machine called {}.", req.machine_id))?;
+        let (spec, probe) = self
+            .machine(&req.machine_id)
+            .ok_or_else(|| format!("No machine called {}.", req.machine_id))?;
         let name = format!("{}-{}", kind.id, super::workspaces::random_id(4));
-        let cwd = if req.cwd.trim().is_empty() { "~".to_string() } else { req.cwd.trim().to_string() };
-        let title = req.title.clone().filter(|t| !t.trim().is_empty()).unwrap_or_else(|| default_title(kind, &cwd));
+        let cwd = if req.cwd.trim().is_empty() {
+            "~".to_string()
+        } else {
+            req.cwd.trim().to_string()
+        };
+        let title = req
+            .title
+            .clone()
+            .filter(|t| !t.trim().is_empty())
+            .unwrap_or_else(|| default_title(kind, &cwd));
         // "Shell · home", "Shell · home 2", ... so sessions on a machine are told apart
         // (knowing which it has: the CLI starts without having asked).
-        if self.sessions_of(&spec.id).is_none_or(|f| f.checked_at.is_none()) && self.demo_world().is_none() {
+        if self
+            .sessions_of(&spec.id)
+            .is_none_or(|f| f.checked_at.is_none())
+            && self.demo_world().is_none()
+        {
             let _ = self.refresh_sessions(&spec.id).await;
         }
-        let taken: Vec<String> = self.sessions_of(&spec.id).map(|f| f.sessions.into_iter().map(|s| s.title).collect()).unwrap_or_default();
+        let taken: Vec<String> = self
+            .sessions_of(&spec.id)
+            .map(|f| f.sessions.into_iter().map(|s| s.title).collect())
+            .unwrap_or_default();
         let title = unique_title(&title, &taken);
 
         let windows = matches!(shell_for(&spec, probe.as_ref()), Shell::Powershell);
@@ -292,7 +379,9 @@ impl Engine {
         }
         if let Some(world) = self.demo_world() {
             let info = world.start_session(&spec, kind, &name, &cwd, &title);
-            let mut found = self.sessions_of(&spec.id).unwrap_or_else(|| world.sessions(&spec.id));
+            let mut found = self
+                .sessions_of(&spec.id)
+                .unwrap_or_else(|| world.sessions(&spec.id));
             found.sessions.insert(0, info.clone());
             self.set_sessions(&spec.id, found);
             return Ok(info);
@@ -300,7 +389,11 @@ impl Engine {
         agent::ensure(&spec, probe.as_ref()).await?;
 
         // The agent's command line; the prompt rides along when the CLI takes one.
-        let prompt = req.prompt.as_deref().map(str::trim).filter(|p| !p.is_empty());
+        let prompt = req
+            .prompt
+            .as_deref()
+            .map(str::trim)
+            .filter(|p| !p.is_empty());
         let run_line = match &req.command {
             Some(c) => c.clone(),
             None => launch_line(kind, prompt, windows).0,
@@ -324,7 +417,15 @@ impl Engine {
             let p = p.to_string();
             tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_secs(3)).await;
-                let _ = me.control_session(&id, Control::Send { text: &p, enter: true }).await;
+                let _ = me
+                    .control_session(
+                        &id,
+                        Control::Send {
+                            text: &p,
+                            enter: true,
+                        },
+                    )
+                    .await;
             });
         }
 
@@ -334,7 +435,15 @@ impl Engine {
             let id = format!("{}/{name}", spec.id);
             tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_millis(1500)).await;
-                let _ = me.control_session(&id, Control::Send { text: &t, enter: false }).await;
+                let _ = me
+                    .control_session(
+                        &id,
+                        Control::Send {
+                            text: &t,
+                            enter: false,
+                        },
+                    )
+                    .await;
             });
         }
 
@@ -346,16 +455,34 @@ impl Engine {
             Some(s) if s.status == "running" => Ok(s),
             exited => {
                 let id = format!("{}/{name}", spec.id);
-                let output = self.control_session(&id, Control::Read { lines: 20 }).await.unwrap_or_default();
+                let output = self
+                    .control_session(&id, Control::Read { lines: 20 })
+                    .await
+                    .unwrap_or_default();
                 let _ = self.control_session(&id, Control::Stop).await;
                 let code = exited.and_then(|s| s.exit_code);
                 let why = match code {
-                    Some(127) => format!("{} isn't installed on {} (or isn't on its PATH).", kind.name, spec.name),
-                    Some(c) => format!("{} exited right away with code {c} on {}.", kind.name, spec.name),
+                    Some(127) => format!(
+                        "{} isn't installed on {} (or isn't on its PATH).",
+                        kind.name, spec.name
+                    ),
+                    Some(c) => format!(
+                        "{} exited right away with code {c} on {}.",
+                        kind.name, spec.name
+                    ),
                     None => format!("{} exited right away on {}.", kind.name, spec.name),
                 };
-                let last = output.lines().rev().map(str::trim).find(|l| !l.is_empty() && !l.starts_with("[exited with code")).unwrap_or("");
-                Err(if last.is_empty() { why } else { format!("{why} It said: {last}") })
+                let last = output
+                    .lines()
+                    .rev()
+                    .map(str::trim)
+                    .find(|l| !l.is_empty() && !l.starts_with("[exited with code"))
+                    .unwrap_or("");
+                Err(if last.is_empty() {
+                    why
+                } else {
+                    format!("{why} It said: {last}")
+                })
             }
         }
     }
@@ -364,22 +491,38 @@ impl Engine {
     /// and scrollback text; the others return an empty string.
     /// What a waiting session is asking, read off its screen: a choice, or
     /// the end of what it said (see question.rs).
-    pub async fn session_question(self: &Arc<Self>, id: &str) -> Result<question::Question, String> {
-        let screen = self.control_session(id, Control::Read { lines: 60 }).await?;
+    pub async fn session_question(
+        self: &Arc<Self>,
+        id: &str,
+    ) -> Result<question::Question, String> {
+        let screen = self
+            .control_session(id, Control::Read { lines: 60 })
+            .await?;
         Ok(question::read(&screen))
     }
 
     /// Picks one of a waiting session's choices (`key`, as the question gave
     /// it; `selected`, the one its cursor was on; `confirm`, the menu wants
     /// Enter after a number), and marks it read.
-    pub async fn answer_session(self: &Arc<Self>, id: &str, key: &str, selected: Option<&str>, confirm: bool) -> Result<(), String> {
+    pub async fn answer_session(
+        self: &Arc<Self>,
+        id: &str,
+        key: &str,
+        selected: Option<&str>,
+        confirm: bool,
+    ) -> Result<(), String> {
         let (keys, enter) = question::keys_for(key, selected, confirm);
-        self.control_session(id, Control::Send { text: &keys, enter }).await?;
+        self.control_session(id, Control::Send { text: &keys, enter })
+            .await?;
         self.ack_session(id);
         Ok(())
     }
 
-    pub async fn control_session(self: &Arc<Self>, id: &str, action: Control<'_>) -> Result<String, String> {
+    pub async fn control_session(
+        self: &Arc<Self>,
+        id: &str,
+        action: Control<'_>,
+    ) -> Result<String, String> {
         if self.direct_session(id).is_some() {
             return match action {
                 Control::Stop => {
@@ -390,11 +533,15 @@ impl Engine {
                     self.set_direct_status(id, "running");
                     Ok(String::new())
                 }
-                _ => Err(format!("{id} runs only in the Muxin window, so it can't be read or typed into from here.")),
+                _ => Err(format!(
+                    "{id} runs only in the Muxin window, so it can't be read or typed into from here."
+                )),
             };
         }
         let (machine_id, name) = split_id(id)?;
-        let (spec, probe) = self.machine(machine_id).ok_or_else(|| format!("No machine called {machine_id}."))?;
+        let (spec, probe) = self
+            .machine(machine_id)
+            .ok_or_else(|| format!("No machine called {machine_id}."))?;
         if let Some(world) = self.demo_world() {
             let text = world.control_session(&spec.id, name, &action);
             if matches!(action, Control::Stop) {
@@ -409,8 +556,12 @@ impl Engine {
         let request = match &action {
             Control::Stop => json!({ "op": "stop", "name": name }),
             Control::Restart => json!({ "op": "restart", "name": name }),
-            Control::Send { text, enter } => json!({ "op": "send", "name": name, "text": text, "enter": enter }),
-            Control::Read { lines } => json!({ "op": "read", "name": name, "lines": lines.clamp(&1, &50_000) }),
+            Control::Send { text, enter } => {
+                json!({ "op": "send", "name": name, "text": text, "enter": enter })
+            }
+            Control::Read { lines } => {
+                json!({ "op": "read", "name": name, "lines": lines.clamp(&1, &50_000) })
+            }
         };
         let reply = agent::ctl(&spec, &request).await?;
         if !matches!(action, Control::Read { .. }) {
@@ -427,53 +578,117 @@ impl Engine {
 
     /// Gives a session a new title (kept by the agent on its machine, so every
     /// Muxin sees it). An empty title goes back to the one it started with.
-    pub async fn rename_session(self: &Arc<Self>, id: &str, title: &str) -> Result<SessionInfo, String> {
+    pub async fn rename_session(
+        self: &Arc<Self>,
+        id: &str,
+        title: &str,
+    ) -> Result<SessionInfo, String> {
         let title = clean_title(title)?;
         if let Some(d) = self.direct_session(id) {
-            let title = if title.is_empty() { agent(&d.info.agent).map(|k| default_title(k, &d.info.cwd)).unwrap_or_else(|| d.info.name.clone()) } else { title };
-            return self.set_direct_title(id, &title).ok_or_else(|| format!("No session {id}."));
+            let title = if title.is_empty() {
+                agent(&d.info.agent)
+                    .map(|k| default_title(k, &d.info.cwd))
+                    .unwrap_or_else(|| d.info.name.clone())
+            } else {
+                title
+            };
+            return self
+                .set_direct_title(id, &title)
+                .ok_or_else(|| format!("No session {id}."));
         }
         let (machine_id, name) = split_id(id)?;
-        let (spec, probe) = self.machine(machine_id).ok_or_else(|| format!("No machine called {machine_id}."))?;
+        let (spec, probe) = self
+            .machine(machine_id)
+            .ok_or_else(|| format!("No machine called {machine_id}."))?;
         if self.demo_world().is_some() {
-            let mut found = self.sessions_of(&spec.id).ok_or_else(|| format!("No session {id}."))?;
-            let s = found.sessions.iter_mut().find(|s| s.name == name).ok_or_else(|| format!("No session {id}."))?;
-            s.title = if title.is_empty() { agent(&s.agent).map(|k| default_title(k, &s.cwd)).unwrap_or_else(|| s.name.clone()) } else { title };
+            let mut found = self
+                .sessions_of(&spec.id)
+                .ok_or_else(|| format!("No session {id}."))?;
+            let s = found
+                .sessions
+                .iter_mut()
+                .find(|s| s.name == name)
+                .ok_or_else(|| format!("No session {id}."))?;
+            s.title = if title.is_empty() {
+                agent(&s.agent)
+                    .map(|k| default_title(k, &s.cwd))
+                    .unwrap_or_else(|| s.name.clone())
+            } else {
+                title
+            };
             let renamed = s.clone();
             self.set_sessions(&spec.id, found);
             return Ok(renamed);
         }
         agent::ensure(&spec, probe.as_ref()).await?;
-        agent::ctl(&spec, &json!({ "op": "rename", "name": name, "title": title })).await?;
+        agent::ctl(
+            &spec,
+            &json!({ "op": "rename", "name": name, "title": title }),
+        )
+        .await?;
         let found = self.refresh_sessions(&spec.id).await?;
-        found.sessions.into_iter().find(|s| s.name == name).ok_or_else(|| format!("{id} ended."))
+        found
+            .sessions
+            .into_iter()
+            .find(|s| s.name == name)
+            .ok_or_else(|| format!("{id} ended."))
     }
 
     /// The command that attaches a terminal to a session from this computer.
     pub fn attach_command(&self, id: &str) -> Result<AttachCommand, String> {
         let (machine_id, name) = split_id(id)?;
-        let (spec, _) = self.machine(machine_id).ok_or_else(|| format!("No machine called {machine_id}."))?;
+        let (spec, _) = self
+            .machine(machine_id)
+            .ok_or_else(|| format!("No machine called {machine_id}."))?;
         if let Some(d) = self.direct_session(id) {
             return Ok(direct_command(&spec, &d));
         }
         if spec.is_local() {
             let home = std::env::var("HOME").unwrap_or_default();
             let program = agent::REMOTE_PATH.replacen('~', &home, 1);
-            return Ok(AttachCommand { program, args: vec!["attach".into(), name.into(), "--app".into()] });
+            return Ok(AttachCommand {
+                program,
+                args: vec!["attach".into(), name.into(), "--app".into()],
+            });
         }
         // Same connection options as checks, but with a terminal.
-        let mut args: Vec<String> = probe::ssh_args(&spec).into_iter().map(|a| if a == "-T" { "-tt".into() } else { a }).collect();
+        let mut args: Vec<String> = probe::ssh_args(&spec)
+            .into_iter()
+            .map(|a| if a == "-T" { "-tt".into() } else { a })
+            .collect();
         args.push("--".into());
-        args.push(if agent::is_windows(&spec) { agent::command(&spec, &format!("attach {name} --app")) } else { format!("{} attach {} --app", agent::REMOTE_PATH, sh_quote(name)) });
-        Ok(AttachCommand { program: "ssh".into(), args })
+        args.push(if agent::is_windows(&spec) {
+            agent::command(&spec, &format!("attach {name} --app"))
+        } else {
+            format!("{} attach {} --app", agent::REMOTE_PATH, sh_quote(name))
+        });
+        Ok(AttachCommand {
+            program: "ssh".into(),
+            args,
+        })
     }
 
-    fn start_direct(&self, spec: &MachineSpec, kind: &AgentKind, name: String, cwd: String, title: String, req: &StartSession, windows: bool) -> SessionInfo {
-        let prompt = req.prompt.as_deref().map(str::trim).filter(|p| !p.is_empty());
+    fn start_direct(
+        &self,
+        spec: &MachineSpec,
+        kind: &AgentKind,
+        name: String,
+        cwd: String,
+        title: String,
+        req: &StartSession,
+        windows: bool,
+    ) -> SessionInfo {
+        let prompt = req
+            .prompt
+            .as_deref()
+            .map(str::trim)
+            .filter(|p| !p.is_empty());
         let run = match (&req.command, kind.command, prompt) {
             (Some(c), _, _) => c.clone(),
             (None, "", _) => String::new(),
-            (None, c, Some(p)) if kind.prompt_arg => format!("{c} {}", if windows { ps_quote(p) } else { sh_quote(p) }),
+            (None, c, Some(p)) if kind.prompt_arg => {
+                format!("{c} {}", if windows { ps_quote(p) } else { sh_quote(p) })
+            }
             (None, c, _) => c.to_string(),
         };
         let info = SessionInfo {
@@ -495,24 +710,47 @@ impl Engine {
             git: None,
             name,
         };
-        self.add_direct(DirectSession { info: info.clone(), run, windows });
+        self.add_direct(DirectSession {
+            info: info.clone(),
+            run,
+            windows,
+        });
         info
     }
 
     /// Machines whose sessions should be re-read on the timer.
     pub(crate) fn machines_with_sessions(&self) -> Vec<String> {
-        self.all_sessions().into_iter().filter(|(_, m)| !m.sessions.is_empty()).map(|(id, _)| id).collect()
+        self.all_sessions()
+            .into_iter()
+            .filter(|(_, m)| !m.sessions.is_empty())
+            .map(|(id, _)| id)
+            .collect()
     }
 }
 
 /// Notices from a new discovery: events logged since `since`, and sessions that
 /// went quiet after working. `before` is the previous discovery.
-pub(crate) fn new_notices(before: &MachineSessions, after: &MachineSessions, since: i64, machine: &str) -> Vec<(String, String, String, String)> {
+pub(crate) fn new_notices(
+    before: &MachineSessions,
+    after: &MachineSessions,
+    since: i64,
+    machine: &str,
+) -> Vec<(String, String, String, String)> {
     let mut out = Vec::new();
-    let find = |name: &str| after.sessions.iter().chain(before.sessions.iter()).find(|s| s.name == name);
+    let find = |name: &str| {
+        after
+            .sessions
+            .iter()
+            .chain(before.sessions.iter())
+            .find(|s| s.name == name)
+    };
     for e in after.events.iter().filter(|e| e.at > since) {
         let Some(s) = find(&e.session) else { continue };
-        let who = if s.agent_name.is_empty() { "The session".to_string() } else { s.agent_name.clone() };
+        let who = if s.agent_name.is_empty() {
+            "The session".to_string()
+        } else {
+            s.agent_name.clone()
+        };
         let (title, kind) = match e.kind.as_str() {
             "bell" => (format!("{who} needs you"), "bell"),
             "exited" => match e.detail.as_str() {
@@ -521,13 +759,24 @@ pub(crate) fn new_notices(before: &MachineSessions, after: &MachineSessions, sin
             },
             _ => continue,
         };
-        out.push((s.id.clone(), kind.to_string(), title, format!("{} · {machine}", s.title)));
+        out.push((
+            s.id.clone(),
+            kind.to_string(),
+            title,
+            format!("{} · {machine}", s.title),
+        ));
     }
     // Working, then quiet: the agent finished or is waiting for an answer. Shells don't count.
     for s in &after.sessions {
         let was_busy = before.sessions.iter().any(|b| b.name == s.name && b.busy);
-        if was_busy && !s.busy && s.status == "running" && !s.agent.is_empty() && s.agent != "shell" {
-            out.push((s.id.clone(), "waiting".into(), format!("{} is waiting for you", s.agent_name), format!("{} · {machine}", s.title)));
+        if was_busy && !s.busy && s.status == "running" && !s.agent.is_empty() && s.agent != "shell"
+        {
+            out.push((
+                s.id.clone(),
+                "waiting".into(),
+                format!("{} is waiting for you", s.agent_name),
+                format!("{} · {machine}", s.title),
+            ));
         }
     }
     out
@@ -545,22 +794,38 @@ fn direct_command(spec: &MachineSpec, d: &DirectSession) -> AttachCommand {
         let script = if d.run.is_empty() {
             format!("powershell -NoLogo -NoExit -Command \"Set-Location {dir}\"")
         } else {
-            format!("powershell -NoLogo -Command \"Set-Location {dir}; {}\"", d.run.replace('"', "\\\""))
+            format!(
+                "powershell -NoLogo -Command \"Set-Location {dir}; {}\"",
+                d.run.replace('"', "\\\"")
+            )
         };
         // This computer: PowerShell itself.
         if spec.is_local() {
             let mut args = vec!["-NoLogo".to_string()];
             if d.run.is_empty() {
-                args.extend(["-NoExit".into(), "-Command".into(), format!("Set-Location {dir}")]);
+                args.extend([
+                    "-NoExit".into(),
+                    "-Command".into(),
+                    format!("Set-Location {dir}"),
+                ]);
             } else {
                 args.extend(["-Command".into(), format!("Set-Location {dir}; {}", d.run)]);
             }
-            return AttachCommand { program: "powershell".into(), args };
+            return AttachCommand {
+                program: "powershell".into(),
+                args,
+            };
         }
-        let mut args: Vec<String> = probe::ssh_args(spec).into_iter().map(|a| if a == "-T" { "-tt".into() } else { a }).collect();
+        let mut args: Vec<String> = probe::ssh_args(spec)
+            .into_iter()
+            .map(|a| if a == "-T" { "-tt".into() } else { a })
+            .collect();
         args.push("--".into());
         args.push(script);
-        return AttachCommand { program: "ssh".into(), args };
+        return AttachCommand {
+            program: "ssh".into(),
+            args,
+        };
     }
     let cd = match cwd {
         "" | "~" => "cd \"$HOME\"".to_string(),
@@ -568,15 +833,28 @@ fn direct_command(spec: &MachineSpec, d: &DirectSession) -> AttachCommand {
         c => format!("cd {}", sh_quote(c)),
     };
     let shell = "\"${SHELL:-/bin/sh}\"";
-    let run = if d.run.is_empty() { format!("exec {shell} -l") } else { format!("exec {shell} -l -i -c {}", sh_quote(&d.run)) };
+    let run = if d.run.is_empty() {
+        format!("exec {shell} -l")
+    } else {
+        format!("exec {shell} -l -i -c {}", sh_quote(&d.run))
+    };
     let script = format!("{cd} || {{ echo \"No folder {cwd} on this machine.\"; exit 1; }}; {run}");
     if spec.is_local() {
-        return AttachCommand { program: "/bin/sh".into(), args: vec!["-c".into(), script] };
+        return AttachCommand {
+            program: "/bin/sh".into(),
+            args: vec!["-c".into(), script],
+        };
     }
-    let mut args: Vec<String> = probe::ssh_args(spec).into_iter().map(|a| if a == "-T" { "-tt".into() } else { a }).collect();
+    let mut args: Vec<String> = probe::ssh_args(spec)
+        .into_iter()
+        .map(|a| if a == "-T" { "-tt".into() } else { a })
+        .collect();
     args.push("--".into());
     args.push(format!("sh -c {}", sh_quote(&script)));
-    AttachCommand { program: "ssh".into(), args }
+    AttachCommand {
+        program: "ssh".into(),
+        args,
+    }
 }
 
 /// An exited session that should just go away: a shell, or an agent that quit cleanly.
@@ -588,7 +866,14 @@ fn closes_on_exit(s: &SessionInfo) -> bool {
 #[test]
 fn titles_name_the_folder() {
     let shell = agent("shell").unwrap();
-    for (cwd, title) in [("~", "Shell · home"), ("/home/adib", "Shell · home"), ("/Users/adib/", "Shell · home"), ("/root", "Shell · home"), ("~/code/api", "Shell · api"), ("/home/adib/openrunner", "Shell · openrunner")] {
+    for (cwd, title) in [
+        ("~", "Shell · home"),
+        ("/home/adib", "Shell · home"),
+        ("/Users/adib/", "Shell · home"),
+        ("/root", "Shell · home"),
+        ("~/code/api", "Shell · api"),
+        ("/home/adib/openrunner", "Shell · openrunner"),
+    ] {
         assert_eq!(default_title(shell, cwd), title, "{cwd}");
     }
 }
@@ -598,7 +883,10 @@ fn unique_title(title: &str, taken: &[String]) -> String {
     if !taken.iter().any(|t| t == title) {
         return title.to_string();
     }
-    (2..).map(|n| format!("{title} {n}")).find(|t| !taken.contains(t)).unwrap_or_else(|| title.to_string())
+    (2..)
+        .map(|n| format!("{title} {n}"))
+        .find(|t| !taken.contains(t))
+        .unwrap_or_else(|| title.to_string())
 }
 
 /// A title as the user typed it, on one line. Empty is allowed (it means "the
@@ -616,8 +904,18 @@ fn default_title(kind: &AgentKind, cwd: &str) -> String {
     let path = cwd.trim_end_matches('/');
     // The home folder, however it's written: "~", /home/adib, /Users/adib, /root.
     let parts: Vec<&str> = path.split('/').collect();
-    let home = path.is_empty() || path == "~" || path == "/root" || matches!(parts[..], ["", "home" | "Users", user] if !user.is_empty());
-    let folder = if home { "home" } else { path.rsplit('/').next().filter(|f| !f.is_empty()).unwrap_or("home") };
+    let home = path.is_empty()
+        || path == "~"
+        || path == "/root"
+        || matches!(parts[..], ["", "home" | "Users", user] if !user.is_empty());
+    let folder = if home {
+        "home"
+    } else {
+        path.rsplit('/')
+            .next()
+            .filter(|f| !f.is_empty())
+            .unwrap_or("home")
+    };
     format!("{} · {folder}", kind.name)
 }
 
@@ -629,7 +927,11 @@ fn split_id(id: &str) -> Result<(&str, &str), String> {
 
 /// The paste-into-your-terminal attach command (detach with Ctrl-] then d).
 fn user_attach_command(spec: &MachineSpec, name: &str) -> String {
-    let attach = if agent::is_windows(spec) { agent::command(spec, &format!("attach {name}")) } else { format!("{} attach {name}", agent::REMOTE_PATH) };
+    let attach = if agent::is_windows(spec) {
+        agent::command(spec, &format!("attach {name}"))
+    } else {
+        format!("{} attach {name}", agent::REMOTE_PATH)
+    };
     if spec.is_local() {
         return attach;
     }
@@ -647,16 +949,31 @@ fn user_attach_command(spec: &MachineSpec, name: &str) -> String {
 
 /// The agent's `discover` reply as what the engine keeps.
 pub(crate) fn parse_discovery(spec: &MachineSpec, reply: &Value) -> MachineSessions {
-    let now = reply["now"].as_i64().unwrap_or_else(|| Utc::now().timestamp());
-    let ts = |v: &Value| v.as_i64().filter(|t| *t > 0).and_then(|t| Utc.timestamp_opt(t, 0).single());
+    let now = reply["now"]
+        .as_i64()
+        .unwrap_or_else(|| Utc::now().timestamp());
+    let ts = |v: &Value| {
+        v.as_i64()
+            .filter(|t| *t > 0)
+            .and_then(|t| Utc.timestamp_opt(t, 0).single())
+    };
     let mut found = MachineSessions {
         checked_at: Some(Utc::now()),
         agent_version: reply["version"].as_str().map(str::to_string),
         agents: reply["agents"]
             .as_array()
-            .map(|a| a.iter().filter_map(|v| v.as_str()).filter_map(|c| AGENTS.iter().find(|k| k.command == c)).map(|k| k.id.to_string()).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str())
+                    .filter_map(|c| AGENTS.iter().find(|k| k.command == c))
+                    .map(|k| k.id.to_string())
+                    .collect()
+            })
             .unwrap_or_default(),
-        agents_checked_at: reply["agents_checked"].as_bool().unwrap_or(false).then(Utc::now),
+        agents_checked_at: reply["agents_checked"]
+            .as_bool()
+            .unwrap_or(false)
+            .then(Utc::now),
         gh: reply["gh"].is_object().then(|| crate::fleet::model::GhCli {
             installed: reply["gh"]["installed"].as_bool().unwrap_or(false),
             logged_in: reply["gh"]["logged_in"].as_bool().unwrap_or(false),
@@ -670,7 +987,10 @@ pub(crate) fn parse_discovery(spec: &MachineSpec, reply: &Value) -> MachineSessi
         if name.is_empty() {
             continue;
         }
-        let kind = s["agent"].as_str().and_then(agent).or_else(|| name.split('-').next().and_then(agent));
+        let kind = s["agent"]
+            .as_str()
+            .and_then(agent)
+            .or_else(|| name.split('-').next().and_then(agent));
         let running = s["status"].as_str() == Some("running");
         let last_output = s["last_output"].as_i64();
         found.sessions.push(SessionInfo {
@@ -678,9 +998,17 @@ pub(crate) fn parse_discovery(spec: &MachineSpec, reply: &Value) -> MachineSessi
             machine_id: spec.id.clone(),
             agent: kind.map(|k| k.id.to_string()).unwrap_or_default(),
             agent_name: kind.map(|k| k.name.to_string()).unwrap_or_default(),
-            title: s["title"].as_str().filter(|t| !t.is_empty()).map(str::to_string).unwrap_or_else(|| name.clone()),
+            title: s["title"]
+                .as_str()
+                .filter(|t| !t.is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(|| name.clone()),
             cwd: s["cwd"].as_str().unwrap_or("").to_string(),
-            status: if running { "running".into() } else { "exited".into() },
+            status: if running {
+                "running".into()
+            } else {
+                "exited".into()
+            },
             exit_code: s["exit_code"].as_i64().map(|c| c as i32),
             // The same rule as the agent's (its "sessions" event comes when this turns false).
             busy: running && last_output.is_some_and(|a| now - a < BUSY_WINDOW_SECS),
@@ -695,12 +1023,21 @@ pub(crate) fn parse_discovery(spec: &MachineSpec, reply: &Value) -> MachineSessi
         });
     }
     for e in reply["events"].as_array().into_iter().flatten() {
-        if let (Some(at), Some(kind), Some(session)) = (e["at"].as_i64(), e["kind"].as_str(), e["session"].as_str()) {
-            found.events.push(RawEvent { at, kind: kind.into(), session: session.into(), detail: e["detail"].as_str().unwrap_or("").into() });
+        if let (Some(at), Some(kind), Some(session)) =
+            (e["at"].as_i64(), e["kind"].as_str(), e["session"].as_str())
+        {
+            found.events.push(RawEvent {
+                at,
+                kind: kind.into(),
+                session: session.into(),
+                detail: e["detail"].as_str().unwrap_or("").into(),
+            });
         }
     }
     // Newest first.
-    found.sessions.sort_by_key(|s| std::cmp::Reverse(s.created_at));
+    found
+        .sessions
+        .sort_by_key(|s| std::cmp::Reverse(s.created_at));
     found
 }
 
@@ -709,7 +1046,8 @@ mod tests {
     use super::*;
 
     fn spec(host: &str) -> MachineSpec {
-        let mut s: MachineSpec = toml::from_str(&format!("name = \"Beelink\"\nhost = \"{host}\"")).unwrap();
+        let mut s: MachineSpec =
+            toml::from_str(&format!("name = \"Beelink\"\nhost = \"{host}\"")).unwrap();
         s.id = "beelink".into();
         s
     }
@@ -736,29 +1074,55 @@ mod tests {
         assert_eq!(found.sessions.len(), 2);
         let shell = &found.sessions[0];
         assert_eq!(shell.id, "beelink/shell-cd34");
-        assert_eq!((shell.status.as_str(), shell.exit_code), ("exited", Some(2)));
+        assert_eq!(
+            (shell.status.as_str(), shell.exit_code),
+            ("exited", Some(2))
+        );
         assert_eq!(shell.title, "shell-cd34");
         let claude = &found.sessions[1];
         assert_eq!(claude.agent_name, "Claude Code");
         assert!(claude.busy && claude.persistent);
         assert_eq!(claude.clients, 1);
-        assert_eq!(claude.attach_command, "ssh -t beelink ~/.muxen/bin/muxen-agent attach claude-ab12");
+        assert_eq!(
+            claude.attach_command,
+            "ssh -t beelink ~/.muxen/bin/muxen-agent attach claude-ab12"
+        );
     }
 
     #[test]
     fn notices_from_events_and_quiet_agents() {
-        let before = parse_discovery(&spec("beelink"), &reply(1000, 998, json!([{ "at": 950, "kind": "bell", "session": "claude-ab12", "detail": "" }])));
+        let before = parse_discovery(
+            &spec("beelink"),
+            &reply(
+                1000,
+                998,
+                json!([{ "at": 950, "kind": "bell", "session": "claude-ab12", "detail": "" }]),
+            ),
+        );
         let after = parse_discovery(
             &spec("beelink"),
-            &reply(1100, 1000, json!([
-                { "at": 950, "kind": "bell", "session": "claude-ab12", "detail": "" },
-                { "at": 1050, "kind": "exited", "session": "shell-cd34", "detail": "2" }
-            ])),
+            &reply(
+                1100,
+                1000,
+                json!([
+                    { "at": 950, "kind": "bell", "session": "claude-ab12", "detail": "" },
+                    { "at": 1050, "kind": "exited", "session": "shell-cd34", "detail": "2" }
+                ]),
+            ),
         );
         let notices = new_notices(&before, &after, 950, "Beelink");
-        let kinds: Vec<(&str, &str)> = notices.iter().map(|(id, kind, _, _)| (id.as_str(), kind.as_str())).collect();
+        let kinds: Vec<(&str, &str)> = notices
+            .iter()
+            .map(|(id, kind, _, _)| (id.as_str(), kind.as_str()))
+            .collect();
         // The old bell doesn't repeat; the exit is new; Claude went quiet.
-        assert_eq!(kinds, vec![("beelink/shell-cd34", "exited"), ("beelink/claude-ab12", "waiting")]);
+        assert_eq!(
+            kinds,
+            vec![
+                ("beelink/shell-cd34", "exited"),
+                ("beelink/claude-ab12", "waiting")
+            ]
+        );
         assert_eq!(notices[0].2, "Shell exited with code 2");
         assert_eq!(notices[1].2, "Claude Code is waiting for you");
         assert_eq!(notices[1].3, "Claude Code · app · Beelink");
@@ -766,11 +1130,17 @@ mod tests {
 
     #[test]
     fn titles_and_ids() {
-        assert_eq!(default_title(agent("claude").unwrap(), "~/code/api/"), "Claude Code · api");
+        assert_eq!(
+            default_title(agent("claude").unwrap(), "~/code/api/"),
+            "Claude Code · api"
+        );
         assert_eq!(default_title(agent("shell").unwrap(), "~"), "Shell · home");
         assert!(split_id("beelink/claude-1").is_ok());
         assert!(split_id("claude-1").is_err());
-        assert_eq!(user_attach_command(&spec("local"), "x"), "~/.muxen/bin/muxen-agent attach x");
+        assert_eq!(
+            user_attach_command(&spec("local"), "x"),
+            "~/.muxen/bin/muxen-agent attach x"
+        );
         let taken = vec!["Shell · home".to_string(), "Shell · home 2".to_string()];
         assert_eq!(unique_title("Shell · home", &taken), "Shell · home 3");
         assert_eq!(unique_title("Shell · tmp", &taken), "Shell · tmp");

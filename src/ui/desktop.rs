@@ -9,9 +9,10 @@ use std::time::{Duration, Instant};
 
 use futures::StreamExt;
 use gpui::{
-    AnyElement, App, Bounds, Context, Entity, SharedString, Corners, FocusHandle, Focusable, KeyBinding, KeyDownEvent, KeyUpEvent, Modifiers, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, NoAction, Pixels, Point, RenderImage, ScrollDelta, ScrollWheelEvent, Task, Window, canvas, div,
-    prelude::*, px,
+    AnyElement, App, Bounds, Context, Corners, Entity, FocusHandle, Focusable, KeyBinding,
+    KeyDownEvent, KeyUpEvent, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, NoAction, Pixels, Point, RenderImage, ScrollDelta,
+    ScrollWheelEvent, SharedString, Task, Window, canvas, div, prelude::*, px,
 };
 use serde_json::{Value, json};
 
@@ -25,13 +26,18 @@ const CONTEXT: &str = "Desktop";
 
 /// Keys that would otherwise run Muxin's own shortcuts go to the machine.
 pub fn bind_keys(cx: &mut App) {
-    let mut keys: Vec<String> = ["escape", "/", "tab", "shift-tab"].map(String::from).to_vec();
+    let mut keys: Vec<String> = ["escape", "/", "tab", "shift-tab"]
+        .map(String::from)
+        .to_vec();
     if cfg!(target_os = "macos") {
         keys.extend(["cmd-r", "cmd-t", "cmd-n", "cmd-f"].map(String::from));
     } else {
         keys.extend(super::shortcuts::ctrl_keys(cx));
     }
-    cx.bind_keys(keys.iter().map(|k| KeyBinding::new(k, NoAction, Some(CONTEXT))));
+    cx.bind_keys(
+        keys.iter()
+            .map(|k| KeyBinding::new(k, NoAction, Some(CONTEXT))),
+    );
 }
 
 enum State {
@@ -69,7 +75,12 @@ const RETRIES: u32 = 6;
 pub const NATIVE: u32 = 16384;
 
 /// Monitor sizes with a short name, offered when the monitor has them.
-const SIZES: [((u32, u32), &str); 4] = [((1280, 720), "720p"), ((1920, 1080), "1080p"), ((2560, 1440), "1440p"), ((3840, 2160), "4K")];
+const SIZES: [((u32, u32), &str); 4] = [
+    ((1280, 720), "720p"),
+    ((1920, 1080), "1080p"),
+    ((2560, 1440), "1440p"),
+    ((3840, 2160), "4K"),
+];
 
 /// The desktop's channel on the machine's link.
 struct Remote {
@@ -79,7 +90,11 @@ struct Remote {
 
 impl Remote {
     fn input(&self, event: Value) {
-        self.link.send(self.channel, INPUT, &serde_json::to_vec(&event).unwrap_or_default());
+        self.link.send(
+            self.channel,
+            INPUT,
+            &serde_json::to_vec(&event).unwrap_or_default(),
+        );
     }
 }
 
@@ -145,7 +160,12 @@ impl Focusable for DesktopView {
 }
 
 impl DesktopView {
-    pub fn new(engine: Arc<Engine>, machine_id: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        engine: Arc<Engine>,
+        machine_id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let mut view = DesktopView {
             engine,
             machine: machine_id,
@@ -179,7 +199,12 @@ impl DesktopView {
             _tasks: Vec::new(),
             _subscriptions: Vec::new(),
         };
-        view.mac = view.engine.current().machines.iter().any(|m| m.id == view.machine && m.platform.starts_with("darwin"));
+        view.mac = view
+            .engine
+            .current()
+            .machines
+            .iter()
+            .any(|m| m.id == view.machine && m.platform.starts_with("darwin"));
         view.start(window, cx);
         // Keys and buttons held when the view loses the keyboard (another
         // app, ⌘Q, a click elsewhere): let go on the machine too.
@@ -201,15 +226,26 @@ impl DesktopView {
                     let snap = rx.borrow_and_update();
                     snap.machines.iter().find(|m| m.id == id).and_then(|m| {
                         if m.is_disconnected() {
-                            Some(format!("Disconnected from {}: connect to it to see its desktop", m.name))
+                            Some(format!(
+                                "Disconnected from {}: connect to it to see its desktop",
+                                m.name
+                            ))
                         } else {
-                            (m.status == "offline").then(|| m.unreachable.as_ref().map(|u| u.title.clone()).unwrap_or_else(|| format!("Can't reach {}", m.name)))
+                            (m.status == "offline").then(|| {
+                                m.unreachable
+                                    .as_ref()
+                                    .map(|u| u.title.clone())
+                                    .unwrap_or_else(|| format!("Can't reach {}", m.name))
+                            })
                         }
                     })
                 };
                 if last.as_ref() != Some(&offline) {
                     last = Some(offline.clone());
-                    if this.update_in(cx, |this, window, cx| this.set_offline(offline, window, cx)).is_err() {
+                    if this
+                        .update_in(cx, |this, window, cx| this.set_offline(offline, window, cx))
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -222,7 +258,12 @@ impl DesktopView {
         view
     }
 
-    fn set_offline(&mut self, offline: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+    fn set_offline(
+        &mut self,
+        offline: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let back = self.offline.is_some() && offline.is_none();
         self.offline = offline;
         if back && !matches!(self.state, State::Live) {
@@ -243,7 +284,12 @@ impl DesktopView {
     }
 
     /// Shows another of the machine's displays: a new stream.
-    pub fn set_display(&mut self, display: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn set_display(
+        &mut self,
+        display: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if display != self.display {
             self.display = display;
             self.retries = 0;
@@ -258,7 +304,14 @@ impl DesktopView {
 
     /// Sets a monitor's size or scale on the machine; a new stream at its new
     /// size once it has one.
-    pub fn change_display(&mut self, display: String, size: Option<(u32, u32)>, scale: Option<f64>, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn change_display(
+        &mut self,
+        display: String,
+        size: Option<(u32, u32)>,
+        scale: Option<f64>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.changing {
             return;
         }
@@ -299,7 +352,12 @@ impl DesktopView {
         // mustn't hold up the new one.
         self.pending = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let (tx, mut rx) = futures::channel::mpsc::unbounded::<Msg>();
-        let (engine, machine_id, wanted, mut display) = (self.engine.clone(), self.machine.clone(), self.width, self.display.clone().unwrap_or_default());
+        let (engine, machine_id, wanted, mut display) = (
+            self.engine.clone(),
+            self.machine.clone(),
+            self.width,
+            self.display.clone().unwrap_or_default(),
+        );
         let (canvas, pending) = (self.canvas.clone(), self.pending.clone());
         let rt = engine.runtime().clone();
         rt.spawn(async move {
@@ -387,17 +445,23 @@ impl DesktopView {
                                 this.state = State::Live;
                                 this.retries = 0;
                                 this.resuming = false;
-                                this.via = via.split_once('|').map_or(via.as_str(), |(v, _)| v).to_string();
+                                this.via = via
+                                    .split_once('|')
+                                    .map_or(via.as_str(), |(v, _)| v)
+                                    .to_string();
                             }
                             Msg::Changed => {
-                                this.pending.store(false, std::sync::atomic::Ordering::Release);
+                                this.pending
+                                    .store(false, std::sync::atomic::Ordering::Release);
                                 let picture = {
                                     let c = this.canvas.lock().unwrap();
                                     image::RgbaImage::from_raw(c.w, c.h, c.data.clone())
                                 };
                                 if let Some(picture) = picture {
                                     this.frames += 1;
-                                    let image = Arc::new(RenderImage::new(smallvec::smallvec![image::Frame::new(picture)]));
+                                    let image = Arc::new(RenderImage::new(smallvec::smallvec![
+                                        image::Frame::new(picture)
+                                    ]));
                                     // Only the newest picture matters; free the one it replaces.
                                     if let Some(old) = this.frame.replace(image) {
                                         cx.drop_image(old, Some(window));
@@ -413,15 +477,17 @@ impl DesktopView {
                                     this.retries += 1;
                                     this.resuming = true;
                                     this.state = State::Connecting;
-                                    let delay = Duration::from_millis(500 * this.retries as u64).min(Duration::from_secs(3));
-                                    this.retry = Some(cx.spawn_in(window, async move |this, cx| {
-                                        cx.background_executor().timer(delay).await;
-                                        let _ = this.update_in(cx, |this, window, cx| {
-                                            if this.resuming && this.offline.is_none() {
-                                                this.start(window, cx);
-                                            }
-                                        });
-                                    }));
+                                    let delay = Duration::from_millis(500 * this.retries as u64)
+                                        .min(Duration::from_secs(3));
+                                    this.retry =
+                                        Some(cx.spawn_in(window, async move |this, cx| {
+                                            cx.background_executor().timer(delay).await;
+                                            let _ = this.update_in(cx, |this, window, cx| {
+                                                if this.resuming && this.offline.is_none() {
+                                                    this.start(window, cx);
+                                                }
+                                            });
+                                        }));
                                 } else {
                                     this.resuming = false;
                                     this.state = State::Ended(why);
@@ -446,15 +512,29 @@ impl DesktopView {
         if self.display.as_deref() != Some("all") || self.frame.is_none() {
             return Vec::new();
         }
-        let displays = self.engine.current().machines.iter().find(|m| m.id == self.machine).map(|m| m.displays.clone()).unwrap_or_default();
-        let Some(all) = displays.iter().find(|d| d.id == "all") else { return Vec::new() };
-        let (Some(rect), Some(area)) = (self.shown.get(), self.area.get()) else { return Vec::new() };
+        let displays = self
+            .engine
+            .current()
+            .machines
+            .iter()
+            .find(|m| m.id == self.machine)
+            .map(|m| m.displays.clone())
+            .unwrap_or_default();
+        let Some(all) = displays.iter().find(|d| d.id == "all") else {
+            return Vec::new();
+        };
+        let (Some(rect), Some(area)) = (self.shown.get(), self.area.get()) else {
+            return Vec::new();
+        };
         if all.width <= 0. {
             return Vec::new();
         }
         let theme = cx.theme();
         let scale = f32::from(rect.size.width) / all.width as f32;
-        let (ox, oy) = (f32::from(rect.origin.x - area.origin.x), f32::from(rect.origin.y - area.origin.y));
+        let (ox, oy) = (
+            f32::from(rect.origin.x - area.origin.x),
+            f32::from(rect.origin.y - area.origin.y),
+        );
         displays
             .iter()
             .filter(|d| d.id != "all")
@@ -484,7 +564,9 @@ impl DesktopView {
                     // The click is for the label, not the machine.
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(cx.listener(move |this, _, window, cx| this.set_display(Some(id.clone()), window, cx)))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.set_display(Some(id.clone()), window, cx)
+                    }))
                     .into_any_element()
             })
             .collect()
@@ -521,7 +603,10 @@ impl DesktopView {
         if x < 0. || y < 0. || x >= w || y >= h || w <= 0. || h <= 0. {
             return None;
         }
-        Some(((x / w * self.size.0 as f32) as f64, (y / h * self.size.1 as f32) as f64))
+        Some((
+            (x / w * self.size.0 as f32) as f64,
+            (y / h * self.size.1 as f32) as f64,
+        ))
     }
 
     fn send(&self, event: Value) {
@@ -541,7 +626,14 @@ impl DesktopView {
         }
     }
 
-    fn mouse_button(&mut self, button: MouseButton, position: Point<Pixels>, down: bool, window: &mut Window, cx: &mut Context<Self>) {
+    fn mouse_button(
+        &mut self,
+        button: MouseButton,
+        position: Point<Pixels>,
+        down: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let b = match button {
             MouseButton::Left => 1,
             MouseButton::Middle => 2,
@@ -565,7 +657,9 @@ impl DesktopView {
     }
 
     fn scroll(&mut self, e: &ScrollWheelEvent, _: &mut Window, _: &mut Context<Self>) {
-        let Some((x, y)) = self.at(e.position) else { return };
+        let Some((x, y)) = self.at(e.position) else {
+            return;
+        };
         let lines = match e.delta {
             ScrollDelta::Lines(l) => l.y,
             ScrollDelta::Pixels(p) => f32::from(p.y) / 40.,
@@ -583,10 +677,20 @@ impl DesktopView {
     fn modifiers(&mut self, m: Modifiers) {
         // On a Mac ⌘ is ⌘; elsewhere it works as Ctrl (copy, paste, ... as on a Mac).
         let keys: [(bool, bool, u32); 4] = if self.mac {
-            [(m.shift, self.held.shift, 0xffe1), (m.control, self.held.control, 0xffe3), (m.alt, self.held.alt, 0xffe9), (m.platform, self.held.platform, 0xffeb)]
+            [
+                (m.shift, self.held.shift, 0xffe1),
+                (m.control, self.held.control, 0xffe3),
+                (m.alt, self.held.alt, 0xffe9),
+                (m.platform, self.held.platform, 0xffeb),
+            ]
         } else {
             let ctrl = |m: &Modifiers| m.control || m.platform;
-            [(m.shift, self.held.shift, 0xffe1), (ctrl(&m), ctrl(&self.held), 0xffe3), (m.alt, self.held.alt, 0xffe9), (false, false, 0)]
+            [
+                (m.shift, self.held.shift, 0xffe1),
+                (ctrl(&m), ctrl(&self.held), 0xffe3),
+                (m.alt, self.held.alt, 0xffe9),
+                (false, false, 0),
+            ]
         };
         for (now, before, sym) in keys {
             if now != before && sym != 0 {
@@ -622,18 +726,38 @@ impl DesktopView {
 /// Paints a TILES message into the canvas: `[w][h][count]`, then each
 /// `[x][y][w][h][len: u32][jpeg]`. Patches decode side by side.
 fn paint_tiles(canvas: &std::sync::Mutex<Canvas>, msg: &[u8]) -> bool {
-    let u16_at = |o: usize| msg.get(o..o + 2).map(|b| u16::from_be_bytes([b[0], b[1]]) as usize);
-    let (Some(fw), Some(fh), Some(n)) = (u16_at(0), u16_at(2), u16_at(4)) else { return false };
+    let u16_at = |o: usize| {
+        msg.get(o..o + 2)
+            .map(|b| u16::from_be_bytes([b[0], b[1]]) as usize)
+    };
+    let (Some(fw), Some(fh), Some(n)) = (u16_at(0), u16_at(2), u16_at(4)) else {
+        return false;
+    };
     let mut patches = Vec::with_capacity(n);
     let mut o = 6;
     for _ in 0..n {
-        let (Some(x), Some(y), Some(w), Some(h)) = (u16_at(o), u16_at(o + 2), u16_at(o + 4), u16_at(o + 6)) else { return false };
-        let Some(len) = msg.get(o + 8..o + 12).map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as usize) else { return false };
-        let Some(jpeg) = msg.get(o + 12..o + 12 + len) else { return false };
+        let (Some(x), Some(y), Some(w), Some(h)) =
+            (u16_at(o), u16_at(o + 2), u16_at(o + 4), u16_at(o + 6))
+        else {
+            return false;
+        };
+        let Some(len) = msg
+            .get(o + 8..o + 12)
+            .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as usize)
+        else {
+            return false;
+        };
+        let Some(jpeg) = msg.get(o + 12..o + 12 + len) else {
+            return false;
+        };
         patches.push((x, y, w, h, jpeg));
         o += 12 + len;
     }
-    let workers = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).clamp(1, 8).min(patches.len().max(1));
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .clamp(1, 8)
+        .min(patches.len().max(1));
     let per = patches.len().div_ceil(workers).max(1);
     let decoded: Vec<(usize, usize, image::RgbaImage)> = std::thread::scope(|s| {
         let handles: Vec<_> = patches
@@ -643,18 +767,28 @@ fn paint_tiles(canvas: &std::sync::Mutex<Canvas>, msg: &[u8]) -> bool {
                     chunk
                         .iter()
                         .filter_map(|(x, y, _, _, jpeg)| {
-                            let img = image::load_from_memory_with_format(jpeg, image::ImageFormat::Jpeg).ok()?.into_rgba8();
+                            let img =
+                                image::load_from_memory_with_format(jpeg, image::ImageFormat::Jpeg)
+                                    .ok()?
+                                    .into_rgba8();
                             Some((*x, *y, img))
                         })
                         .collect::<Vec<_>>()
                 })
             })
             .collect();
-        handles.into_iter().flat_map(|h| h.join().unwrap_or_default()).collect()
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().unwrap_or_default())
+            .collect()
     });
     let mut c = canvas.lock().unwrap();
     if (c.w as usize, c.h as usize) != (fw, fh) {
-        *c = Canvas { w: fw as u32, h: fh as u32, data: vec![0; fw * fh * 4] };
+        *c = Canvas {
+            w: fw as u32,
+            h: fh as u32,
+            data: vec![0; fw * fh * 4],
+        };
     }
     for (x, y, img) in decoded {
         let (w, h) = (img.width() as usize, img.height() as usize);
@@ -663,7 +797,10 @@ fn paint_tiles(canvas: &std::sync::Mutex<Canvas>, msg: &[u8]) -> bool {
             let width = w.min(fw.saturating_sub(x));
             let dst = ((y + row) * fw + x) * 4;
             let src = row * w * 4;
-            for (d, s) in c.data[dst..dst + width * 4].chunks_exact_mut(4).zip(rgba[src..src + width * 4].chunks_exact(4)) {
+            for (d, s) in c.data[dst..dst + width * 4]
+                .chunks_exact_mut(4)
+                .zip(rgba[src..src + width * 4].chunks_exact(4))
+            {
                 d.copy_from_slice(&[s[2], s[1], s[0], 255]);
             }
         }
@@ -673,13 +810,22 @@ fn paint_tiles(canvas: &std::sync::Mutex<Canvas>, msg: &[u8]) -> bool {
 
 /// Paints a whole-frame JPEG (`[w][h][jpeg]`) into the canvas.
 fn paint_frame(canvas: &std::sync::Mutex<Canvas>, msg: &[u8]) -> bool {
-    let Some(img) = msg.get(4..).and_then(|j| image::load_from_memory_with_format(j, image::ImageFormat::Jpeg).ok()) else { return false };
+    let Some(img) = msg
+        .get(4..)
+        .and_then(|j| image::load_from_memory_with_format(j, image::ImageFormat::Jpeg).ok())
+    else {
+        return false;
+    };
     let mut data = img.into_rgba8();
     let (w, h) = data.dimensions();
     for px in data.chunks_exact_mut(4) {
         px.swap(0, 2);
     }
-    *canvas.lock().unwrap() = Canvas { w, h, data: data.into_raw() };
+    *canvas.lock().unwrap() = Canvas {
+        w,
+        h,
+        data: data.into_raw(),
+    };
     true
 }
 
@@ -701,7 +847,10 @@ impl Render for DesktopView {
                 let s = (bw / w).min(bh / h);
                 let (dw, dh) = (w * s, h * s);
                 let rect = Bounds::new(
-                    gpui::point(bounds.origin.x + px((bw - dw) / 2.), bounds.origin.y + px((bh - dh) / 2.)),
+                    gpui::point(
+                        bounds.origin.x + px((bw - dw) / 2.),
+                        bounds.origin.y + px((bh - dh) / 2.),
+                    ),
                     gpui::size(px(dw), px(dh)),
                 );
                 shown.set(Some(rect));
@@ -709,7 +858,10 @@ impl Render for DesktopView {
             },
         )
         .size_full();
-        let offline = self.offline.clone().filter(|_| !matches!(self.state, State::Live));
+        let offline = self
+            .offline
+            .clone()
+            .filter(|_| !matches!(self.state, State::Live));
         let waiting = match (&self.state, offline) {
             (_, Some(why)) => Some(
                 div()
@@ -719,7 +871,12 @@ impl Render for DesktopView {
                     .gap(px(10.))
                     .child(kit::color_tile("power", 44.))
                     .child(div().text_size(px(14.)).text_color(theme.text).child(why))
-                    .child(div().text_size(px(12.5)).text_color(theme.text_muted).child("Comes back when it does.")),
+                    .child(
+                        div()
+                            .text_size(px(12.5))
+                            .text_color(theme.text_muted)
+                            .child("Comes back when it does."),
+                    ),
             ),
             (State::Ended(why), None) => Some(
                 div()
@@ -728,22 +885,49 @@ impl Render for DesktopView {
                     .items_center()
                     .gap(px(10.))
                     .child(kit::color_tile("monitor", 44.))
-                    .child(div().max_w(px(460.)).text_center().text_size(px(13.)).text_color(theme.text_muted).child(why.clone()))
-                    .child(Button::new("desktop-retry", "Try again").icon("refresh-cw").on_click(cx.listener(|this, _, window, cx| {
-                        this.retries = 0;
-                        this.start(window, cx);
-                        cx.notify();
-                    }))),
+                    .child(
+                        div()
+                            .max_w(px(460.))
+                            .text_center()
+                            .text_size(px(13.))
+                            .text_color(theme.text_muted)
+                            .child(why.clone()),
+                    )
+                    .child(
+                        Button::new("desktop-retry", "Try again")
+                            .icon("refresh-cw")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.retries = 0;
+                                this.start(window, cx);
+                                cx.notify();
+                            })),
+                    ),
             ),
             (State::Connecting, None) if self.resuming && self.frame.is_some() => Some(
-                div().flex().items_center().gap(px(10.)).child(spinner("desktop-resume", 16., theme.text_muted)).child(
-                    div().text_size(px(13.)).text_color(theme.text_muted).child("Reconnecting…"),
-                ),
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.))
+                    .child(spinner("desktop-resume", 16., theme.text_muted))
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .text_color(theme.text_muted)
+                            .child("Reconnecting…"),
+                    ),
             ),
             _ if self.frame.is_none() => Some(
-                div().flex().items_center().gap(px(10.)).child(spinner("desktop-wait", 16., theme.text_muted)).child(
-                    div().text_size(px(13.)).text_color(theme.text_muted).child(self.status()),
-                ),
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.))
+                    .child(spinner("desktop-wait", 16., theme.text_muted))
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .text_color(theme.text_muted)
+                            .child(self.status()),
+                    ),
             ),
             _ => None,
         };
@@ -760,21 +944,64 @@ impl Render for DesktopView {
             .child(picture)
             .children(labels)
             // Over the last picture, dimmed: it's no longer live.
-            .children(waiting.map(|w| div().absolute().inset_0().flex().items_center().justify_center().when(self.frame.is_some(), |d| d.bg(gpui::black().opacity(0.72))).child(w)))
+            .children(waiting.map(|w| {
+                div()
+                    .absolute()
+                    .inset_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .when(self.frame.is_some(), |d| d.bg(gpui::black().opacity(0.72)))
+                    .child(w)
+            }))
             .on_mouse_move(cx.listener(Self::mouse_move))
-            .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, w, cx| this.mouse_button(e.button, e.position, true, w, cx)))
-            .on_mouse_down(MouseButton::Right, cx.listener(|this, e: &MouseDownEvent, w, cx| this.mouse_button(e.button, e.position, true, w, cx)))
-            .on_mouse_down(MouseButton::Middle, cx.listener(|this, e: &MouseDownEvent, w, cx| this.mouse_button(e.button, e.position, true, w, cx)))
-            .on_mouse_up(MouseButton::Left, cx.listener(|this, e: &MouseUpEvent, w, cx| this.mouse_button(e.button, e.position, false, w, cx)))
-            .on_mouse_up(MouseButton::Right, cx.listener(|this, e: &MouseUpEvent, w, cx| this.mouse_button(e.button, e.position, false, w, cx)))
-            .on_mouse_up(MouseButton::Middle, cx.listener(|this, e: &MouseUpEvent, w, cx| this.mouse_button(e.button, e.position, false, w, cx)))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, e: &MouseDownEvent, w, cx| {
+                    this.mouse_button(e.button, e.position, true, w, cx)
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, e: &MouseDownEvent, w, cx| {
+                    this.mouse_button(e.button, e.position, true, w, cx)
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Middle,
+                cx.listener(|this, e: &MouseDownEvent, w, cx| {
+                    this.mouse_button(e.button, e.position, true, w, cx)
+                }),
+            )
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, e: &MouseUpEvent, w, cx| {
+                    this.mouse_button(e.button, e.position, false, w, cx)
+                }),
+            )
+            .on_mouse_up(
+                MouseButton::Right,
+                cx.listener(|this, e: &MouseUpEvent, w, cx| {
+                    this.mouse_button(e.button, e.position, false, w, cx)
+                }),
+            )
+            .on_mouse_up(
+                MouseButton::Middle,
+                cx.listener(|this, e: &MouseUpEvent, w, cx| {
+                    this.mouse_button(e.button, e.position, false, w, cx)
+                }),
+            )
             .on_scroll_wheel(cx.listener(Self::scroll))
-            .on_modifiers_changed(cx.listener(|this, e: &ModifiersChangedEvent, _, _| this.modifiers(e.modifiers)))
+            .on_modifiers_changed(
+                cx.listener(|this, e: &ModifiersChangedEvent, _, _| this.modifiers(e.modifiers)),
+            )
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
                 this.modifiers(e.keystroke.modifiers);
                 this.key(&e.keystroke.key, true, cx)
             }))
-            .on_key_up(cx.listener(|this, e: &KeyUpEvent, _, cx| this.key(&e.keystroke.key, false, cx)))
+            .on_key_up(
+                cx.listener(|this, e: &KeyUpEvent, _, cx| this.key(&e.keystroke.key, false, cx)),
+            )
     }
 }
 
@@ -788,47 +1015,97 @@ pub fn toolbar(view: &Entity<DesktopView>, extra: Vec<AnyElement>, cx: &App) -> 
 }
 
 /// The toolbar, with `menu` opening a monitor's menu on right-click.
-pub fn toolbar_with_menu(view: &Entity<DesktopView>, extra: Vec<AnyElement>, menu: Option<DisplayMenu>, cx: &App) -> AnyElement {
+pub fn toolbar_with_menu(
+    view: &Entity<DesktopView>,
+    extra: Vec<AnyElement>,
+    menu: Option<DisplayMenu>,
+    cx: &App,
+) -> AnyElement {
     let theme = cx.theme();
     let (status, via, machine, shown, engine) = {
         let v = view.read(cx);
-        (v.status(), v.via().to_string(), v.machine.clone(), v.display.clone(), v.engine.clone())
+        (
+            v.status(),
+            v.via().to_string(),
+            v.machine.clone(),
+            v.display.clone(),
+            v.engine.clone(),
+        )
     };
     // Its monitors, when it has more than one: pick the one to show.
-    let displays = engine.current().machines.iter().find(|m| m.id == machine).map(|m| m.displays.clone()).unwrap_or_default();
+    let displays = engine
+        .current()
+        .machines
+        .iter()
+        .find(|m| m.id == machine)
+        .map(|m| m.displays.clone())
+        .unwrap_or_default();
     // Shown unless another is picked: the main monitor.
-    let default = displays.iter().find(|d| d.main && d.id != "all").or_else(|| displays.iter().find(|d| d.id != "all")).map(|d| d.id.clone());
+    let default = displays
+        .iter()
+        .find(|d| d.main && d.id != "all")
+        .or_else(|| displays.iter().find(|d| d.id != "all"))
+        .map(|d| d.id.clone());
     let showing = shown.or(default);
     let monitors = (displays.len() > 1).then(|| {
-        div().flex().gap(px(2.)).p(px(2.)).rounded(px(7.)).bg(theme.element).children(displays.iter().map(|d| {
-            let (on, id, view) = (showing.as_deref() == Some(d.id.as_str()), d.id.clone(), view.clone());
-            let right_click = menu.clone().filter(|_| d.id != "all").map(|menu| {
-                let (machine, display) = (machine.clone(), d.id.clone());
-                move |e: &MouseDownEvent, window: &mut Window, cx: &mut App| menu(&machine, &display, e.position, window, cx)
-            });
-            let name = if d.name.chars().count() > 18 { format!("{}…", d.name.chars().take(17).collect::<String>()) } else { d.name.clone() };
-            div()
-                .id(SharedString::from(format!("disp-{}", d.id)))
-                .px(px(8.))
-                .h(px(22.))
-                .flex()
-                .items_center()
-                .gap(px(5.))
-                .rounded(px(5.))
-                .cursor_pointer()
-                .text_size(px(11.5))
-                .text_color(if on { theme.text } else { theme.text_placeholder })
-                .when(on, |d| d.bg(theme.element_selected))
-                .when(!on, |d| d.hover(|st| st.bg(theme.ghost_hover)))
-                .when(d.is_virtual, |el| el.child(kit::dot(theme.accent, 5.)).tooltip(|window, cx| kit::Tooltip::view("Virtual monitor".into(), window, cx)))
-                .child(name)
-                .when_some(right_click, |el, f| el.on_mouse_down(MouseButton::Right, f))
-                .on_click(move |_, window, cx| view.update(cx, |v, cx| v.set_display(Some(id.clone()), window, cx)))
-        }))
+        div()
+            .flex()
+            .gap(px(2.))
+            .p(px(2.))
+            .rounded(px(7.))
+            .bg(theme.element)
+            .children(displays.iter().map(|d| {
+                let (on, id, view) = (
+                    showing.as_deref() == Some(d.id.as_str()),
+                    d.id.clone(),
+                    view.clone(),
+                );
+                let right_click = menu.clone().filter(|_| d.id != "all").map(|menu| {
+                    let (machine, display) = (machine.clone(), d.id.clone());
+                    move |e: &MouseDownEvent, window: &mut Window, cx: &mut App| {
+                        menu(&machine, &display, e.position, window, cx)
+                    }
+                });
+                let name = if d.name.chars().count() > 18 {
+                    format!("{}…", d.name.chars().take(17).collect::<String>())
+                } else {
+                    d.name.clone()
+                };
+                div()
+                    .id(SharedString::from(format!("disp-{}", d.id)))
+                    .px(px(8.))
+                    .h(px(22.))
+                    .flex()
+                    .items_center()
+                    .gap(px(5.))
+                    .rounded(px(5.))
+                    .cursor_pointer()
+                    .text_size(px(11.5))
+                    .text_color(if on {
+                        theme.text
+                    } else {
+                        theme.text_placeholder
+                    })
+                    .when(on, |d| d.bg(theme.element_selected))
+                    .when(!on, |d| d.hover(|st| st.bg(theme.ghost_hover)))
+                    .when(d.is_virtual, |el| {
+                        el.child(kit::dot(theme.accent, 5.)).tooltip(|window, cx| {
+                            kit::Tooltip::view("Virtual monitor".into(), window, cx)
+                        })
+                    })
+                    .child(name)
+                    .when_some(right_click, |el, f| el.on_mouse_down(MouseButton::Right, f))
+                    .on_click(move |_, window, cx| {
+                        view.update(cx, |v, cx| v.set_display(Some(id.clone()), window, cx))
+                    })
+            }))
     });
     // The monitor shown: its size (720p · 1080p · 1440p · 4K, the ones it
     // has) and scale (100% · 200%), set on the machine.
-    let screen = showing.as_deref().filter(|id| *id != "all").and_then(|id| displays.iter().find(|d| d.id == id));
+    let screen = showing
+        .as_deref()
+        .filter(|id| *id != "all")
+        .and_then(|id| displays.iter().find(|d| d.id == id));
     let chip = |id: String, label: String, on: bool, tip: &'static str| {
         div()
             .id(SharedString::from(id))
@@ -839,16 +1116,33 @@ pub fn toolbar_with_menu(view: &Entity<DesktopView>, extra: Vec<AnyElement>, men
             .rounded(px(5.))
             .cursor_pointer()
             .text_size(px(11.5))
-            .text_color(if on { theme.text } else { theme.text_placeholder })
+            .text_color(if on {
+                theme.text
+            } else {
+                theme.text_placeholder
+            })
             .when(on, |d| d.bg(theme.element_selected))
             .when(!on, |d| d.hover(|st| st.bg(theme.ghost_hover)))
             .tooltip(move |window, cx| kit::Tooltip::view(tip.into(), window, cx))
             .child(label)
     };
-    let group = |chips: Vec<gpui::Stateful<gpui::Div>>| div().flex_none().flex().gap(px(2.)).p(px(2.)).rounded(px(7.)).bg(theme.element).children(chips);
+    let group = |chips: Vec<gpui::Stateful<gpui::Div>>| {
+        div()
+            .flex_none()
+            .flex()
+            .gap(px(2.))
+            .p(px(2.))
+            .rounded(px(7.))
+            .bg(theme.element)
+            .children(chips)
+    };
     let sizes = screen.and_then(|d| {
         let current = (d.width.round() as u32, d.height.round() as u32);
-        let mut choices: Vec<((u32, u32), String)> = SIZES.iter().filter(|(size, _)| d.any_size || d.modes.contains(size)).map(|(size, label)| (*size, label.to_string())).collect();
+        let mut choices: Vec<((u32, u32), String)> = SIZES
+            .iter()
+            .filter(|(size, _)| d.any_size || d.modes.contains(size))
+            .map(|(size, label)| (*size, label.to_string()))
+            .collect();
         if !choices.iter().any(|(size, _)| *size == current) {
             choices.push((current, format!("{}×{}", current.0, current.1)));
             choices.sort_by_key(|((w, h), _)| w * h);
@@ -859,25 +1153,49 @@ pub fn toolbar_with_menu(view: &Entity<DesktopView>, extra: Vec<AnyElement>, men
                     .into_iter()
                     .map(|(size, label)| {
                         let (view, id) = (view.clone(), d.id.clone());
-                        chip(format!("size-{}x{}", size.0, size.1), label, size == current, "The monitor's resolution")
-                            .on_click(move |_, window, cx| view.update(cx, |v, cx| v.change_display(id.clone(), Some(size), None, window, cx)))
+                        chip(
+                            format!("size-{}x{}", size.0, size.1),
+                            label,
+                            size == current,
+                            "The monitor's resolution",
+                        )
+                        .on_click(move |_, window, cx| {
+                            view.update(cx, |v, cx| {
+                                v.change_display(id.clone(), Some(size), None, window, cx)
+                            })
+                        })
                     })
                     .collect(),
             )
         })
     });
-    let scales = screen.filter(|d| [1., 2.].iter().all(|s| d.scales.iter().any(|x| (x - s).abs() < 0.01))).map(|d| {
-        group(
-            [(1., "100%"), (2., "200%")]
-                .into_iter()
-                .map(|(scale, label)| {
-                    let (view, id) = (view.clone(), d.id.clone());
-                    chip(format!("scale-{label}"), label.to_string(), (d.scale - scale).abs() < 0.01, "How big things are (200%: twice as big, just as sharp)")
-                        .on_click(move |_, window, cx| view.update(cx, |v, cx| v.change_display(id.clone(), None, Some(scale), window, cx)))
-                })
-                .collect(),
-        )
-    });
+    let scales = screen
+        .filter(|d| {
+            [1., 2.]
+                .iter()
+                .all(|s| d.scales.iter().any(|x| (x - s).abs() < 0.01))
+        })
+        .map(|d| {
+            group(
+                [(1., "100%"), (2., "200%")]
+                    .into_iter()
+                    .map(|(scale, label)| {
+                        let (view, id) = (view.clone(), d.id.clone());
+                        chip(
+                            format!("scale-{label}"),
+                            label.to_string(),
+                            (d.scale - scale).abs() < 0.01,
+                            "How big things are (200%: twice as big, just as sharp)",
+                        )
+                        .on_click(move |_, window, cx| {
+                            view.update(cx, |v, cx| {
+                                v.change_display(id.clone(), None, Some(scale), window, cx)
+                            })
+                        })
+                    })
+                    .collect(),
+            )
+        });
     div()
         .flex()
         .flex_none()
@@ -898,9 +1216,30 @@ pub fn toolbar_with_menu(view: &Entity<DesktopView>, extra: Vec<AnyElement>, men
                 .items_center()
                 .gap(px(10.))
                 .child(kit::color_icon(&theme, "monitor", 14., theme.text_muted))
-                .child(div().flex_none().text_size(px(12.5)).text_color(theme.text_muted).child(status))
+                .child(
+                    div()
+                        .flex_none()
+                        .text_size(px(12.5))
+                        .text_color(theme.text_muted)
+                        .child(status),
+                )
                 .when(!via.is_empty(), |d| {
-                    d.child(div().flex_none().flex().items_center().gap(px(5.)).text_size(px(12.)).text_color(theme.text_placeholder).child(kit::color_icon(&theme, "network", 12., theme.text_placeholder)).child(via))
+                    d.child(
+                        div()
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .gap(px(5.))
+                            .text_size(px(12.))
+                            .text_color(theme.text_placeholder)
+                            .child(kit::color_icon(
+                                &theme,
+                                "network",
+                                12.,
+                                theme.text_placeholder,
+                            ))
+                            .child(via),
+                    )
                 }),
         )
         .children(monitors.map(|m| m.flex_none()))
@@ -918,11 +1257,18 @@ pub struct DesktopWindow {
 impl Render for DesktopWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let full = window.is_fullscreen();
-        let button = Button::new("desktop-fullscreen", if full { "Exit full screen" } else { "Full screen" })
-            .style(ButtonStyle::Ghost)
-            .icon(if full { "minimize" } else { "maximize" })
-            .on_click(|_, window, _| window.toggle_fullscreen())
-            .into_any_element();
+        let button = Button::new(
+            "desktop-fullscreen",
+            if full {
+                "Exit full screen"
+            } else {
+                "Full screen"
+            },
+        )
+        .style(ButtonStyle::Ghost)
+        .icon(if full { "minimize" } else { "maximize" })
+        .on_click(|_, window, _| window.toggle_fullscreen())
+        .into_any_element();
         let mut extra = vec![button];
         extra.extend(super::frame::window_buttons(window, cx));
         // When the app draws the frame (Linux on Wayland), the toolbar is the
@@ -934,14 +1280,20 @@ impl Render for DesktopWindow {
             .flex()
             .flex_col()
             .bg(cx.theme().canvas)
-            .when(super::frame::bordered(window), |d| d.border_1().border_color(cx.theme().border))
+            .when(super::frame::bordered(window), |d| {
+                d.border_1().border_color(cx.theme().border)
+            })
             // Room for the traffic lights on macOS.
             .when(cfg!(target_os = "macos") && !full, |d| d.pt(px(28.)))
             .child(
                 div()
                     .when(title_bar, |d| {
-                        d.on_mouse_down(MouseButton::Left, |e: &MouseDownEvent, window, _| super::title_bar_press(e, window))
-                            .on_mouse_down(MouseButton::Right, |e: &MouseDownEvent, window, _| super::frame::title_bar_menu(e, window))
+                        d.on_mouse_down(MouseButton::Left, |e: &MouseDownEvent, window, _| {
+                            super::title_bar_press(e, window)
+                        })
+                        .on_mouse_down(MouseButton::Right, |e: &MouseDownEvent, window, _| {
+                            super::frame::title_bar_menu(e, window)
+                        })
                     })
                     .child(toolbar(&self.view, extra, cx)),
             )
@@ -951,11 +1303,21 @@ impl Render for DesktopWindow {
 }
 
 /// Opens a machine's desktop in its own window.
-pub fn open_window(engine: Arc<Engine>, machine_id: String, display: Option<String>, name: String, cx: &mut App) {
+pub fn open_window(
+    engine: Arc<Engine>,
+    machine_id: String,
+    display: Option<String>,
+    name: String,
+    cx: &mut App,
+) {
     let bounds = Bounds::centered(None, gpui::size(px(1440.), px(900.)), cx);
     let options = gpui::WindowOptions {
         window_bounds: Some(gpui::WindowBounds::Windowed(bounds)),
-        titlebar: Some(gpui::TitlebarOptions { title: Some(format!("{name} · Desktop").into()), appears_transparent: cfg!(target_os = "macos"), traffic_light_position: None }),
+        titlebar: Some(gpui::TitlebarOptions {
+            title: Some(format!("{name} · Desktop").into()),
+            appears_transparent: cfg!(target_os = "macos"),
+            traffic_light_position: None,
+        }),
         window_min_size: Some(gpui::size(px(480.), px(320.))),
         app_id: Some("muxin".into()),
         window_decorations: super::frame::requested(),

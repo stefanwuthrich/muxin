@@ -14,18 +14,28 @@ use crate::sys::no_window;
 /// returns what it printed.
 pub fn ps(script: &str) -> Result<String, String> {
     use base64::Engine as _;
-    let full = format!("$ProgressPreference = 'SilentlyContinue'; $ErrorActionPreference = 'Stop'; [Console]::OutputEncoding = [Text.Encoding]::UTF8\n{script}");
+    let full = format!(
+        "$ProgressPreference = 'SilentlyContinue'; $ErrorActionPreference = 'Stop'; [Console]::OutputEncoding = [Text.Encoding]::UTF8\n{script}"
+    );
     let utf16: Vec<u8> = full.encode_utf16().flat_map(u16::to_le_bytes).collect();
     let encoded = base64::engine::general_purpose::STANDARD.encode(utf16);
-    let out = no_window(Command::new("powershell").args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", &encoded]))
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| format!("couldn't run PowerShell: {e}"))?;
+    let out = no_window(Command::new("powershell").args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-EncodedCommand",
+        &encoded,
+    ]))
+    .stdin(Stdio::null())
+    .output()
+    .map_err(|e| format!("couldn't run PowerShell: {e}"))?;
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
     if out.status.success() {
         Ok(text)
     } else {
-        Err(clixml_error(&String::from_utf8_lossy(&out.stderr)).unwrap_or_else(|| "PowerShell couldn't do that.".into()))
+        Err(clixml_error(&String::from_utf8_lossy(&out.stderr))
+            .unwrap_or_else(|| "PowerShell couldn't do that.".into()))
     }
 }
 
@@ -36,7 +46,9 @@ pub fn ps_json(script: &str) -> Result<Vec<Value>, String> {
     if text.is_empty() {
         return Ok(Vec::new());
     }
-    match serde_json::from_str::<Value>(text).map_err(|e| format!("PowerShell said something unexpected: {e}"))? {
+    match serde_json::from_str::<Value>(text)
+        .map_err(|e| format!("PowerShell said something unexpected: {e}"))?
+    {
         Value::Array(a) => Ok(a),
         v => Ok(vec![v]),
     }
@@ -44,8 +56,17 @@ pub fn ps_json(script: &str) -> Result<Vec<Value>, String> {
 
 /// The message in PowerShell's error output (CLIXML when it isn't a terminal).
 fn clixml_error(stderr: &str) -> Option<String> {
-    let line = stderr.split("<S S=\"Error\">").nth(1).map(|s| s.split("</S>").next().unwrap_or(s))?;
-    let text = line.replace("_x000D__x000A_", " ").replace("&apos;", "'").replace("&quot;", "\"").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&");
+    let line = stderr
+        .split("<S S=\"Error\">")
+        .nth(1)
+        .map(|s| s.split("</S>").next().unwrap_or(s))?;
+    let text = line
+        .replace("_x000D__x000A_", " ")
+        .replace("&apos;", "'")
+        .replace("&quot;", "\"")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&");
     Some(text.trim().to_string()).filter(|t| !t.is_empty())
 }
 
@@ -61,7 +82,15 @@ pub fn quote(s: &str) -> String {
 fn usage() -> HashMap<u32, (f64, u64)> {
     let rows = ps_json("Get-CimInstance Win32_PerfFormattedData_PerfProc_Process | Where-Object { $_.IDProcess -ne 0 } | Select-Object IDProcess, PercentProcessorTime, WorkingSetPrivate | ConvertTo-Json -Compress").unwrap_or_default();
     rows.iter()
-        .filter_map(|r| Some((r["IDProcess"].as_u64()? as u32, (r["PercentProcessorTime"].as_f64().unwrap_or(0.), r["WorkingSetPrivate"].as_u64().unwrap_or(0)))))
+        .filter_map(|r| {
+            Some((
+                r["IDProcess"].as_u64()? as u32,
+                (
+                    r["PercentProcessorTime"].as_f64().unwrap_or(0.),
+                    r["WorkingSetPrivate"].as_u64().unwrap_or(0),
+                ),
+            ))
+        })
         .collect()
 }
 
@@ -128,9 +157,16 @@ pub fn gpus() -> Vec<Value> {
 /// Windows services: name, what it is, state, whether it starts at boot, and
 /// what its process uses.
 pub fn services(stats: bool) -> (Vec<Value>, Option<String>) {
-    let rows = match ps_json("Get-CimInstance Win32_Service | Select-Object Name, DisplayName, State, StartMode, ProcessId, ExitCode, DelayedAutoStart | ConvertTo-Json -Compress") {
+    let rows = match ps_json(
+        "Get-CimInstance Win32_Service | Select-Object Name, DisplayName, State, StartMode, ProcessId, ExitCode, DelayedAutoStart | ConvertTo-Json -Compress",
+    ) {
         Ok(r) => r,
-        Err(e) => return (Vec::new(), Some(format!("Couldn't list Windows' services: {e}"))),
+        Err(e) => {
+            return (
+                Vec::new(),
+                Some(format!("Couldn't list Windows' services: {e}")),
+            );
+        }
     };
     let usage = if stats { usage() } else { HashMap::new() };
     let mut out: Vec<Value> = rows
@@ -140,7 +176,14 @@ pub fn services(stats: bool) -> (Vec<Value>, Option<String>) {
             let exit = r["ExitCode"].as_u64().unwrap_or(0);
             let state = match r["State"].as_str().unwrap_or("") {
                 "Running" => "running",
-                "Stopped" if start == "Auto" && exit != 0 && exit != 1077 && r["DelayedAutoStart"] != true => "failed",
+                "Stopped"
+                    if start == "Auto"
+                        && exit != 0
+                        && exit != 1077
+                        && r["DelayedAutoStart"] != true =>
+                {
+                    "failed"
+                }
                 "Stopped" => "stopped",
                 "Start Pending" => "starting",
                 "Stop Pending" => "stopping",
@@ -153,7 +196,11 @@ pub fn services(stats: bool) -> (Vec<Value>, Option<String>) {
                 _ => "disabled",
             };
             let pid = r["ProcessId"].as_u64().unwrap_or(0) as u32;
-            let (cpu, memory) = (state == "running" && pid != 0).then(|| usage.get(&pid).copied()).flatten().map(|(c, m)| (Some(c), Some(m))).unwrap_or((None, None));
+            let (cpu, memory) = (state == "running" && pid != 0)
+                .then(|| usage.get(&pid).copied())
+                .flatten()
+                .map(|(c, m)| (Some(c), Some(m)))
+                .unwrap_or((None, None));
             json!({
                 "kind": "service",
                 "target": r["Name"],
@@ -167,7 +214,12 @@ pub fn services(stats: bool) -> (Vec<Value>, Option<String>) {
             })
         })
         .collect();
-    out.sort_by_key(|u| (crate::services::rank(u["state"].as_str()), u["name"].as_str().unwrap_or("").to_lowercase()));
+    out.sort_by_key(|u| {
+        (
+            crate::services::rank(u["state"].as_str()),
+            u["name"].as_str().unwrap_or("").to_lowercase(),
+        )
+    });
     (out, None)
 }
 
@@ -182,7 +234,13 @@ pub fn service_action(name: &str, action: &str) -> Result<(), String> {
         "disable" => format!("Set-Service -Name {n} -StartupType Manual"),
         other => return Err(format!("Can't {other} a service.")),
     };
-    ps(&script).map(|_| ()).map_err(|e| if e.contains("ccess is denied") || e.contains("ermission") { "Windows wants an administrator for that.".into() } else { e })
+    ps(&script).map(|_| ()).map_err(|e| {
+        if e.contains("ccess is denied") || e.contains("ermission") {
+            "Windows wants an administrator for that.".into()
+        } else {
+            e
+        }
+    })
 }
 
 // --- Ports ------------------------------------------------------------------
@@ -199,8 +257,17 @@ pub fn listening() -> Vec<(u16, String, String, Option<u32>)> {
             let port = r["port"].as_u64()? as u16;
             let pid = r["pid"].as_u64().map(|p| p as u32).filter(|p| *p > 4);
             // The system itself (pid 4) answers SMB, RPC and http.sys's ports.
-            let process = if r["pid"].as_u64() == Some(4) { "System".into() } else { r["process"].as_str().unwrap_or("").to_string() };
-            Some((port, r["address"].as_str().unwrap_or("").to_string(), process, pid))
+            let process = if r["pid"].as_u64() == Some(4) {
+                "System".into()
+            } else {
+                r["process"].as_str().unwrap_or("").to_string()
+            };
+            Some((
+                port,
+                r["address"].as_str().unwrap_or("").to_string(),
+                process,
+                pid,
+            ))
         })
         .collect()
 }
@@ -209,10 +276,14 @@ pub fn listening() -> Vec<(u16, String, String, Option<u32>)> {
 
 /// The event logs worth reading, as log sources.
 pub fn event_logs() -> Vec<Value> {
-    [("System", "Windows' system events"), ("Application", "Programs' events"), ("Security", "Sign-ins and audits (administrators)")]
-        .iter()
-        .map(|(log, detail)| json!({ "kind": "system", "target": log, "name": log, "detail": detail }))
-        .collect()
+    [
+        ("System", "Windows' system events"),
+        ("Application", "Programs' events"),
+        ("Security", "Sign-ins and audits (administrators)"),
+    ]
+    .iter()
+    .map(|(log, detail)| json!({ "kind": "system", "target": log, "name": log, "detail": detail }))
+    .collect()
 }
 
 /// Windows services, to read their events (System log, by service).
@@ -232,7 +303,9 @@ pub fn log_script(kind: &str, target: &str, lines: u64, follow: bool) -> Result<
     // An event as one line: time, level, source, message.
     let show = "ForEach-Object { '{0} {1,-7} {2}: {3}' -f $_.TimeCreated.ToString('yyyy-MM-ddTHH:mm:ss'), $_.LevelDisplayName, $_.ProviderName, (($_.Message -replace '\\s+', ' ').Trim()) }";
     let events = |filter: String| {
-        let mut s = format!("$f = {filter}\n$e = @(Get-WinEvent -FilterHashtable $f -MaxEvents {lines} -ErrorAction SilentlyContinue)\n[array]::Reverse($e)\n$e | {show}\n");
+        let mut s = format!(
+            "$f = {filter}\n$e = @(Get-WinEvent -FilterHashtable $f -MaxEvents {lines} -ErrorAction SilentlyContinue)\n[array]::Reverse($e)\n$e | {show}\n"
+        );
         if follow {
             s.push_str(&format!("$last = if ($e.Count) {{ $e[-1].RecordId }} else {{ 0 }}\nwhile ($true) {{ Start-Sleep 1; $new = @(Get-WinEvent -FilterHashtable $f -MaxEvents 200 -ErrorAction SilentlyContinue | Where-Object {{ $_.RecordId -gt $last }}); if ($new.Count) {{ [array]::Reverse($new); $new | {show}; $last = $new[-1].RecordId }} }}\n"));
         }
@@ -241,13 +314,20 @@ pub fn log_script(kind: &str, target: &str, lines: u64, follow: bool) -> Result<
     match kind {
         "system" | "kernel" => {
             let log = if target.is_empty() { "System" } else { target };
-            if !log.chars().all(|c| c.is_ascii_alphanumeric() || "-/ ".contains(c)) {
+            if !log
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "-/ ".contains(c))
+            {
                 return Err("That log's name has odd characters.".into());
             }
             Ok(events(format!("@{{ LogName = {} }}", quote(log))))
         }
         "service" => {
-            if target.is_empty() || !target.chars().all(|c| c.is_ascii_alphanumeric() || "._-$".contains(c)) {
+            if target.is_empty()
+                || !target
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "._-$".contains(c))
+            {
                 return Err("Which service?".into());
             }
             // Its events: the Service Control Manager's about it (started,
@@ -265,18 +345,29 @@ pub fn log_script(kind: &str, target: &str, lines: u64, follow: bool) -> Result<
                  $e | {show}\n",
                 name = quote(target)
             );
-            let follow_part = format!("$last = if ($e.Count) {{ $e[-1].TimeCreated }} else {{ Get-Date }}\nwhile ($true) {{ Start-Sleep 2; $new = @(Get-Its $last.AddMilliseconds(1) 200); if ($new.Count) {{ $new | {show}; $last = $new[-1].TimeCreated }} }}\n");
-            Ok(if follow { script + &follow_part } else { script })
+            let follow_part = format!(
+                "$last = if ($e.Count) {{ $e[-1].TimeCreated }} else {{ Get-Date }}\nwhile ($true) {{ Start-Sleep 2; $new = @(Get-Its $last.AddMilliseconds(1) 200); if ($new.Count) {{ $new | {show}; $last = $new[-1].TimeCreated }} }}\n"
+            );
+            Ok(if follow {
+                script + &follow_part
+            } else {
+                script
+            })
         }
         "file" => {
             let path = crate::sys::expand_home(target);
             std::fs::File::open(&path).map_err(|e| match e.kind() {
-                std::io::ErrorKind::PermissionDenied => format!("{target} is readable only by administrators."),
+                std::io::ErrorKind::PermissionDenied => {
+                    format!("{target} is readable only by administrators.")
+                }
                 std::io::ErrorKind::NotFound => format!("There's no {target} on this machine."),
                 _ => format!("Couldn't open {target}: {e}"),
             })?;
             let wait = if follow { " -Wait" } else { "" };
-            Ok(format!("Get-Content -LiteralPath {} -Tail {lines}{wait}", quote(&path.display().to_string())))
+            Ok(format!(
+                "Get-Content -LiteralPath {} -Tail {lines}{wait}",
+                quote(&path.display().to_string())
+            ))
         }
         other => Err(format!("No log source called \"{other}\".")),
     }
@@ -285,9 +376,19 @@ pub fn log_script(kind: &str, target: &str, lines: u64, follow: bool) -> Result<
 /// The program and arguments that run a log script (for `logs::command`).
 pub fn log_command(script: String) -> (String, Vec<String>) {
     use base64::Engine as _;
-    let full = format!("$ProgressPreference = 'SilentlyContinue'; [Console]::OutputEncoding = [Text.Encoding]::UTF8\n{script}");
+    let full = format!(
+        "$ProgressPreference = 'SilentlyContinue'; [Console]::OutputEncoding = [Text.Encoding]::UTF8\n{script}"
+    );
     let utf16: Vec<u8> = full.encode_utf16().flat_map(u16::to_le_bytes).collect();
-    ("powershell".into(), vec!["-NoProfile".into(), "-NonInteractive".into(), "-EncodedCommand".into(), base64::engine::general_purpose::STANDARD.encode(utf16)])
+    (
+        "powershell".into(),
+        vec![
+            "-NoProfile".into(),
+            "-NonInteractive".into(),
+            "-EncodedCommand".into(),
+            base64::engine::general_purpose::STANDARD.encode(utf16),
+        ],
+    )
 }
 
 #[cfg(test)]
@@ -297,7 +398,10 @@ mod tests {
     #[test]
     fn reads_powershell_errors() {
         let err = "#< CLIXML\r\n<Objs Version=\"1.1.0.1\"><S S=\"Error\">Cannot find any service with service name 'nope'._x000D__x000A_</S></Objs>";
-        assert_eq!(clixml_error(err).as_deref(), Some("Cannot find any service with service name 'nope'."));
+        assert_eq!(
+            clixml_error(err).as_deref(),
+            Some("Cannot find any service with service name 'nope'.")
+        );
         assert_eq!(quote("it's"), "'it''s'");
     }
 }

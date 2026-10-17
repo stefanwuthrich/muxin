@@ -115,7 +115,12 @@ fn doctl_token() -> Option<String> {
 
 fn doctl_token_in(text: &str) -> Option<String> {
     let top = |key: &str| {
-        text.lines().find_map(|l| l.strip_prefix(&format!("{key}:")).map(|v| v.trim().trim_matches('"').trim_matches('\'').to_string())).filter(|v| !v.is_empty())
+        text.lines()
+            .find_map(|l| {
+                l.strip_prefix(&format!("{key}:"))
+                    .map(|v| v.trim().trim_matches('"').trim_matches('\'').to_string())
+            })
+            .filter(|v| !v.is_empty())
     };
     let context = top("context").unwrap_or_else(|| "default".into());
     if context == "default" {
@@ -135,7 +140,8 @@ fn doctl_token_in(text: &str) -> Option<String> {
             }
             if let Some((name, value)) = line.trim().split_once(':') {
                 if name.trim() == context {
-                    return Some(value.trim().trim_matches('"').to_string()).filter(|v| !v.is_empty());
+                    return Some(value.trim().trim_matches('"').to_string())
+                        .filter(|v| !v.is_empty());
                 }
             }
         }
@@ -147,8 +153,10 @@ fn doctl_token_in(text: &str) -> Option<String> {
 // OAuth
 
 fn saved_tokens(dir: &Path) -> Result<OAuthTokens, String> {
-    let saved = secrets::get(dir, OAUTH).ok_or("Sign in with DigitalOcean first (Settings › Cloud).")?;
-    serde_json::from_str(&saved).map_err(|_| "The DigitalOcean sign-in is damaged; sign in again.".to_string())
+    let saved =
+        secrets::get(dir, OAUTH).ok_or("Sign in with DigitalOcean first (Settings › Cloud).")?;
+    serde_json::from_str(&saved)
+        .map_err(|_| "The DigitalOcean sign-in is damaged; sign in again.".to_string())
 }
 
 async fn oauth_token(dir: &Path) -> Result<String, String> {
@@ -166,10 +174,20 @@ async fn oauth_token(dir: &Path) -> Result<String, String> {
         return Ok(tokens.access_token);
     }
     let id = client_id().ok_or("This build of Muxin can't sign in with DigitalOcean.")?;
-    let fresh = exchange(&[("grant_type", "refresh_token"), ("refresh_token", &tokens.refresh_token), ("client_id", id)])
-        .await
-        .map_err(|_| "The DigitalOcean sign-in expired. Sign in again in Settings › Cloud.".to_string())?;
-    secrets::set(dir, OAUTH, &serde_json::to_string(&fresh).unwrap_or_default())?;
+    let fresh = exchange(&[
+        ("grant_type", "refresh_token"),
+        ("refresh_token", &tokens.refresh_token),
+        ("client_id", id),
+    ])
+    .await
+    .map_err(|_| {
+        "The DigitalOcean sign-in expired. Sign in again in Settings › Cloud.".to_string()
+    })?;
+    secrets::set(
+        dir,
+        OAUTH,
+        &serde_json::to_string(&fresh).unwrap_or_default(),
+    )?;
     Ok(fresh.access_token)
 }
 
@@ -197,23 +215,47 @@ async fn exchange(params: &[(&str, &str)]) -> Result<OAuthTokens, String> {
         #[serde(default)]
         scope: String,
     }
-    let http = reqwest::Client::builder().timeout(Duration::from_secs(30)).build().map_err(|e| e.to_string())?;
-    let url = reqwest::Url::parse_with_params("https://cloud.digitalocean.com/v1/oauth/token", params).map_err(|e| e.to_string())?;
-    let resp = http.post(url).send().await.map_err(|e| format!("Couldn't reach DigitalOcean: {e}"))?;
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let url =
+        reqwest::Url::parse_with_params("https://cloud.digitalocean.com/v1/oauth/token", params)
+            .map_err(|e| e.to_string())?;
+    let resp = http
+        .post(url)
+        .send()
+        .await
+        .map_err(|e| format!("Couldn't reach DigitalOcean: {e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("DigitalOcean didn't accept the sign-in ({}). Sign in again.", resp.status()));
+        return Err(format!(
+            "DigitalOcean didn't accept the sign-in ({}). Sign in again.",
+            resp.status()
+        ));
     }
-    let a: Answer = resp.json().await.map_err(|e| format!("Unexpected answer from DigitalOcean: {e}"))?;
-    Ok(OAuthTokens { access_token: a.access_token, refresh_token: a.refresh_token, expires_at: chrono::Utc::now().timestamp() + a.expires_in.max(60), scope: a.scope })
+    let a: Answer = resp
+        .json()
+        .await
+        .map_err(|e| format!("Unexpected answer from DigitalOcean: {e}"))?;
+    Ok(OAuthTokens {
+        access_token: a.access_token,
+        refresh_token: a.refresh_token,
+        expires_at: chrono::Utc::now().timestamp() + a.expires_in.max(60),
+        scope: a.scope,
+    })
 }
 
 /// The browser sign-in: opens DigitalOcean's consent page (`open`), waits up
 /// to five minutes for it to send the browser back here, and keeps the tokens.
 pub async fn oauth_sign_in(dir: &Path, open: impl FnOnce(&str)) -> Result<(), String> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let id = client_id().ok_or("This build of Muxin can't sign in with DigitalOcean yet. Use an API token or doctl.")?;
+    let id = client_id().ok_or(
+        "This build of Muxin can't sign in with DigitalOcean yet. Use an API token or doctl.",
+    )?;
     // Any free port: DigitalOcean matches loopback callbacks on any port.
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.map_err(|e| format!("Couldn't wait for DigitalOcean's answer: {e}"))?;
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .map_err(|e| format!("Couldn't wait for DigitalOcean's answer: {e}"))?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     let callback = format!("http://127.0.0.1:{port}{CALLBACK_PATH}");
     let state = crate::util::random_token(24);
@@ -240,21 +282,40 @@ pub async fn oauth_sign_in(dir: &Path, open: impl FnOnce(&str)) -> Result<(), St
             let request = String::from_utf8_lossy(&buf[..n]).to_string();
             let target = request.split_whitespace().nth(1).unwrap_or("").to_string();
             let parsed = reqwest::Url::parse(&format!("http://127.0.0.1{target}")).ok();
-            let query = |k: &str| parsed.as_ref().and_then(|u| u.query_pairs().find(|(key, _)| key == k).map(|(_, v)| v.to_string()));
+            let query = |k: &str| {
+                parsed.as_ref().and_then(|u| {
+                    u.query_pairs()
+                        .find(|(key, _)| key == k)
+                        .map(|(_, v)| v.to_string())
+                })
+            };
             if parsed.as_ref().is_none_or(|u| u.path() != CALLBACK_PATH) {
-                let _ = sock.write_all(b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n").await;
+                let _ = sock
+                    .write_all(b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n")
+                    .await;
                 continue;
             }
             let (ok, body) = match (query("code"), query("state")) {
-                (Some(code), Some(s)) if s == state => (Ok(code), "Signed in. You can close this tab and go back to Muxin."),
-                _ => (Err(query("error_description").unwrap_or_else(|| "The sign-in was cancelled.".into())), "The sign-in didn't finish. Go back to Muxin and try again."),
+                (Some(code), Some(s)) if s == state => (
+                    Ok(code),
+                    "Signed in. You can close this tab and go back to Muxin.",
+                ),
+                _ => (
+                    Err(query("error_description")
+                        .unwrap_or_else(|| "The sign-in was cancelled.".into())),
+                    "The sign-in didn't finish. Go back to Muxin and try again.",
+                ),
             };
-            let page = format!("<!doctype html><meta charset=utf-8><title>Muxin</title><body style=\"font:15px -apple-system,system-ui;padding:40px\">{body}</body>");
+            let page = format!(
+                "<!doctype html><meta charset=utf-8><title>Muxin</title><body style=\"font:15px -apple-system,system-ui;padding:40px\">{body}</body>"
+            );
             let _ = sock.write_all(format!("HTTP/1.1 200 OK\r\ncontent-type: text/html; charset=utf-8\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{page}", page.len()).as_bytes()).await;
             return ok;
         }
     };
-    let code = tokio::time::timeout(Duration::from_secs(300), accept).await.map_err(|_| "The sign-in timed out.".to_string())??;
+    let code = tokio::time::timeout(Duration::from_secs(300), accept)
+        .await
+        .map_err(|_| "The sign-in timed out.".to_string())??;
     let tokens = exchange(&[
         ("grant_type", "authorization_code"),
         ("code", &code),
@@ -263,7 +324,11 @@ pub async fn oauth_sign_in(dir: &Path, open: impl FnOnce(&str)) -> Result<(), St
         ("redirect_uri", &callback),
     ])
     .await?;
-    secrets::set(dir, OAUTH, &serde_json::to_string(&tokens).unwrap_or_default())
+    secrets::set(
+        dir,
+        OAUTH,
+        &serde_json::to_string(&tokens).unwrap_or_default(),
+    )
 }
 
 #[cfg(test)]
@@ -273,7 +338,10 @@ mod tests {
     #[test]
     fn pkce_matches_the_rfc() {
         // RFC 7636, appendix B.
-        assert_eq!(challenge_for("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"), "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
+        assert_eq!(
+            challenge_for("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),
+            "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+        );
         let (v, c) = pkce();
         assert_eq!(v.len(), 64);
         assert_eq!(c, challenge_for(&v));
@@ -281,7 +349,10 @@ mod tests {
 
     #[test]
     fn reads_doctl_contexts() {
-        assert_eq!(doctl_token_in("access-token: dop_v1_a\ncontext: default\n").as_deref(), Some("dop_v1_a"));
+        assert_eq!(
+            doctl_token_in("access-token: dop_v1_a\ncontext: default\n").as_deref(),
+            Some("dop_v1_a")
+        );
         let multi = "access-token: dop_v1_a\nauth-contexts:\n  work: dop_v1_w\n  home: dop_v1_h\ncontext: home\n";
         assert_eq!(doctl_token_in(multi).as_deref(), Some("dop_v1_h"));
         assert_eq!(doctl_token_in("context: default\n"), None);

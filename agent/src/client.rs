@@ -36,7 +36,9 @@ pub fn connect(start: bool) -> io::Result<Stream> {
 fn request(req: &Value, start: bool) -> Value {
     let mut stream = match connect(start) {
         Ok(s) => s,
-        Err(e) if start => return json!({ "ok": false, "error": format!("couldn't reach the session server: {e}") }),
+        Err(e) if start => {
+            return json!({ "ok": false, "error": format!("couldn't reach the session server: {e}") });
+        }
         Err(_) => return json!({ "ok": false, "error": "no sessions are running on this machine" }),
     };
     if let Err(e) = proto::write_line(&mut stream, req) {
@@ -51,7 +53,10 @@ pub fn ctl() -> i32 {
     let req: Value = match serde_json::from_str(input.trim()) {
         Ok(v) => v,
         Err(e) => {
-            println!("{}", json!({ "ok": false, "error": format!("bad request: {e}") }));
+            println!(
+                "{}",
+                json!({ "ok": false, "error": format!("bad request: {e}") })
+            );
             return 1;
         }
     };
@@ -66,15 +71,28 @@ pub fn handle(req: &Value) -> Value {
         "discover" => discover(&req),
         // Checkouts and git work happen right here; no session server needed.
         "repos" => {
-            let roots: Vec<String> = req["roots"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
+            let roots: Vec<String> = req["roots"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
             json!({ "ok": true, "repos": crate::repos::scan(&roots), "now": now() })
         }
         // What the work in each folder changed (sessions' folders).
         "git_info" => {
-            let paths: Vec<&str> = req["paths"].as_array().map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+            let paths: Vec<&str> = req["paths"]
+                .as_array()
+                .map(|a| a.iter().filter_map(Value::as_str).collect())
+                .unwrap_or_default();
             json!({ "ok": true, "folders": paths.iter().map(|p| crate::repos::info(p)).collect::<Vec<_>>() })
         }
-        "git" => match crate::repos::act(req["path"].as_str().unwrap_or(""), req["action"].as_str().unwrap_or("")) {
+        "git" => match crate::repos::act(
+            req["path"].as_str().unwrap_or(""),
+            req["action"].as_str().unwrap_or(""),
+        ) {
             Ok(output) => json!({ "ok": true, "output": output }),
             Err(e) => json!({ "ok": false, "error": e }),
         },
@@ -93,7 +111,9 @@ pub fn handle(req: &Value) -> Value {
         #[cfg(windows)]
         "displays" => windows_displays(),
         #[cfg(windows)]
-        "display_create" | "display_remove" | "display_rename" | "display_set" => json!({ "ok": false, "error": "Muxen can't add or change monitors on Windows yet." }),
+        "display_create" | "display_remove" | "display_rename" | "display_set" => {
+            json!({ "ok": false, "error": "Muxen can't add or change monitors on Windows yet." })
+        }
         "log_sources" => crate::logs::sources(),
         "logs_read" => crate::logs::read(&req),
         "services" => crate::services::list(&req),
@@ -129,7 +149,8 @@ fn windows_displays() -> Value {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
     let mut text = String::new();
     let _ = stream.read_to_string(&mut text);
-    serde_json::from_str(text.trim()).unwrap_or_else(|_| json!({ "ok": false, "error": "Windows didn't list its monitors." }))
+    serde_json::from_str(text.trim())
+        .unwrap_or_else(|_| json!({ "ok": false, "error": "Windows didn't list its monitors." }))
 }
 
 /// Titles the user gave sessions, by session name (`~/.muxen/titles.json`).
@@ -140,7 +161,11 @@ fn titles_path() -> std::path::PathBuf {
 }
 
 fn read_titles() -> serde_json::Map<String, Value> {
-    std::fs::read_to_string(titles_path()).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v.as_object().cloned()).unwrap_or_default()
+    std::fs::read_to_string(titles_path())
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default()
 }
 
 fn write_titles(titles: &serde_json::Map<String, Value>) -> io::Result<()> {
@@ -167,7 +192,12 @@ fn apply_titles(sessions: &mut Value, titles: &serde_json::Map<String, Value>) {
 
 /// Forgets the titles of sessions that are gone. True when any were.
 fn prune_titles(sessions: &Value, titles: &mut serde_json::Map<String, Value>) -> bool {
-    let names: Vec<&str> = sessions.as_array().into_iter().flatten().filter_map(|s| s["name"].as_str()).collect();
+    let names: Vec<&str> = sessions
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|s| s["name"].as_str())
+        .collect();
     let before = titles.len();
     titles.retain(|name, _| names.contains(&name.as_str()));
     titles.len() != before
@@ -177,9 +207,16 @@ fn prune_titles(sessions: &Value, titles: &mut serde_json::Map<String, Value>) -
 /// title goes back to the one the session started with.
 fn rename(req: &Value) -> Value {
     let name = req["name"].as_str().unwrap_or("");
-    let title = req["title"].as_str().unwrap_or("").split_whitespace().collect::<Vec<_>>().join(" ");
+    let title = req["title"]
+        .as_str()
+        .unwrap_or("")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     let list = request(&json!({ "op": "list" }), false);
-    let exists = list["sessions"].as_array().is_some_and(|a| a.iter().any(|s| s["name"].as_str() == Some(name)));
+    let exists = list["sessions"]
+        .as_array()
+        .is_some_and(|a| a.iter().any(|s| s["name"].as_str() == Some(name)));
     if name.is_empty() || !exists {
         return json!({ "ok": false, "error": format!("there's no session called {name}") });
     }
@@ -198,13 +235,36 @@ fn rename(req: &Value) -> Value {
 /// Everything Muxen wants to know about this machine's sessions. Doesn't
 /// start the server just to look.
 fn discover(req: &Value) -> Value {
-    let names: Vec<String> = req["agents"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
+    let names: Vec<String> = req["agents"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
     // Installed tools are looked up only when asked (it starts an interactive shell).
-    let dirs = if names.is_empty() { Vec::new() } else { detect::path_dirs() };
-    let agents = if names.is_empty() { Vec::new() } else { detect::agents(&names, &dirs) };
-    let gh = if names.is_empty() { Value::Null } else { crate::repos::gh_status(&dirs) };
+    let dirs = if names.is_empty() {
+        Vec::new()
+    } else {
+        detect::path_dirs()
+    };
+    let agents = if names.is_empty() {
+        Vec::new()
+    } else {
+        detect::agents(&names, &dirs)
+    };
+    let gh = if names.is_empty() {
+        Value::Null
+    } else {
+        crate::repos::gh_status(&dirs)
+    };
     let running = sys::connect().is_ok();
-    let list = if running { request(&json!({ "op": "list" }), false) } else { json!({}) };
+    let list = if running {
+        request(&json!({ "op": "list" }), false)
+    } else {
+        json!({})
+    };
     let mut sessions = list.get("sessions").cloned().unwrap_or_else(|| json!([]));
     let mut titles = read_titles();
     if !titles.is_empty() {
@@ -269,13 +329,20 @@ impl RawMode {
     fn enable() -> RawMode {
         use windows_sys::Win32::System::Console::*;
         unsafe {
-            let (input, output) = (GetStdHandle(STD_INPUT_HANDLE), GetStdHandle(STD_OUTPUT_HANDLE));
+            let (input, output) = (
+                GetStdHandle(STD_INPUT_HANDLE),
+                GetStdHandle(STD_OUTPUT_HANDLE),
+            );
             let (mut in_mode, mut out_mode) = (0u32, 0u32);
             if GetConsoleMode(input, &mut in_mode) == 0 {
                 return RawMode(None);
             }
             GetConsoleMode(output, &mut out_mode);
-            SetConsoleMode(input, (in_mode & !(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT)) | ENABLE_VIRTUAL_TERMINAL_INPUT);
+            SetConsoleMode(
+                input,
+                (in_mode & !(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT))
+                    | ENABLE_VIRTUAL_TERMINAL_INPUT,
+            );
             SetConsoleMode(output, out_mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
             RawMode(Some((in_mode, out_mode)))
         }
@@ -302,7 +369,8 @@ impl Drop for RawMode {
 fn window_size() -> Option<(u16, u16)> {
     unsafe {
         let mut ws: libc::winsize = std::mem::zeroed();
-        (libc::ioctl(0, libc::TIOCGWINSZ, &mut ws) == 0 && ws.ws_col > 0).then_some((ws.ws_col, ws.ws_row))
+        (libc::ioctl(0, libc::TIOCGWINSZ, &mut ws) == 0 && ws.ws_col > 0)
+            .then_some((ws.ws_col, ws.ws_row))
     }
 }
 
@@ -332,13 +400,21 @@ pub fn attach(name: &str) -> i32 {
         }
     };
     let (cols, rows) = window_size().unwrap_or((120, 40));
-    if proto::write_line(&mut stream, &json!({ "op": "attach", "name": name, "cols": cols, "rows": rows })).is_err() {
+    if proto::write_line(
+        &mut stream,
+        &json!({ "op": "attach", "name": name, "cols": cols, "rows": rows }),
+    )
+    .is_err()
+    {
         return 1;
     }
     match proto::read_line(&mut stream) {
         Ok(v) if v["ok"].as_bool() == Some(true) => {}
         Ok(v) => {
-            eprintln!("muxen-agent: {}", v["error"].as_str().unwrap_or("can't attach"));
+            eprintln!(
+                "muxen-agent: {}",
+                v["error"].as_str().unwrap_or("can't attach")
+            );
             return 1;
         }
         Err(e) => {
@@ -363,7 +439,11 @@ pub fn attach(name: &str) -> i32 {
         loop {
             match proto::read_frame(&mut reader) {
                 Ok((proto::DATA, bytes)) => {
-                    if stdout.write_all(&bytes).and_then(|_| stdout.flush()).is_err() {
+                    if stdout
+                        .write_all(&bytes)
+                        .and_then(|_| stdout.flush())
+                        .is_err()
+                    {
                         break;
                     }
                 }

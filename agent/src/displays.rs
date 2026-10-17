@@ -28,7 +28,10 @@ fn registry_path() -> std::path::PathBuf {
 
 /// Muxen's virtual monitors, as recorded (some may be gone; see `prune`).
 fn registry() -> Vec<Value> {
-    std::fs::read_to_string(registry_path()).ok().and_then(|t| serde_json::from_str::<Vec<Value>>(&t).ok()).unwrap_or_default()
+    std::fs::read_to_string(registry_path())
+        .ok()
+        .and_then(|t| serde_json::from_str::<Vec<Value>>(&t).ok())
+        .unwrap_or_default()
 }
 
 fn save(entries: &[Value]) {
@@ -49,7 +52,11 @@ fn names_path() -> std::path::PathBuf {
 }
 
 fn names() -> serde_json::Map<String, Value> {
-    std::fs::read_to_string(names_path()).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v.as_object().cloned()).unwrap_or_default()
+    std::fs::read_to_string(names_path())
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default()
 }
 
 fn save_names(names: &serde_json::Map<String, Value>) {
@@ -66,7 +73,8 @@ fn save_names(names: &serde_json::Map<String, Value>) {
 /// the desktop briefly drops monitors while it rearranges them.
 fn alive(entry: &Value) -> bool {
     if let Some(c) = entry["connector"].as_str() {
-        return std::fs::read_to_string(format!("/sys/class/drm/{c}/status")).is_ok_and(|s| s.trim() == "connected");
+        return std::fs::read_to_string(format!("/sys/class/drm/{c}/status"))
+            .is_ok_and(|s| s.trim() == "connected");
     }
     match entry["pid"].as_u64() {
         Some(pid) => unsafe { libc::kill(pid as i32, 0) == 0 },
@@ -90,8 +98,11 @@ pub fn list() -> Value {
             #[cfg(target_os = "linux")]
             if let Some(layout) = layout() {
                 for d in displays.iter_mut() {
-                    let Some(id) = d["id"].as_str().map(str::to_string) else { continue };
-                    let mut sizes: Vec<(u32, u32)> = layout.modes(&id).iter().map(|m| (m.w, m.h)).collect();
+                    let Some(id) = d["id"].as_str().map(str::to_string) else {
+                        continue;
+                    };
+                    let mut sizes: Vec<(u32, u32)> =
+                        layout.modes(&id).iter().map(|m| (m.w, m.h)).collect();
                     if sizes.is_empty() {
                         continue;
                     }
@@ -126,7 +137,12 @@ pub fn list() -> Value {
 /// (real or virtual). An empty name goes back to its own.
 pub fn rename(req: &Value) -> Value {
     let id = req["display"].as_str().unwrap_or("");
-    let name = req["name"].as_str().unwrap_or("").split_whitespace().collect::<Vec<_>>().join(" ");
+    let name = req["name"]
+        .as_str()
+        .unwrap_or("")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     if id.is_empty() {
         return json!({ "ok": false, "error": "Which display?" });
     }
@@ -147,7 +163,10 @@ fn query() -> Result<Vec<Value>, String> {
     let reply = in_session(&["displays".to_string()])?;
     match reply["displays"].as_array() {
         Some(d) => Ok(d.clone()),
-        None => Err(reply["error"].as_str().unwrap_or("Couldn't read the displays.").to_string()),
+        None => Err(reply["error"]
+            .as_str()
+            .unwrap_or("Couldn't read the displays.")
+            .to_string()),
     }
 }
 
@@ -156,12 +175,20 @@ fn in_session(args: &[String]) -> Result<Value, String> {
     let out = if crate::gui::needed() {
         let mut stream = crate::gui::connect(args)?;
         let mut text = String::new();
-        stream.read_to_string(&mut text).map_err(|e| e.to_string())?;
+        stream
+            .read_to_string(&mut text)
+            .map_err(|e| e.to_string())?;
         text
     } else {
-        let env = crate::desktop::session_env().ok_or("No graphical session found here (nobody logged in to a desktop?).")?;
+        let env = crate::desktop::session_env()
+            .ok_or("No graphical session found here (nobody logged in to a desktop?).")?;
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-        let output = Command::new(exe).args(args).envs(env).stdin(Stdio::null()).output().map_err(|e| e.to_string())?;
+        let output = Command::new(exe)
+            .args(args)
+            .envs(env)
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| e.to_string())?;
         String::from_utf8_lossy(&output.stdout).into_owned()
     };
     serde_json::from_str(out.trim()).map_err(|_| "Couldn't read the displays.".to_string())
@@ -182,9 +209,15 @@ pub fn create(req: &Value) -> Value {
     let w = req["width"].as_u64().unwrap_or(1920).clamp(640, 7680) as u32;
     let h = req["height"].as_u64().unwrap_or(1080).clamp(480, 4320) as u32;
     // Like plugging in another one: "Display 3" when there are two.
-    let label = req["label"].as_str().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string);
+    let label = req["label"]
+        .as_str()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_string);
     let label = label.unwrap_or_else(|| {
-        let count = query().map(|d| d.iter().filter(|d| d["id"] != "all").count()).unwrap_or_else(|_| registry().len() + 1);
+        let count = query()
+            .map(|d| d.iter().filter(|d| d["id"] != "all").count())
+            .unwrap_or_else(|_| registry().len() + 1);
         format!("Display {}", count + 1)
     });
     match add(w, h, &label, req["password"].as_str()) {
@@ -201,7 +234,9 @@ pub fn create(req: &Value) -> Value {
             save(&reg);
             json!({ "ok": true, "display": { "id": entry["id"], "name": label, "width": w, "height": h, "virtual": true } })
         }
-        Err(e) => json!({ "ok": false, "password": e == NEEDS_PASSWORD || e == WRONG_PASSWORD, "error": e }),
+        Err(e) => {
+            json!({ "ok": false, "password": e == NEEDS_PASSWORD || e == WRONG_PASSWORD, "error": e })
+        }
     }
 }
 
@@ -228,7 +263,10 @@ pub fn remove(req: &Value) -> Value {
                 // look again (a full RandR query); the desktop then lets it go.
                 #[cfg(target_os = "linux")]
                 let _ = xrandr(&[]);
-                if let Some(displays) = query().ok().filter(|d| !d.iter().any(|d| d["id"].as_str() == Some(id))) {
+                if let Some(displays) = query()
+                    .ok()
+                    .filter(|d| !d.iter().any(|d| d["id"].as_str() == Some(id)))
+                {
                     #[cfg(target_os = "linux")]
                     if let Some(laid_out) = &laid_out {
                         std::thread::sleep(std::time::Duration::from_millis(1500));
@@ -246,7 +284,9 @@ pub fn remove(req: &Value) -> Value {
             }
             json!({ "ok": true })
         }
-        Err(e) => json!({ "ok": false, "password": e == NEEDS_PASSWORD || e == WRONG_PASSWORD, "error": e }),
+        Err(e) => {
+            json!({ "ok": false, "password": e == NEEDS_PASSWORD || e == WRONG_PASSWORD, "error": e })
+        }
     }
 }
 
@@ -262,22 +302,48 @@ fn monitors() -> Result<Vec<Value>, String> {
     let (conn, n) = x11rb::connect(None).map_err(|e| format!("Can't reach the desktop ({e})."))?;
     let screen = &conn.setup().roots[n];
     let (root, sw, sh) = (screen.root, screen.width_in_pixels, screen.height_in_pixels);
-    let monitors = conn.randr_get_monitors(root, true).map_err(|e| e.to_string())?.reply().map_err(|e| e.to_string())?.monitors;
+    let monitors = conn
+        .randr_get_monitors(root, true)
+        .map_err(|e| e.to_string())?
+        .reply()
+        .map_err(|e| e.to_string())?
+        .monitors;
     let mut out = Vec::new();
     if monitors.len() > 1 {
         out.push(json!({ "id": "all", "name": "All screens", "x": 0, "y": 0, "width": sw, "height": sh, "main": false }));
     }
     let names: Vec<String> = monitors
         .iter()
-        .map(|m| conn.get_atom_name(m.name).ok().and_then(|c| c.reply().ok()).map(|r| String::from_utf8_lossy(&r.name).into_owned()).unwrap_or_default())
+        .map(|m| {
+            conn.get_atom_name(m.name)
+                .ok()
+                .and_then(|c| c.reply().ok())
+                .map(|r| String::from_utf8_lossy(&r.name).into_owned())
+                .unwrap_or_default()
+        })
         .collect();
     let kinds: Vec<&str> = names.iter().map(|n| output_kind(n)).collect();
     // The sizes each one offers.
-    let res = conn.randr_get_screen_resources_current(root).ok().and_then(|c| c.reply().ok());
+    let res = conn
+        .randr_get_screen_resources_current(root)
+        .ok()
+        .and_then(|c| c.reply().ok());
     let sizes = |m: &x11rb::protocol::randr::MonitorInfo| -> Vec<(u32, u32)> {
         let Some(res) = &res else { return Vec::new() };
-        let Some(info) = m.outputs.first().and_then(|o| conn.randr_get_output_info(*o, res.config_timestamp).ok()?.reply().ok()) else { return Vec::new() };
-        let mut sizes: Vec<(u32, u32)> = info.modes.iter().filter_map(|id| res.modes.iter().find(|m| m.id == *id)).map(|m| (m.width as u32, m.height as u32)).collect();
+        let Some(info) = m.outputs.first().and_then(|o| {
+            conn.randr_get_output_info(*o, res.config_timestamp)
+                .ok()?
+                .reply()
+                .ok()
+        }) else {
+            return Vec::new();
+        };
+        let mut sizes: Vec<(u32, u32)> = info
+            .modes
+            .iter()
+            .filter_map(|id| res.modes.iter().find(|m| m.id == *id))
+            .map(|m| (m.width as u32, m.height as u32))
+            .collect();
         sizes.sort_by_key(|(w, h)| std::cmp::Reverse(w * h));
         sizes.dedup();
         sizes
@@ -286,7 +352,14 @@ fn monitors() -> Result<Vec<Value>, String> {
         // "HDMI", or "HDMI 2" when there are two.
         let kind = kinds[i];
         let same = kinds.iter().filter(|k| **k == kind).count();
-        let name = if same > 1 { format!("{kind} {}", kinds[..=i].iter().filter(|k| **k == kind).count()) } else { kind.to_string() };
+        let name = if same > 1 {
+            format!(
+                "{kind} {}",
+                kinds[..=i].iter().filter(|k| **k == kind).count()
+            )
+        } else {
+            kind.to_string()
+        };
         out.push(json!({ "id": names[i], "name": name, "x": m.x, "y": m.y, "width": m.width, "height": m.height, "main": m.primary, "modes": sizes(m), "any_size": true }));
     }
     if out.is_empty() {
@@ -346,33 +419,53 @@ fn parse_xrandr(text: &str) -> (Vec<Output>, Vec<String>) {
             let (size, pos) = w.split_once('+')?;
             let (wd, ht) = size.split_once('x')?;
             let (x, y) = pos.split_once('+')?;
-            Some((x.parse().ok()?, y.parse().ok()?, wd.parse().ok()?, ht.parse().ok()?))
+            Some((
+                x.parse().ok()?,
+                y.parse().ok()?,
+                wd.parse().ok()?,
+                ht.parse().ok()?,
+            ))
         });
-        outputs.push(Output { name: words[0].to_string(), connected: words[1] == "connected", geometry });
+        outputs.push(Output {
+            name: words[0].to_string(),
+            connected: words[1] == "connected",
+            geometry,
+        });
     }
     (outputs, modes)
 }
 
 #[cfg(target_os = "linux")]
 fn xrandr(args: &[String]) -> Result<String, String> {
-    let env = crate::desktop::session_env().ok_or("No graphical session found here (nobody logged in to a desktop?).")?;
+    let env = crate::desktop::session_env()
+        .ok_or("No graphical session found here (nobody logged in to a desktop?).")?;
     let out = Command::new("xrandr")
         .args(args)
         .envs(env)
         .stdin(Stdio::null())
         .output()
-        .map_err(|e| if e.kind() == std::io::ErrorKind::NotFound { "xrandr isn't installed here.".to_string() } else { e.to_string() })?;
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                "xrandr isn't installed here.".to_string()
+            } else {
+                e.to_string()
+            }
+        })?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     } else {
         let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        Err(if err.is_empty() { format!("xrandr {} failed", args.join(" ")) } else { err })
+        Err(if err.is_empty() {
+            format!("xrandr {} failed", args.join(" "))
+        } else {
+            err
+        })
     }
 }
 
-use crate::root::{NEEDS_PASSWORD, WRONG_PASSWORD};
 #[cfg(target_os = "linux")]
 use crate::root::as_root;
+use crate::root::{NEEDS_PASSWORD, WRONG_PASSWORD};
 
 /// Plugs a made-up monitor (its EDID in the file `$2`) into the video output
 /// `$1`, which must have nothing on it, through the kernel's own switches
@@ -415,8 +508,15 @@ fn free_connectors() -> Vec<String> {
         .flatten()
         .flatten()
         .filter_map(|e| e.file_name().into_string().ok())
-        .filter(|n| n.starts_with("card") && n.contains('-') && (n.contains("-DP-") || n.contains("-HDMI-") || n.contains("-DVI-")))
-        .filter(|n| std::fs::read_to_string(format!("/sys/class/drm/{n}/status")).is_ok_and(|s| s.trim() == "disconnected"))
+        .filter(|n| {
+            n.starts_with("card")
+                && n.contains('-')
+                && (n.contains("-DP-") || n.contains("-HDMI-") || n.contains("-DVI-"))
+        })
+        .filter(|n| {
+            std::fs::read_to_string(format!("/sys/class/drm/{n}/status"))
+                .is_ok_and(|s| s.trim() == "disconnected")
+        })
         .collect();
     // DisplayPort first: most GPUs have more of those to spare.
     names.sort_by_key(|n| (!n.contains("-DP-"), n.clone()));
@@ -427,8 +527,14 @@ fn free_connectors() -> Vec<String> {
 /// one: the desktop sets it up (wallpaper, panels, windows) the same way.
 #[cfg(target_os = "linux")]
 fn add(w: u32, h: u32, label: &str, password: Option<&str>) -> Result<Value, String> {
-    let used: Vec<String> = registry().iter().filter_map(|e| e["connector"].as_str().map(str::to_string)).collect();
-    let connector = free_connectors().into_iter().find(|c| !used.contains(c)).ok_or("This machine has no free video output for another monitor.")?;
+    let used: Vec<String> = registry()
+        .iter()
+        .filter_map(|e| e["connector"].as_str().map(str::to_string))
+        .collect();
+    let connector = free_connectors()
+        .into_iter()
+        .find(|c| !used.contains(c))
+        .ok_or("This machine has no free video output for another monitor.")?;
     let (before, _) = parse_xrandr(&xrandr(&[])?);
     let laid_out = layout();
     let file = home_dir().join(format!("edid-{}.bin", std::process::id()));
@@ -441,7 +547,10 @@ fn add(w: u32, h: u32, label: &str, password: Option<&str>) -> Result<Value, Str
     for _ in 0..30 {
         std::thread::sleep(std::time::Duration::from_millis(200));
         let (now, _) = parse_xrandr(&xrandr(&[])?);
-        if let Some(o) = now.iter().find(|o| o.connected && !before.iter().any(|b| b.name == o.name && b.connected)) {
+        if let Some(o) = now
+            .iter()
+            .find(|o| o.connected && !before.iter().any(|b| b.name == o.name && b.connected))
+        {
             output = Some((o.name.clone(), o.geometry.is_some()));
             break;
         }
@@ -464,14 +573,33 @@ fn add(w: u32, h: u32, label: &str, password: Option<&str>) -> Result<Value, Str
     for b in before.iter().filter(|b| b.connected) {
         if let (Some((x, y, w, h)), Some(n)) = (b.geometry, now.iter().find(|n| n.name == b.name)) {
             if n.geometry != b.geometry {
-                args.extend([s("--output"), b.name.clone(), s("--mode"), format!("{w}x{h}"), s("--pos"), format!("{x}x{y}")]);
+                args.extend([
+                    s("--output"),
+                    b.name.clone(),
+                    s("--mode"),
+                    format!("{w}x{h}"),
+                    s("--pos"),
+                    format!("{x}x{y}"),
+                ]);
             }
         }
     }
-    let right = before.iter().filter(|b| b.connected).filter_map(|b| b.geometry).map(|(x, _, w, _)| x + w).max().unwrap_or(0);
+    let right = before
+        .iter()
+        .filter(|b| b.connected)
+        .filter_map(|b| b.geometry)
+        .map(|(x, _, w, _)| x + w)
+        .max()
+        .unwrap_or(0);
     let new_at = now.iter().find(|n| n.name == name).and_then(|n| n.geometry);
     if !args.is_empty() || new_at.is_none_or(|(x, y, ..)| (x, y) != (right, 0)) {
-        args.extend([s("--output"), name.clone(), s("--auto"), s("--pos"), format!("{right}x0")]);
+        args.extend([
+            s("--output"),
+            name.clone(),
+            s("--auto"),
+            s("--pos"),
+            format!("{right}x0"),
+        ]);
         xrandr(&args)?;
     }
     Ok(json!({ "id": name, "connector": connector }))
@@ -479,7 +607,9 @@ fn add(w: u32, h: u32, label: &str, password: Option<&str>) -> Result<Value, Str
 
 #[cfg(target_os = "linux")]
 fn take_down(entry: &Value, password: Option<&str>) -> Result<(), String> {
-    let connector = entry["connector"].as_str().ok_or("Muxen doesn't know which output it's on.")?;
+    let connector = entry["connector"]
+        .as_str()
+        .ok_or("Muxen doesn't know which output it's on.")?;
     as_root(UNPLUG, &[connector], password)
 }
 
@@ -495,7 +625,10 @@ fn take_down(entry: &Value, password: Option<&str>) -> Result<(), String> {
 #[cfg(target_os = "linux")]
 fn session_bus(cmd: &mut Command) {
     if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_none() {
-        cmd.env("DBUS_SESSION_BUS_ADDRESS", format!("unix:path=/run/user/{}/bus", unsafe { libc::getuid() }));
+        cmd.env(
+            "DBUS_SESSION_BUS_ADDRESS",
+            format!("unix:path=/run/user/{}/bus", unsafe { libc::getuid() }),
+        );
     }
 }
 
@@ -506,24 +639,41 @@ fn gsettings(args: &[&str]) -> Option<String> {
     cmd.args(args).stdin(Stdio::null()).stderr(Stdio::null());
     session_bus(&mut cmd);
     let out = cmd.output().ok()?;
-    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 /// The strings in a GVariant list: `['1:0:top', '2:0:bottom']`.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn strings(list: &str) -> Vec<String> {
-    list.split('\'').skip(1).step_by(2).map(str::to_string).collect()
+    list.split('\'')
+        .skip(1)
+        .step_by(2)
+        .map(str::to_string)
+        .collect()
 }
 
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn gvariant(items: &[String]) -> String {
-    format!("[{}]", items.iter().map(|i| format!("'{i}'")).collect::<Vec<_>>().join(", "))
+    format!(
+        "[{}]",
+        items
+            .iter()
+            .map(|i| format!("'{i}'"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }
 
 /// Cinnamon's panels and applets, when Cinnamon is the desktop.
 #[cfg(target_os = "linux")]
 fn cinnamon_panels() -> Option<(Vec<String>, Vec<String>)> {
-    let running = Command::new("pgrep").args(["-x", "cinnamon"]).stdout(Stdio::null()).status().is_ok_and(|s| s.success());
+    let running = Command::new("pgrep")
+        .args(["-x", "cinnamon"])
+        .stdout(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success());
     if !running {
         return None;
     }
@@ -534,10 +684,19 @@ fn cinnamon_panels() -> Option<(Vec<String>, Vec<String>)> {
 
 /// Cinnamon's per-panel settings kept as "<panel id>:<value>" lists.
 #[cfg(target_os = "linux")]
-const PANEL_LISTS: [&str; 4] = ["panels-height", "panels-autohide", "panels-show-delay", "panels-hide-delay"];
+const PANEL_LISTS: [&str; 4] = [
+    "panels-height",
+    "panels-autohide",
+    "panels-show-delay",
+    "panels-hide-delay",
+];
 /// ... and as JSON lists of {"panelId": id, ...}.
 #[cfg(target_os = "linux")]
-const PANEL_ZONES: [&str; 3] = ["panel-zone-icon-sizes", "panel-zone-symbolic-icon-sizes", "panel-zone-text-sizes"];
+const PANEL_ZONES: [&str; 3] = [
+    "panel-zone-icon-sizes",
+    "panel-zone-symbolic-icon-sizes",
+    "panel-zone-text-sizes",
+];
 
 #[cfg(target_os = "linux")]
 fn cinnamon_list(key: &str) -> Option<Vec<String>> {
@@ -547,20 +706,31 @@ fn cinnamon_list(key: &str) -> Option<Vec<String>> {
 #[cfg(target_os = "linux")]
 fn cinnamon_json(key: &str) -> Option<Vec<Value>> {
     let raw = gsettings(&["get", "org.cinnamon", key])?;
-    let text = raw.trim().trim_start_matches('\'').trim_end_matches('\'').replace("\\'", "'").replace("\\\\", "\\");
+    let text = raw
+        .trim()
+        .trim_start_matches('\'')
+        .trim_end_matches('\'')
+        .replace("\\'", "'")
+        .replace("\\\\", "\\");
     serde_json::from_str(&text).ok()
 }
 
 #[cfg(target_os = "linux")]
 fn set_cinnamon_json(key: &str, items: Vec<Value>) {
     let text = Value::Array(items).to_string();
-    gsettings(&["set", "org.cinnamon", key, &format!("'{}'", text.replace('\\', "\\\\").replace('\'', "\\'"))]);
+    gsettings(&[
+        "set",
+        "org.cinnamon",
+        key,
+        &format!("'{}'", text.replace('\\', "\\\\").replace('\'', "\\'")),
+    ]);
 }
 
 /// Where Cinnamon keeps each applet's settings: `<uuid>/<instance>.json`.
 #[cfg(target_os = "linux")]
 fn spices() -> std::path::PathBuf {
-    std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".config/cinnamon/spices")
+    std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
+        .join(".config/cinnamon/spices")
 }
 
 /// Gives a copied applet the original's settings (its pinned apps, ...),
@@ -569,7 +739,12 @@ fn spices() -> std::path::PathBuf {
 #[cfg(target_os = "linux")]
 fn copy_applet_settings(uuid: &str, from: &str, to: u64) -> bool {
     let dir = spices().join(uuid);
-    let Some(mut settings) = std::fs::read_to_string(dir.join(format!("{from}.json"))).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()) else { return false };
+    let Some(mut settings) = std::fs::read_to_string(dir.join(format!("{from}.json")))
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+    else {
+        return false;
+    };
     if let Some(all) = settings.as_object_mut() {
         for s in all.values_mut().filter(|s| s["type"] == "keybinding") {
             s["value"] = json!("");
@@ -583,19 +758,26 @@ fn copy_applet_settings(uuid: &str, from: &str, to: u64) -> bool {
 #[cfg(target_os = "linux")]
 fn copyable(uuid: &str) -> bool {
     let home = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default());
-    [home.join(".local/share/cinnamon/applets"), "/usr/share/cinnamon/applets".into()]
-        .iter()
-        .find_map(|dir| std::fs::read_to_string(dir.join(uuid).join("metadata.json")).ok())
-        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
-        .and_then(|m| m["max-instances"].as_i64())
-        .is_some_and(|n| n < 0 || n > 1)
+    [
+        home.join(".local/share/cinnamon/applets"),
+        "/usr/share/cinnamon/applets".into(),
+    ]
+    .iter()
+    .find_map(|dir| std::fs::read_to_string(dir.join(uuid).join("metadata.json")).ok())
+    .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+    .and_then(|m| m["max-instances"].as_i64())
+    .is_some_and(|n| n < 0 || n > 1)
 }
 
 /// Panel id, monitor number and side of a `panels-enabled` entry ("3:1:bottom").
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn panel_parts(p: &str) -> Option<(u64, usize, &str)> {
     let mut it = p.splitn(3, ':');
-    Some((it.next()?.parse().ok()?, it.next()?.parse().ok()?, it.next()?))
+    Some((
+        it.next()?.parse().ok()?,
+        it.next()?.parse().ok()?,
+        it.next()?,
+    ))
 }
 
 /// The panels a virtual monitor has (Muxen's first ones were a single "panel").
@@ -614,7 +796,11 @@ fn place_panels(reg: &mut [Value], displays: &[Value]) -> bool {
     let screens: Vec<&Value> = displays.iter().filter(|d| d["id"] != "all").collect();
     let order: Vec<&str> = screens.iter().filter_map(|d| d["id"].as_str()).collect();
     // Mid-rearrangement (one missing): the next listing will do it.
-    if reg.is_empty() || reg.iter().any(|e| e["id"].as_str().is_none_or(|id| !order.contains(&id))) {
+    if reg.is_empty()
+        || reg
+            .iter()
+            .any(|e| e["id"].as_str().is_none_or(|id| !order.contains(&id)))
+    {
         return false;
     }
     if cinnamon_panels().is_none() {
@@ -629,21 +815,42 @@ fn place_panels(reg: &mut [Value], displays: &[Value]) -> bool {
         }
         changed = true;
     }
-    let Some((before, applets_before)) = cinnamon_panels() else { return changed };
+    let Some((before, applets_before)) = cinnamon_panels() else {
+        return changed;
+    };
     let (mut panels, mut applets) = (before.clone(), applets_before.clone());
     let owned: Vec<u64> = reg.iter().flat_map(panels_of).collect();
     let main = screens.iter().position(|d| d["main"] == true).unwrap_or(0);
-    let templates: Vec<(u64, String)> =
-        before.iter().filter_map(|p| panel_parts(p)).filter(|(id, monitor, _)| *monitor == main && !owned.contains(id)).map(|(id, _, side)| (id, side.to_string())).collect();
-    let mut next_panel = before.iter().filter_map(|p| panel_parts(p)).map(|p| p.0).chain(owned.iter().copied()).max().unwrap_or(0) + 1;
-    let mut next_applet = applets.iter().filter_map(|a| a.rsplit(':').next()?.parse::<u64>().ok()).max().unwrap_or(0) + 1;
+    let templates: Vec<(u64, String)> = before
+        .iter()
+        .filter_map(|p| panel_parts(p))
+        .filter(|(id, monitor, _)| *monitor == main && !owned.contains(id))
+        .map(|(id, _, side)| (id, side.to_string()))
+        .collect();
+    let mut next_panel = before
+        .iter()
+        .filter_map(|p| panel_parts(p))
+        .map(|p| p.0)
+        .chain(owned.iter().copied())
+        .max()
+        .unwrap_or(0)
+        + 1;
+    let mut next_applet = applets
+        .iter()
+        .filter_map(|a| a.rsplit(':').next()?.parse::<u64>().ok())
+        .max()
+        .unwrap_or(0)
+        + 1;
     let mut copies = Vec::new();
     for e in reg.iter_mut() {
         let index = order.iter().position(|id| e["id"] == *id).unwrap_or(0);
         if e["panels"].is_array() {
             // A panel the user took away stays away.
             for id in panels_of(e) {
-                if let Some(slot) = panels.iter_mut().find(|s| panel_parts(s).is_some_and(|p| p.0 == id)) {
+                if let Some(slot) = panels
+                    .iter_mut()
+                    .find(|s| panel_parts(s).is_some_and(|p| p.0 == id))
+                {
                     let side = slot.rsplit(':').next().unwrap_or("bottom").to_string();
                     *slot = format!("{id}:{index}:{side}");
                 }
@@ -655,10 +862,15 @@ fn place_panels(reg: &mut [Value], displays: &[Value]) -> bool {
             let n = next_panel;
             next_panel += 1;
             panels.push(format!("{n}:{index}:{side}"));
-            for a in applets_before.iter().filter(|a| a.starts_with(&format!("panel{t}:"))) {
+            for a in applets_before
+                .iter()
+                .filter(|a| a.starts_with(&format!("panel{t}:")))
+            {
                 // panel<id>:<zone>:<order>:<uuid>:<instance>
                 let parts: Vec<&str> = a.split(':').collect();
-                let [_, zone, place, uuid, from] = parts[..] else { continue };
+                let [_, zone, place, uuid, from] = parts[..] else {
+                    continue;
+                };
                 if !copyable(uuid) {
                     continue;
                 }
@@ -679,9 +891,15 @@ fn place_panels(reg: &mut [Value], displays: &[Value]) -> bool {
     // Their heights, icon sizes, ... like the panels they copy.
     if !copies.is_empty() {
         for key in PANEL_LISTS {
-            let Some(mut list) = cinnamon_list(key) else { continue };
+            let Some(mut list) = cinnamon_list(key) else {
+                continue;
+            };
             for (t, n) in &copies {
-                if let Some(value) = list.iter().find_map(|x| x.strip_prefix(&format!("{t}:"))).map(str::to_string) {
+                if let Some(value) = list
+                    .iter()
+                    .find_map(|x| x.strip_prefix(&format!("{t}:")))
+                    .map(str::to_string)
+                {
                     list.retain(|x| !x.starts_with(&format!("{n}:")));
                     list.push(format!("{n}:{value}"));
                 }
@@ -689,7 +907,9 @@ fn place_panels(reg: &mut [Value], displays: &[Value]) -> bool {
             gsettings(&["set", "org.cinnamon", key, &gvariant(&list)]);
         }
         for key in PANEL_ZONES {
-            let Some(mut items) = cinnamon_json(key) else { continue };
+            let Some(mut items) = cinnamon_json(key) else {
+                continue;
+            };
             for (t, n) in &copies {
                 if let Some(mut item) = items.iter().find(|i| i["panelId"] == json!(t)).cloned() {
                     items.retain(|i| i["panelId"] != json!(n));
@@ -705,7 +925,12 @@ fn place_panels(reg: &mut [Value], displays: &[Value]) -> bool {
         gsettings(&["set", "org.cinnamon", "panels-enabled", &gvariant(&panels)]);
     }
     if applets != applets_before {
-        gsettings(&["set", "org.cinnamon", "enabled-applets", &gvariant(&applets)]);
+        gsettings(&[
+            "set",
+            "org.cinnamon",
+            "enabled-applets",
+            &gvariant(&applets),
+        ]);
     }
     changed
 }
@@ -717,12 +942,19 @@ fn drop_panel(entry: &Value) {
     if ids.is_empty() {
         return;
     }
-    let Some((panels, applets)) = cinnamon_panels() else { return };
+    let Some((panels, applets)) = cinnamon_panels() else {
+        return;
+    };
     let ours = |p: &str| panel_parts(p).is_some_and(|p| ids.contains(&p.0));
     let on_ours = |a: &str| ids.iter().any(|i| a.starts_with(&format!("panel{i}:")));
     let kept_applets: Vec<String> = applets.iter().filter(|a| !on_ours(a)).cloned().collect();
     if kept_applets != applets {
-        gsettings(&["set", "org.cinnamon", "enabled-applets", &gvariant(&kept_applets)]);
+        gsettings(&[
+            "set",
+            "org.cinnamon",
+            "enabled-applets",
+            &gvariant(&kept_applets),
+        ]);
     }
     let kept: Vec<String> = panels.iter().filter(|p| !ours(p)).cloned().collect();
     if kept != panels {
@@ -730,7 +962,11 @@ fn drop_panel(entry: &Value) {
     }
     for key in PANEL_LISTS {
         if let Some(list) = cinnamon_list(key) {
-            let kept: Vec<String> = list.iter().filter(|x| !ids.iter().any(|i| x.starts_with(&format!("{i}:")))).cloned().collect();
+            let kept: Vec<String> = list
+                .iter()
+                .filter(|x| !ids.iter().any(|i| x.starts_with(&format!("{i}:"))))
+                .cloned()
+                .collect();
             if kept != list {
                 gsettings(&["set", "org.cinnamon", key, &gvariant(&kept)]);
             }
@@ -739,7 +975,10 @@ fn drop_panel(entry: &Value) {
     for key in PANEL_ZONES {
         if let Some(items) = cinnamon_json(key) {
             let before = items.len();
-            let kept: Vec<Value> = items.into_iter().filter(|i| !ids.iter().any(|id| i["panelId"] == json!(id))).collect();
+            let kept: Vec<Value> = items
+                .into_iter()
+                .filter(|i| !ids.iter().any(|id| i["panelId"] == json!(id)))
+                .collect();
             if kept.len() != before {
                 set_cinnamon_json(key, kept);
             }
@@ -773,7 +1012,12 @@ struct Timing {
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn timing(w: u32, h: u32) -> Timing {
     let w = w / 8 * 8;
-    let v_sync = match (w * 3 == h * 4, w * 9 == h * 16, w * 10 == h * 16, w * 4 == h * 5) {
+    let v_sync = match (
+        w * 3 == h * 4,
+        w * 9 == h * 16,
+        w * 10 == h * 16,
+        w * 4 == h * 5,
+    ) {
         (true, ..) => 4,
         (_, true, ..) => 5,
         (_, _, true, _) => 6,
@@ -782,8 +1026,19 @@ fn timing(w: u32, h: u32) -> Timing {
     };
     let h_period = (1_000_000.0 / 60.0 - 460.0) / h as f64;
     let v_blank = ((460.0 / h_period).floor() as u32 + 1).max(3 + v_sync + 6);
-    let mhz = ((60.0 * (w + 160) as f64 * (h + v_blank) as f64 / 1_000_000.0) / 0.25).floor() * 0.25;
-    Timing { w, h, clock: (mhz * 100.0).round() as u32, h_blank: 160, h_front: 48, h_sync: 32, v_blank, v_front: 3, v_sync }
+    let mhz =
+        ((60.0 * (w + 160) as f64 * (h + v_blank) as f64 / 1_000_000.0) / 0.25).floor() * 0.25;
+    Timing {
+        w,
+        h,
+        clock: (mhz * 100.0).round() as u32,
+        h_blank: 160,
+        h_front: 48,
+        h_sync: 32,
+        v_blank,
+        v_front: 3,
+        v_sync,
+    }
 }
 
 /// The detailed timing of one mode, as an EDID writes it (18 bytes).
@@ -802,7 +1057,10 @@ fn dtd(t: &Timing) -> [u8; 18] {
     d[8] = (t.h_front & 0xff) as u8;
     d[9] = (t.h_sync & 0xff) as u8;
     d[10] = (((t.v_front & 15) << 4) | (t.v_sync & 15)) as u8;
-    d[11] = (((t.h_front >> 8) << 6) | ((t.h_sync >> 8) << 4) | ((t.v_front >> 4) << 2) | (t.v_sync >> 4)) as u8;
+    d[11] = (((t.h_front >> 8) << 6)
+        | ((t.h_sync >> 8) << 4)
+        | ((t.v_front >> 4) << 2)
+        | (t.v_sync >> 4)) as u8;
     d[12] = (mm_w & 0xff) as u8;
     d[13] = (mm_h & 0xff) as u8;
     d[14] = (((mm_w >> 8) << 4) | (mm_h >> 8)) as u8;
@@ -813,7 +1071,13 @@ fn dtd(t: &Timing) -> [u8; 18] {
 /// Bigger modes a real monitor offers, beyond what the base block lists
 /// (its standard timings stop at 2288 pixels wide).
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-const LARGE_MODES: &[(u32, u32)] = &[(3840, 2160), (3200, 1800), (2560, 1600), (2560, 1440), (2048, 1152)];
+const LARGE_MODES: &[(u32, u32)] = &[
+    (3840, 2160),
+    (3200, 1800),
+    (2560, 1600),
+    (2560, 1440),
+    (2048, 1152),
+];
 
 /// A monitor's self-description for a `w`×`h` screen called `name`: EDID 1.3
 /// with that size as its preferred mode, plus every common size (720p up to
@@ -842,14 +1106,27 @@ fn edid(w: u32, h: u32, name: &str) -> Vec<u8> {
     e[35] = 0x21;
     e[36] = 0x08;
     // Standard timings, at 60 Hz: (width / 8 - 31, aspect bits | refresh - 60).
-    let standard: [(u32, u8); 8] = [(1280, 0xC0), (1280, 0x00), (1280, 0x80), (1440, 0x00), (1600, 0xC0), (1680, 0x00), (1920, 0xC0), (1920, 0x00)];
+    let standard: [(u32, u8); 8] = [
+        (1280, 0xC0),
+        (1280, 0x00),
+        (1280, 0x80),
+        (1440, 0x00),
+        (1600, 0xC0),
+        (1680, 0x00),
+        (1920, 0xC0),
+        (1920, 0x00),
+    ];
     for (i, (sw, aspect)) in standard.iter().enumerate() {
         e[38 + i * 2] = (sw / 8 - 31) as u8;
         e[39 + i * 2] = *aspect;
     }
     e[54..72].copy_from_slice(&dtd(&t));
     // Its name (up to 13 characters).
-    let mut n: Vec<u8> = name.bytes().filter(|b| b.is_ascii_graphic() || *b == b' ').take(13).collect();
+    let mut n: Vec<u8> = name
+        .bytes()
+        .filter(|b| b.is_ascii_graphic() || *b == b' ')
+        .take(13)
+        .collect();
     if n.len() < 13 {
         n.push(b'\n');
     }
@@ -985,7 +1262,11 @@ fn gv_value(b: &[u8], at: &mut usize) -> Option<Gv> {
                     _ => return None,
                 }
             }
-            Some(if c == b'{' { Gv::Dict(pairs) } else { Gv::List(items) })
+            Some(if c == b'{' {
+                Gv::Dict(pairs)
+            } else {
+                Gv::List(items)
+            })
         }
         b'<' => {
             *at += 1;
@@ -1023,14 +1304,24 @@ fn gv_value(b: &[u8], at: &mut usize) -> Option<Gv> {
         }
         b'-' | b'+' | b'.' | b'0'..=b'9' => {
             let start = *at;
-            while b.get(*at).is_some_and(|x| x.is_ascii_digit() || b".-+eE".contains(x)) {
+            while b
+                .get(*at)
+                .is_some_and(|x| x.is_ascii_digit() || b".-+eE".contains(x))
+            {
                 *at += 1;
             }
-            std::str::from_utf8(&b[start..*at]).ok()?.parse().ok().map(Gv::Num)
+            std::str::from_utf8(&b[start..*at])
+                .ok()?
+                .parse()
+                .ok()
+                .map(Gv::Num)
         }
         _ => {
             let start = *at;
-            while b.get(*at).is_some_and(|x| x.is_ascii_alphanumeric() || *x == b'_') {
+            while b
+                .get(*at)
+                .is_some_and(|x| x.is_ascii_alphanumeric() || *x == b'_')
+            {
                 *at += 1;
             }
             match &b[start..*at] {
@@ -1046,19 +1337,41 @@ fn gv_value(b: &[u8], at: &mut usize) -> Option<Gv> {
 
 /// Where the display service is: Cinnamon's, else GNOME's.
 #[cfg(target_os = "linux")]
-const DISPLAY_SERVICES: [&str; 2] = ["org.cinnamon.Muffin.DisplayConfig", "org.gnome.Mutter.DisplayConfig"];
+const DISPLAY_SERVICES: [&str; 2] = [
+    "org.cinnamon.Muffin.DisplayConfig",
+    "org.gnome.Mutter.DisplayConfig",
+];
 
 #[cfg(target_os = "linux")]
 fn gdbus(service: &str, method: &str, args: &[&str]) -> Result<String, String> {
     let path = format!("/{}", service.replace('.', "/"));
     let mut cmd = Command::new("gdbus");
-    cmd.args(["call", "--session", "--timeout", "10", "--dest", service, "--object-path", &path, "--method", &format!("{service}.{method}")]).args(args);
+    cmd.args([
+        "call",
+        "--session",
+        "--timeout",
+        "10",
+        "--dest",
+        service,
+        "--object-path",
+        &path,
+        "--method",
+        &format!("{service}.{method}"),
+    ])
+    .args(args);
     session_bus(&mut cmd);
-    let out = cmd.stdin(Stdio::null()).output().map_err(|e| e.to_string())?;
+    let out = cmd
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| e.to_string())?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     } else {
-        Err(String::from_utf8_lossy(&out.stderr).lines().next().unwrap_or("The desktop said no.").to_string())
+        Err(String::from_utf8_lossy(&out.stderr)
+            .lines()
+            .next()
+            .unwrap_or("The desktop said no.")
+            .to_string())
     }
 }
 
@@ -1109,7 +1422,11 @@ impl Layout {
             .list()
             .iter()
             .map(|o| {
-                let name = o.at(0).and_then(|i| i.at(0)).map(|c| c.str().to_string()).unwrap_or_default();
+                let name = o
+                    .at(0)
+                    .and_then(|i| i.at(0))
+                    .map(|c| c.str().to_string())
+                    .unwrap_or_default();
                 let modes = o
                     .at(1)
                     .map(Gv::list)
@@ -1120,7 +1437,10 @@ impl Layout {
                         w: m.at(1).map(Gv::num).unwrap_or(0.) as u32,
                         h: m.at(2).map(Gv::num).unwrap_or(0.) as u32,
                         hz: m.at(3).map(Gv::num).unwrap_or(0.),
-                        scales: m.at(5).map(|s| s.list().iter().map(Gv::num).collect()).unwrap_or_default(),
+                        scales: m
+                            .at(5)
+                            .map(|s| s.list().iter().map(Gv::num).collect())
+                            .unwrap_or_default(),
                         current: m.at(6).and_then(|p| p.get("is-current")) == Some(&Gv::Bool(true)),
                     })
                     .collect();
@@ -1137,7 +1457,13 @@ impl Layout {
                 scale: l.at(2).map(Gv::num).unwrap_or(1.),
                 transform: l.at(3).map(Gv::num).unwrap_or(0.) as u64,
                 primary: l.at(4) == Some(&Gv::Bool(true)),
-                outputs: l.at(5).map(Gv::list).unwrap_or_default().iter().filter_map(|o| o.at(0).map(|c| c.str().to_string())).collect(),
+                outputs: l
+                    .at(5)
+                    .map(Gv::list)
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(|o| o.at(0).map(|c| c.str().to_string()))
+                    .collect(),
             })
             .collect();
         let props = state.at(3);
@@ -1152,7 +1478,11 @@ impl Layout {
     }
 
     fn modes(&self, output: &str) -> &[Mode] {
-        self.outputs.iter().find(|(o, _)| o == output).map(|(_, m)| m.as_slice()).unwrap_or_default()
+        self.outputs
+            .iter()
+            .find(|(o, _)| o == output)
+            .map(|(_, m)| m.as_slice())
+            .unwrap_or_default()
     }
 
     fn current(&self, output: &str) -> Option<&Mode> {
@@ -1162,18 +1492,34 @@ impl Layout {
     /// The best mode of `output` at `w`×`h`: 60 Hz or the nearest under it.
     fn mode_at(&self, output: &str, (w, h): (u32, u32)) -> Option<&Mode> {
         let key = |m: &Mode| (m.hz <= 61., (m.hz * 1000.) as i64);
-        self.modes(output).iter().filter(|m| (m.w, m.h) == (w, h)).max_by_key(|m| key(m))
+        self.modes(output)
+            .iter()
+            .filter(|m| (m.w, m.h) == (w, h))
+            .max_by_key(|m| key(m))
     }
 
     fn placed(&self, output: &str) -> Option<usize> {
-        self.monitors.iter().position(|p| p.outputs.iter().any(|o| o == output))
+        self.monitors
+            .iter()
+            .position(|p| p.outputs.iter().any(|o| o == output))
     }
 
     /// How wide a monitor is in layout units, at `size` (else its own).
     fn width(&self, p: &Placed, size: Option<(u32, u32)>) -> i64 {
-        let Some((w, h)) = size.or_else(|| p.outputs.first().and_then(|o| self.current(o)).map(|m| (m.w, m.h))) else { return 0 };
+        let Some((w, h)) = size.or_else(|| {
+            p.outputs
+                .first()
+                .and_then(|o| self.current(o))
+                .map(|m| (m.w, m.h))
+        }) else {
+            return 0;
+        };
         let w = if p.transform % 2 == 1 { h } else { w };
-        if self.physical { w as i64 } else { (w as f64 / p.scale).round() as i64 }
+        if self.physical {
+            w as i64
+        } else {
+            (w as f64 / p.scale).round() as i64
+        }
     }
 
     /// Asks the desktop for `monitors`, each output at the size in `sizes`
@@ -1189,22 +1535,42 @@ impl Layout {
                     None => self.current(o),
                 }
                 .ok_or("That size isn't one this monitor offers.")?;
-                if !mode.scales.is_empty() && !mode.scales.iter().any(|s| (s - p.scale).abs() < 0.01) {
-                    return Err(format!("This monitor can't be shown at {}% at that size.", (p.scale * 100.).round()));
+                if !mode.scales.is_empty()
+                    && !mode.scales.iter().any(|s| (s - p.scale).abs() < 0.01)
+                {
+                    return Err(format!(
+                        "This monitor can't be shown at {}% at that size.",
+                        (p.scale * 100.).round()
+                    ));
                 }
                 outputs.push(format!("('{o}', '{}', @a{{sv}} {{}})", mode.id));
             }
-            parts.push(format!("({}, {}, {:?}, {}, {}, [{}])", p.x, p.y, p.scale, p.transform, p.primary, outputs.join(", ")));
+            parts.push(format!(
+                "({}, {}, {:?}, {}, {}, [{}])",
+                p.x,
+                p.y,
+                p.scale,
+                p.transform,
+                p.primary,
+                outputs.join(", ")
+            ));
         }
         let config = format!("[{}]", parts.join(", "));
-        gdbus(self.service, "ApplyMonitorsConfig", &[&self.serial.to_string(), "1", &config, "@a{sv} {}"]).map(|_| ())
+        gdbus(
+            self.service,
+            "ApplyMonitorsConfig",
+            &[&self.serial.to_string(), "1", &config, "@a{sv} {}"],
+        )
+        .map(|_| ())
     }
 }
 
 /// The desktop's monitors, when it has a display service.
 #[cfg(target_os = "linux")]
 fn layout() -> Option<Layout> {
-    DISPLAY_SERVICES.iter().find_map(|service| Layout::read(service, &gdbus(service, "GetCurrentState", &[]).ok()?))
+    DISPLAY_SERVICES
+        .iter()
+        .find_map(|service| Layout::read(service, &gdbus(service, "GetCurrentState", &[]).ok()?))
 }
 
 /// Puts the desktop back the way `before` had it after a monitor came or
@@ -1214,7 +1580,13 @@ fn layout() -> Option<Layout> {
 #[cfg(target_os = "linux")]
 fn restore(before: &Layout, added: Option<&str>, removed: Option<&str>) {
     let Some(now) = layout() else { return };
-    let scale = before.monitors.iter().find(|p| p.primary).or(before.monitors.first()).map(|p| p.scale).unwrap_or(1.);
+    let scale = before
+        .monitors
+        .iter()
+        .find(|p| p.primary)
+        .or(before.monitors.first())
+        .map(|p| p.scale)
+        .unwrap_or(1.);
     let gap = removed.and_then(|r| before.placed(r)).map(|i| {
         let p = &before.monitors[i];
         (p.x + before.width(p, None), before.width(p, None))
@@ -1222,7 +1594,11 @@ fn restore(before: &Layout, added: Option<&str>, removed: Option<&str>) {
     let mut monitors = Vec::new();
     let mut sizes = Vec::new();
     for p in &now.monitors {
-        let was = p.outputs.first().and_then(|o| before.placed(o)).map(|i| &before.monitors[i]);
+        let was = p
+            .outputs
+            .first()
+            .and_then(|o| before.placed(o))
+            .map(|i| &before.monitors[i]);
         match was {
             Some(was) => {
                 let mut q = was.clone();
@@ -1239,10 +1615,28 @@ fn restore(before: &Layout, added: Option<&str>, removed: Option<&str>) {
                 monitors.push(q);
             }
             None if added.is_some_and(|a| p.outputs.iter().any(|o| o == a)) => {
-                let right = before.monitors.iter().map(|q| q.x + before.width(q, None)).max().unwrap_or(0);
-                let mut q = Placed { x: right, y: 0, scale, transform: 0, primary: false, outputs: p.outputs.clone() };
+                let right = before
+                    .monitors
+                    .iter()
+                    .map(|q| q.x + before.width(q, None))
+                    .max()
+                    .unwrap_or(0);
+                let mut q = Placed {
+                    x: right,
+                    y: 0,
+                    scale,
+                    transform: 0,
+                    primary: false,
+                    outputs: p.outputs.clone(),
+                };
                 // A scale it can't do: as it came.
-                if p.outputs.first().and_then(|o| now.current(o)).is_some_and(|m| !m.scales.is_empty() && !m.scales.iter().any(|s| (s - scale).abs() < 0.01)) {
+                if p.outputs
+                    .first()
+                    .and_then(|o| now.current(o))
+                    .is_some_and(|m| {
+                        !m.scales.is_empty() && !m.scales.iter().any(|s| (s - scale).abs() < 0.01)
+                    })
+                {
                     q.scale = p.scale;
                 }
                 monitors.push(q);
@@ -1260,7 +1654,10 @@ fn restore(before: &Layout, added: Option<&str>, removed: Option<&str>) {
 /// scale for them all on X11).
 pub fn set(req: &Value) -> Value {
     let id = req["display"].as_str().unwrap_or("");
-    let size = req["width"].as_u64().zip(req["height"].as_u64()).map(|(w, h)| (w as u32, h as u32));
+    let size = req["width"]
+        .as_u64()
+        .zip(req["height"].as_u64())
+        .map(|(w, h)| (w as u32, h as u32));
     let scale = req["scale"].as_f64();
     if id.is_empty() || id == "all" || (size.is_none() && scale.is_none()) {
         return json!({ "ok": false, "error": "Which monitor, and what size or scale?" });
@@ -1286,7 +1683,12 @@ fn set_display(id: &str, size: Option<(u32, u32)>, scale: Option<f64>) -> Result
     // A size the monitor doesn't list: give it one (X11 takes any).
     if let Some((w, h)) = size {
         let (outputs, modes) = parse_xrandr(&xrandr(&[])?);
-        let listed = layout().map(|l| l.mode_at(id, (w, h)).is_some()).unwrap_or_else(|| outputs.iter().any(|o| o.name == id) && modes.iter().any(|m| m.starts_with(&format!("{w}x{h}"))));
+        let listed = layout()
+            .map(|l| l.mode_at(id, (w, h)).is_some())
+            .unwrap_or_else(|| {
+                outputs.iter().any(|o| o.name == id)
+                    && modes.iter().any(|m| m.starts_with(&format!("{w}x{h}")))
+            });
         if !listed {
             add_mode(id, w, h)?;
         }
@@ -1323,7 +1725,9 @@ fn set_display(id: &str, size: Option<(u32, u32)>, scale: Option<f64>) -> Result
             }
         }
     }
-    let sizes: Vec<(String, (u32, u32))> = size.map(|s| target.outputs.iter().map(|o| (o.clone(), s)).collect()).unwrap_or_default();
+    let sizes: Vec<(String, (u32, u32))> = size
+        .map(|s| target.outputs.iter().map(|o| (o.clone(), s)).collect())
+        .unwrap_or_default();
     layout.apply(&monitors, &sizes)
 }
 
@@ -1350,7 +1754,8 @@ fn add_mode(output: &str, w: u32, h: u32) -> Result<(), String> {
     args.extend(line);
     args.extend(["+hsync".to_string(), "-vsync".to_string()]);
     let _ = xrandr(&args);
-    xrandr(&["--addmode".to_string(), output.to_string(), name]).map_err(|_| format!("This monitor won't take {w}×{h}."))?;
+    xrandr(&["--addmode".to_string(), output.to_string(), name])
+        .map_err(|_| format!("This monitor won't take {w}×{h}."))?;
     for _ in 0..10 {
         if layout().is_none_or(|l| l.mode_at(output, (w, h)).is_some()) {
             break;
@@ -1364,14 +1769,32 @@ fn add_mode(output: &str, w: u32, h: u32) -> Result<(), String> {
 #[cfg(target_os = "linux")]
 fn xrandr_size(id: &str, (w, h): (u32, u32)) -> Result<(), String> {
     let (outputs, _) = parse_xrandr(&xrandr(&[])?);
-    let (x, _, old_w, _) = outputs.iter().find(|o| o.name == id).and_then(|o| o.geometry).ok_or("That monitor isn't on.")?;
+    let (x, _, old_w, _) = outputs
+        .iter()
+        .find(|o| o.name == id)
+        .and_then(|o| o.geometry)
+        .ok_or("That monitor isn't on.")?;
     let (_, modes) = parse_xrandr(&xrandr(&[])?);
     let ours = format!("{w}x{h}_muxen");
-    let mode = if modes.contains(&ours) && !modes.contains(&format!("{w}x{h}")) { ours } else { format!("{w}x{h}") };
-    let mut args = vec!["--output".to_string(), id.to_string(), "--mode".into(), mode];
+    let mode = if modes.contains(&ours) && !modes.contains(&format!("{w}x{h}")) {
+        ours
+    } else {
+        format!("{w}x{h}")
+    };
+    let mut args = vec![
+        "--output".to_string(),
+        id.to_string(),
+        "--mode".into(),
+        mode,
+    ];
     for o in outputs.iter().filter(|o| o.name != id) {
         if let Some((ox, oy, ..)) = o.geometry.filter(|g| g.0 >= x + old_w) {
-            args.extend(["--output".to_string(), o.name.clone(), "--pos".into(), format!("{}x{oy}", ox + w as i64 - old_w)]);
+            args.extend([
+                "--output".to_string(),
+                o.name.clone(),
+                "--pos".into(),
+                format!("{}x{oy}", ox + w as i64 - old_w),
+            ]);
         }
     }
     xrandr(&args).map(|_| ())
@@ -1380,9 +1803,19 @@ fn xrandr_size(id: &str, (w, h): (u32, u32)) -> Result<(), String> {
 #[cfg(target_os = "macos")]
 fn set_display(id: &str, size: Option<(u32, u32)>, scale: Option<f64>) -> Result<(), String> {
     let Some((w, h)) = size else {
-        return Err(if scale.is_some() { "On a Mac, pick a size: it's sharp when the monitor has a Retina version of it." } else { "What size?" }.into());
+        return Err(if scale.is_some() {
+            "On a Mac, pick a size: it's sharp when the monitor has a Retina version of it."
+        } else {
+            "What size?"
+        }
+        .into());
     };
-    let reply = in_session(&["display-mode".into(), id.into(), w.to_string(), h.to_string()])?;
+    let reply = in_session(&[
+        "display-mode".into(),
+        id.into(),
+        w.to_string(),
+        h.to_string(),
+    ])?;
     match reply["error"].as_str() {
         Some(e) => Err(e.to_string()),
         None => Ok(()),
@@ -1400,13 +1833,27 @@ fn set_display(_: &str, _: Option<(u32, u32)>, _: Option<f64>) -> Result<(), Str
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
     fn muxen_display_list(ids: *mut u32, max: usize) -> usize;
-    fn muxen_display(id: u32, pixels_w: *mut usize, pixels_h: *mut usize, points_w: *mut f64, points_h: *mut f64, x: *mut f64, y: *mut f64);
+    fn muxen_display(
+        id: u32,
+        pixels_w: *mut usize,
+        pixels_h: *mut usize,
+        points_w: *mut f64,
+        points_h: *mut f64,
+        x: *mut f64,
+        y: *mut f64,
+    );
     fn muxen_display_builtin(id: u32) -> i32;
     fn muxen_display_name(id: u32, buf: *mut u8, len: usize) -> usize;
     fn muxen_display_main() -> u32;
     fn muxen_display_modes(id: u32, sizes: *mut u32, max: usize) -> usize;
     fn muxen_display_set_mode(id: u32, w: u32, h: u32, err: *mut u8, errlen: usize) -> i32;
-    fn muxen_vdisplay_create(w: u32, h: u32, name: *const std::ffi::c_char, err: *mut u8, errlen: usize) -> u32;
+    fn muxen_vdisplay_create(
+        w: u32,
+        h: u32,
+        name: *const std::ffi::c_char,
+        err: *mut u8,
+        errlen: usize,
+    ) -> u32;
     fn muxen_vdisplay_run();
 }
 
@@ -1454,7 +1901,8 @@ fn monitors() -> Result<Vec<Value>, String> {
 pub fn run_mode(args: &[String]) -> i32 {
     let num = |i: usize| args.get(i).and_then(|a| a.parse::<u32>().ok()).unwrap_or(0);
     let mut err = [0u8; 256];
-    let ok = unsafe { muxen_display_set_mode(num(0), num(1), num(2), err.as_mut_ptr(), err.len()) } == 0;
+    let ok =
+        unsafe { muxen_display_set_mode(num(0), num(1), num(2), err.as_mut_ptr(), err.len()) } == 0;
     let reply = if ok {
         json!({ "ok": true })
     } else {
@@ -1469,19 +1917,30 @@ pub fn run_mode(args: &[String]) -> i32 {
 /// waits for its id.
 #[cfg(target_os = "macos")]
 fn add(w: u32, h: u32, label: &str, _password: Option<&str>) -> Result<Value, String> {
-    let args = vec!["vdisplay".to_string(), w.to_string(), h.to_string(), label.to_string()];
+    let args = vec![
+        "vdisplay".to_string(),
+        w.to_string(),
+        h.to_string(),
+        label.to_string(),
+    ];
     let line = if crate::gui::needed() {
         let mut stream = crate::gui::connect(&args)?;
         let mut text = String::new();
-        stream.read_to_string(&mut text).map_err(|e| e.to_string())?;
+        stream
+            .read_to_string(&mut text)
+            .map_err(|e| e.to_string())?;
         text
     } else {
         start_holder(&args)?
     };
-    let reply: Value = serde_json::from_str(line.trim()).map_err(|_| "The virtual display didn't start.".to_string())?;
+    let reply: Value = serde_json::from_str(line.trim())
+        .map_err(|_| "The virtual display didn't start.".to_string())?;
     match (reply["display"].as_u64(), reply["pid"].as_u64()) {
         (Some(id), Some(pid)) => Ok(json!({ "id": id.to_string(), "pid": pid })),
-        _ => Err(reply["error"].as_str().unwrap_or("The virtual display didn't start.").to_string()),
+        _ => Err(reply["error"]
+            .as_str()
+            .unwrap_or("The virtual display didn't start.")
+            .to_string()),
     }
 }
 
@@ -1493,7 +1952,10 @@ pub fn start_holder(args: &[String]) -> Result<String, String> {
     use std::os::unix::process::CommandExt;
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let mut cmd = Command::new(exe);
-    cmd.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    cmd.args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
     unsafe {
         cmd.pre_exec(|| {
             libc::setsid();
@@ -1504,8 +1966,11 @@ pub fn start_holder(args: &[String]) -> Result<String, String> {
     let pid = child.id();
     let stdout = child.stdout.take().ok_or("no output")?;
     let mut line = String::new();
-    std::io::BufReader::new(stdout).read_line(&mut line).map_err(|e| e.to_string())?;
-    let mut reply: Value = serde_json::from_str(line.trim()).unwrap_or_else(|_| json!({ "error": "The virtual display didn't start." }));
+    std::io::BufReader::new(stdout)
+        .read_line(&mut line)
+        .map_err(|e| e.to_string())?;
+    let mut reply: Value = serde_json::from_str(line.trim())
+        .unwrap_or_else(|_| json!({ "error": "The virtual display didn't start." }));
     reply["pid"] = json!(pid);
     // It keeps running; reap it later if it ends on its own.
     std::thread::spawn(move || {
@@ -1536,8 +2001,14 @@ pub fn run_holder(args: &[String]) -> i32 {
     let id = unsafe { muxen_vdisplay_create(w, h, name.as_ptr(), err.as_mut_ptr(), err.len()) };
     let mut out = std::io::stdout();
     if id == 0 {
-        let why = String::from_utf8_lossy(&err[..err.iter().position(|b| *b == 0).unwrap_or(err.len())]).into_owned();
-        let _ = writeln!(out, "{}", json!({ "error": format!("Couldn't make a virtual display: {why}") }));
+        let why =
+            String::from_utf8_lossy(&err[..err.iter().position(|b| *b == 0).unwrap_or(err.len())])
+                .into_owned();
+        let _ = writeln!(
+            out,
+            "{}",
+            json!({ "error": format!("Couldn't make a virtual display: {why}") })
+        );
         return 1;
     }
     let _ = writeln!(out, "{}", json!({ "display": id }));
@@ -1579,8 +2050,16 @@ mod tests {
         let l = Layout::read("org.cinnamon.Muffin.DisplayConfig", text).expect("parses");
         assert_eq!(l.serial, 58);
         assert!(l.physical && l.one_scale);
-        assert_eq!(l.current("DisplayPort-0").map(|m| (m.w, m.h, m.id.as_str())), Some((1920, 1080, "1920x1080@59.93")));
-        assert_eq!(l.mode_at("DisplayPort-0", (1280, 720)).map(|m| m.id.as_str()), Some("1280x720@60"));
+        assert_eq!(
+            l.current("DisplayPort-0")
+                .map(|m| (m.w, m.h, m.id.as_str())),
+            Some((1920, 1080, "1920x1080@59.93"))
+        );
+        assert_eq!(
+            l.mode_at("DisplayPort-0", (1280, 720))
+                .map(|m| m.id.as_str()),
+            Some("1280x720@60")
+        );
         assert_eq!(l.monitors[1].outputs, ["HDMI-A-0"]);
         assert!(l.monitors[1].primary);
         assert_eq!(l.width(&l.monitors[0], None), 1920);
@@ -1626,14 +2105,42 @@ DisplayPort-1 disconnected 1920x1080+3840+0 (normal left inverted right x axis y
         let e = edid(1920, 1080, "Display 2");
         assert_eq!(e.len(), 256);
         assert_eq!(&e[..8], &[0, 255, 255, 255, 255, 255, 255, 0]);
-        assert_eq!(e[..128].iter().map(|b| *b as u32).sum::<u32>() % 256, 0, "base checksum");
-        assert_eq!(e[128..].iter().map(|b| *b as u32).sum::<u32>() % 256, 0, "extension checksum");
+        assert_eq!(
+            e[..128].iter().map(|b| *b as u32).sum::<u32>() % 256,
+            0,
+            "base checksum"
+        );
+        assert_eq!(
+            e[128..].iter().map(|b| *b as u32).sum::<u32>() % 256,
+            0,
+            "extension checksum"
+        );
         assert_eq!((e[126], e[128]), (1, 0x02), "a CTA extension follows");
         // Every detailed timing: the size asked for first, then the bigger ones.
-        let size = |d: &[u8]| ((d[2] as u32) | ((d[4] as u32 >> 4) << 8), (d[5] as u32) | ((d[7] as u32 >> 4) << 8));
+        let size = |d: &[u8]| {
+            (
+                (d[2] as u32) | ((d[4] as u32 >> 4) << 8),
+                (d[5] as u32) | ((d[7] as u32 >> 4) << 8),
+            )
+        };
         let mut sizes = vec![size(&e[54..72])];
-        sizes.extend(e[132..].chunks(18).take_while(|d| d.len() == 18 && d[0..2] != [0, 0]).map(size));
-        assert_eq!(sizes, [(1920, 1080), (3840, 2160), (3200, 1800), (2560, 1600), (2560, 1440), (2048, 1152)]);
+        sizes.extend(
+            e[132..]
+                .chunks(18)
+                .take_while(|d| d.len() == 18 && d[0..2] != [0, 0])
+                .map(size),
+        );
+        assert_eq!(
+            sizes,
+            [
+                (1920, 1080),
+                (3840, 2160),
+                (3200, 1800),
+                (2560, 1600),
+                (2560, 1440),
+                (2048, 1152)
+            ]
+        );
         // A 4K one doesn't list itself twice.
         let k = edid(3840, 2160, "4K");
         assert_eq!(size(&k[54..72]), (3840, 2160));
@@ -1655,7 +2162,13 @@ DisplayPort-1 disconnected 1920x1080+3840+0 (normal left inverted right x axis y
         // cvt -r 1920 1080: 138.50 1920 1968 2000 2080 1080 1083 1088 1111 +hsync -vsync
         let t = timing(1920, 1080);
         assert_eq!(t.clock, 13850);
-        assert_eq!((t.w + t.h_front, t.w + t.h_front + t.h_sync, t.w + t.h_blank), (1968, 2000, 2080));
-        assert_eq!((t.h + t.v_front, t.h + t.v_front + t.v_sync, t.h + t.v_blank), (1083, 1088, 1111));
+        assert_eq!(
+            (t.w + t.h_front, t.w + t.h_front + t.h_sync, t.w + t.h_blank),
+            (1968, 2000, 2080)
+        );
+        assert_eq!(
+            (t.h + t.v_front, t.h + t.v_front + t.v_sync, t.h + t.v_blank),
+            (1083, 1088, 1111)
+        );
     }
 }

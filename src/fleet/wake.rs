@@ -11,7 +11,10 @@ use super::Engine;
 
 /// Six 0xFF, then the address sixteen times.
 fn packet(mac: &str) -> Option<Vec<u8>> {
-    let bytes: Vec<u8> = mac.split([':', '-']).map(|b| u8::from_str_radix(b, 16).ok()).collect::<Option<_>>()?;
+    let bytes: Vec<u8> = mac
+        .split([':', '-'])
+        .map(|b| u8::from_str_radix(b, 16).ok())
+        .collect::<Option<_>>()?;
     (bytes.len() == 6).then(|| {
         let mut out = vec![0xFF; 6];
         for _ in 0..16 {
@@ -24,13 +27,22 @@ fn packet(mac: &str) -> Option<Vec<u8>> {
 impl Engine {
     /// Whether a machine can be woken: its network card is known.
     pub fn can_wake(&self, machine_id: &str) -> bool {
-        self.machine(machine_id).and_then(|(_, p)| p).is_some_and(|p| p.mac.is_some())
+        self.machine(machine_id)
+            .and_then(|(_, p)| p)
+            .is_some_and(|p| p.mac.is_some())
     }
 
     /// Sends the wake signal; says from where. Checks it again in a little while.
     pub async fn wake(self: &Arc<Self>, machine_id: &str) -> Result<String, String> {
-        let (spec, probe) = self.machine(machine_id).ok_or_else(|| format!("No machine called {machine_id}."))?;
-        let probe = probe.ok_or_else(|| format!("Muxin hasn't reached {} yet, so it doesn't know its network card.", spec.name))?;
+        let (spec, probe) = self
+            .machine(machine_id)
+            .ok_or_else(|| format!("No machine called {machine_id}."))?;
+        let probe = probe.ok_or_else(|| {
+            format!(
+                "Muxin hasn't reached {} yet, so it doesn't know its network card.",
+                spec.name
+            )
+        })?;
         let mac = probe.mac.clone().ok_or_else(|| format!("Muxin doesn't know {}'s network card yet: it learns it the next time the machine is on.", spec.name))?;
         if self.demo_world().is_some() {
             return Ok("this computer".into());
@@ -42,7 +54,10 @@ impl Engine {
         if let Ok(sock) = std::net::UdpSocket::bind("0.0.0.0:0") {
             let _ = sock.set_broadcast(true);
             let mut sent = false;
-            for addr in ["255.255.255.255", broadcast.as_str()].into_iter().filter(|a| !a.is_empty()) {
+            for addr in ["255.255.255.255", broadcast.as_str()]
+                .into_iter()
+                .filter(|a| !a.is_empty())
+            {
                 for port in [9, 7] {
                     sent |= sock.send_to(&p, (addr, port)).is_ok();
                 }
@@ -58,7 +73,11 @@ impl Engine {
             .iter()
             .filter(|m| m.id != spec.id && m.status == "online" && !m.local)
             .filter_map(|m| self.machine(&m.id))
-            .filter(|(_, p)| p.as_ref().is_some_and(|p| !broadcast.is_empty() && p.lan_broadcast.as_deref() == Some(broadcast.as_str())))
+            .filter(|(_, p)| {
+                p.as_ref().is_some_and(|p| {
+                    !broadcast.is_empty() && p.lan_broadcast.as_deref() == Some(broadcast.as_str())
+                })
+            })
             .collect();
         for (relay, _) in relays {
             let request = json!({ "op": "wake", "mac": mac, "broadcast": broadcast });

@@ -2,8 +2,10 @@
 
 mod about;
 mod activity;
-mod cloud_dialog;
 mod assets;
+mod cloud_dialog;
+mod compose;
+mod desktop;
 mod detail;
 mod dialogs;
 mod files;
@@ -19,117 +21,139 @@ mod overview;
 mod palette;
 mod panes;
 mod ports;
-mod desktop;
-mod sessions;
-mod compose;
+mod root;
+mod run;
+mod schedule_dialog;
+mod schedules;
 mod services;
+mod sessions;
 mod settings;
 mod shortcuts;
 mod terminal;
 mod theme;
-mod run;
-mod schedule_dialog;
-mod schedules;
+mod themes;
 mod updates;
 mod usage;
 mod vm_dialog;
-mod themes;
 mod workspaces;
-mod root;
 
 use std::sync::Arc;
 
-use gpui::{App, Application, Bounds, Focusable, TitlebarOptions, WindowBounds, WindowOptions, point, prelude::*, px, size};
+use gpui::{
+    App, Application, Bounds, Focusable, TitlebarOptions, WindowBounds, WindowOptions, point,
+    prelude::*, px, size,
+};
 
 use crate::fleet::Engine;
-use theme::Appearance;
 use root::{Quit, Root};
+use theme::Appearance;
 
 pub fn run(engine: Arc<Engine>, initial_view: Option<String>) {
     if !engine.is_demo() {
         std::thread::spawn(crate::renamed::retire_old_app);
     }
-    Application::new().with_assets(assets::Assets).run(move |cx: &mut App| {
-        assets::load_fonts(cx);
-        assets::set_dock_icon();
-        // The look lives in config.toml ([ui]); demo mode keeps it in memory.
-        let prefs_path = (!engine.is_demo()).then(|| engine.paths().config.clone());
-        let appearance = Appearance::load(prefs_path);
-        cx.set_global(appearance.resolve(cx.window_appearance()));
-        cx.set_global(appearance);
-        input::bind_keys(cx);
-        terminal::bind_keys(cx);
-        desktop::bind_keys(cx);
-        root::bind_keys(cx);
-        cx.on_action(|_: &Quit, cx| cx.quit());
-        root::bind_app_actions(cx);
-        cx.set_menus(root::menus());
-        updates::start(engine.clone(), cx);
+    Application::new()
+        .with_assets(assets::Assets)
+        .run(move |cx: &mut App| {
+            assets::load_fonts(cx);
+            assets::set_dock_icon();
+            // The look lives in config.toml ([ui]); demo mode keeps it in memory.
+            let prefs_path = (!engine.is_demo()).then(|| engine.paths().config.clone());
+            let appearance = Appearance::load(prefs_path);
+            cx.set_global(appearance.resolve(cx.window_appearance()));
+            cx.set_global(appearance);
+            input::bind_keys(cx);
+            terminal::bind_keys(cx);
+            desktop::bind_keys(cx);
+            root::bind_keys(cx);
+            cx.on_action(|_: &Quit, cx| cx.quit());
+            root::bind_app_actions(cx);
+            cx.set_menus(root::menus());
+            updates::start(engine.clone(), cx);
 
-        // `--view size:960x640` (screenshots and layout checks) overrides the default size.
-        let (w, h) = initial_view
-            .as_deref()
-            .and_then(|v| v.split(',').find_map(|p| p.trim().strip_prefix("size:")))
-            .and_then(|s| s.split_once('x'))
-            .and_then(|(w, h)| Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?)))
-            .unwrap_or((1380., 880.));
-        // `--view display:builtin` puts the window on the laptop's own screen
-        // (test runs stay off the main monitor); otherwise the primary display.
-        let wants_builtin = initial_view.as_deref().is_some_and(|v| v.split(',').any(|p| p.trim() == "display:builtin"));
-        let display = wants_builtin.then(|| builtin_display(cx)).flatten();
-        // No bigger than the screen it opens on (a laptop's, a VM's 1280×800).
-        let screen = display.and_then(|id| cx.find_display(id)).or_else(|| cx.primary_display()).map(|d| d.bounds().size);
-        let (w, h) = match screen {
-            // (Room for Windows' taskbar, the Dock, a panel.)
-            Some(s) => (w.min(f32::from(s.width) * 0.94).max(640.), h.min(f32::from(s.height) * 0.86).max(480.)),
-            None => (w, h),
-        };
-        let bounds = Bounds::centered(display, size(px(w), px(h)), cx);
-        let titlebar = if cfg!(target_os = "macos") {
-            TitlebarOptions { title: Some("Muxin".into()), appears_transparent: true, traffic_light_position: Some(point(px(16.), px(19.))) }
-        } else {
-            TitlebarOptions { title: Some("Muxin".into()), appears_transparent: false, traffic_light_position: None }
-        };
-        let window = cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                display_id: display,
-                titlebar: Some(titlebar),
-                window_min_size: Some(size(px(960.), px(600.))),
-                app_id: Some("muxin".into()),
-                window_decorations: frame::requested(),
-                // A test window (on the laptop's screen) doesn't take the keyboard
-                // from whatever the user is typing in.
-                focus: !wants_builtin,
-                ..Default::default()
-            },
-            |window, cx| {
-                theme::apply(window, cx);
-                let view = cx.new(|cx| Root::new(engine.clone(), window, cx));
-                window.focus(&view.focus_handle(cx));
-                if let Some(v) = &initial_view {
-                    // Comma-separated, e.g. "theme:gruvbox-light,machine:mac-studio".
-                    view.update(cx, |ws, cx| v.split(',').for_each(|v| ws.open_view(v.trim(), window, cx)));
+            // `--view size:960x640` (screenshots and layout checks) overrides the default size.
+            let (w, h) = initial_view
+                .as_deref()
+                .and_then(|v| v.split(',').find_map(|p| p.trim().strip_prefix("size:")))
+                .and_then(|s| s.split_once('x'))
+                .and_then(|(w, h)| Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?)))
+                .unwrap_or((1380., 880.));
+            // `--view display:builtin` puts the window on the laptop's own screen
+            // (test runs stay off the main monitor); otherwise the primary display.
+            let wants_builtin = initial_view
+                .as_deref()
+                .is_some_and(|v| v.split(',').any(|p| p.trim() == "display:builtin"));
+            let display = wants_builtin.then(|| builtin_display(cx)).flatten();
+            // No bigger than the screen it opens on (a laptop's, a VM's 1280×800).
+            let screen = display
+                .and_then(|id| cx.find_display(id))
+                .or_else(|| cx.primary_display())
+                .map(|d| d.bounds().size);
+            let (w, h) = match screen {
+                // (Room for Windows' taskbar, the Dock, a panel.)
+                Some(s) => (
+                    w.min(f32::from(s.width) * 0.94).max(640.),
+                    h.min(f32::from(s.height) * 0.86).max(480.),
+                ),
+                None => (w, h),
+            };
+            let bounds = Bounds::centered(display, size(px(w), px(h)), cx);
+            let titlebar = if cfg!(target_os = "macos") {
+                TitlebarOptions {
+                    title: Some("Muxin".into()),
+                    appears_transparent: true,
+                    traffic_light_position: Some(point(px(16.), px(19.))),
                 }
-                view
-            },
-        );
-        if let Err(e) = window {
-            tracing::error!("couldn't open a window: {e:#}");
-            cx.quit();
-            return;
-        }
-        // Closing the window quits, like a single-window utility should.
-        cx.on_window_closed(|cx| {
-            if cx.windows().is_empty() {
+            } else {
+                TitlebarOptions {
+                    title: Some("Muxin".into()),
+                    appears_transparent: false,
+                    traffic_light_position: None,
+                }
+            };
+            let window = cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    display_id: display,
+                    titlebar: Some(titlebar),
+                    window_min_size: Some(size(px(960.), px(600.))),
+                    app_id: Some("muxin".into()),
+                    window_decorations: frame::requested(),
+                    // A test window (on the laptop's screen) doesn't take the keyboard
+                    // from whatever the user is typing in.
+                    focus: !wants_builtin,
+                    ..Default::default()
+                },
+                |window, cx| {
+                    theme::apply(window, cx);
+                    let view = cx.new(|cx| Root::new(engine.clone(), window, cx));
+                    window.focus(&view.focus_handle(cx));
+                    if let Some(v) = &initial_view {
+                        // Comma-separated, e.g. "theme:gruvbox-light,machine:mac-studio".
+                        view.update(cx, |ws, cx| {
+                            v.split(',')
+                                .for_each(|v| ws.open_view(v.trim(), window, cx))
+                        });
+                    }
+                    view
+                },
+            );
+            if let Err(e) = window {
+                tracing::error!("couldn't open a window: {e:#}");
                 cx.quit();
+                return;
             }
-        })
-        .detach();
-        if !wants_builtin {
-            cx.activate(true);
-        }
-    });
+            // Closing the window quits, like a single-window utility should.
+            cx.on_window_closed(|cx| {
+                if cx.windows().is_empty() {
+                    cx.quit();
+                }
+            })
+            .detach();
+            if !wants_builtin {
+                cx.activate(true);
+            }
+        });
 }
 
 /// This computer's clipboard right now: a number that changes with every
@@ -157,7 +181,14 @@ pub(crate) fn pasteboard_state() -> Option<(i64, bool)> {
                     continue;
                 }
                 let name = std::ffi::CStr::from_ptr(utf8).to_string_lossy();
-                if ["org.nspasteboard.ConcealedType", "org.nspasteboard.TransientType", "org.nspasteboard.AutoGeneratedType", "com.agilebits.onepassword"].contains(&name.as_ref()) {
+                if [
+                    "org.nspasteboard.ConcealedType",
+                    "org.nspasteboard.TransientType",
+                    "org.nspasteboard.AutoGeneratedType",
+                    "com.agilebits.onepassword",
+                ]
+                .contains(&name.as_ref())
+                {
                     private = true;
                 }
             }
@@ -175,7 +206,9 @@ pub(crate) fn pasteboard_state() -> Option<(i64, bool)> {
 /// changes Tailscale's settings.
 pub(crate) fn open_tailscale() {
     #[cfg(target_os = "macos")]
-    let _ = std::process::Command::new("open").args(["-a", "Tailscale"]).spawn();
+    let _ = std::process::Command::new("open")
+        .args(["-a", "Tailscale"])
+        .spawn();
     #[cfg(windows)]
     let _ = std::process::Command::new(r"C:\Program Files\Tailscale\tailscale-ipn.exe").spawn();
 }
@@ -192,7 +225,10 @@ fn builtin_display(cx: &App) -> Option<gpui::DisplayId> {
     unsafe extern "C" {
         fn CGDisplayIsBuiltin(display: u32) -> i32;
     }
-    cx.displays().into_iter().map(|d| d.id()).find(|id| unsafe { CGDisplayIsBuiltin(u32::from(*id)) != 0 })
+    cx.displays()
+        .into_iter()
+        .map(|d| d.id())
+        .find(|id| unsafe { CGDisplayIsBuiltin(u32::from(*id)) != 0 })
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -218,8 +254,12 @@ pub(crate) fn title_bar_press(e: &gpui::MouseDownEvent, window: &mut gpui::Windo
         use objc::runtime::Object;
         use objc::{class, msg_send, sel, sel_impl};
         use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-        let Ok(handle) = HasWindowHandle::window_handle(&*window) else { return };
-        let RawWindowHandle::AppKit(h) = handle.as_raw() else { return };
+        let Ok(handle) = HasWindowHandle::window_handle(&*window) else {
+            return;
+        };
+        let RawWindowHandle::AppKit(h) = handle.as_raw() else {
+            return;
+        };
         let view = h.ns_view.as_ptr() as *mut Object;
         let ns_window: *mut Object = msg_send![view, window];
         let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];

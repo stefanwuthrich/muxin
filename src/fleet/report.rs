@@ -8,14 +8,25 @@ use super::model::{Machine, Snapshot};
 use crate::util;
 
 pub fn render(s: &Snapshot, color: bool) -> String {
-    let paint = |code: &str, text: &str| if color { format!("\x1b[{code}m{text}\x1b[0m") } else { text.to_string() };
+    let paint = |code: &str, text: &str| {
+        if color {
+            format!("\x1b[{code}m{text}\x1b[0m")
+        } else {
+            text.to_string()
+        }
+    };
     let dim = |t: &str| paint("2", t);
     let bold = |t: &str| paint("1", t);
     let now = Utc::now();
     let c = &s.counts;
     let mut out = String::new();
 
-    let _ = writeln!(out, "{}  {}", bold("Overview"), dim(&format!("{} machines · {} runners", c.machines, c.runners)));
+    let _ = writeln!(
+        out,
+        "{}  {}",
+        bold("Overview"),
+        dim(&format!("{} machines · {} runners", c.machines, c.runners))
+    );
     let _ = writeln!(
         out,
         "{} working   {} idle   {} offline   {} unknown   {} queued",
@@ -25,11 +36,31 @@ pub fn render(s: &Snapshot, color: bool) -> String {
         c.unknown,
         c.queued
     );
-    let source = if s.github.live { "live from GitHub".to_string() } else { "from the machine check (GitHub not connected)".to_string() };
-    let _ = writeln!(out, "{}", dim(&format!("Inventory {} · runner state {source}", s.inventory.path)));
+    let source = if s.github.live {
+        "live from GitHub".to_string()
+    } else {
+        "from the machine check (GitHub not connected)".to_string()
+    };
+    let _ = writeln!(
+        out,
+        "{}",
+        dim(&format!(
+            "Inventory {} · runner state {source}",
+            s.inventory.path
+        ))
+    );
     out.push('\n');
 
-    let headers = ["MACHINE", "PLATFORM", "RUNNERS", "CPU", "MEM", "DISK FREE", "UPTIME", "DIAGNOSTICS"];
+    let headers = [
+        "MACHINE",
+        "PLATFORM",
+        "RUNNERS",
+        "CPU",
+        "MEM",
+        "DISK FREE",
+        "UPTIME",
+        "DIAGNOSTICS",
+    ];
     let rows: Vec<[String; 8]> = s.machines.iter().map(|m| row(m)).collect();
     let mut widths = headers.map(str::len);
     for r in &rows {
@@ -38,7 +69,14 @@ pub fn render(s: &Snapshot, color: bool) -> String {
         }
     }
     let line = |cells: &[String]| {
-        cells.iter().enumerate().map(|(i, c)| format!("{c:<w$}", w = widths[i])).collect::<Vec<_>>().join("  ").trim_end().to_string()
+        cells
+            .iter()
+            .enumerate()
+            .map(|(i, c)| format!("{c:<w$}", w = widths[i]))
+            .collect::<Vec<_>>()
+            .join("  ")
+            .trim_end()
+            .to_string()
     };
     let _ = writeln!(out, "{}", dim(&line(&headers.map(String::from))));
     for (m, r) in s.machines.iter().zip(&rows) {
@@ -62,7 +100,9 @@ pub fn render(s: &Snapshot, color: bool) -> String {
                 j.runner_name.as_deref().unwrap_or("?"),
                 j.name,
                 dim(&j.repo),
-                dim(&util::short_duration((now - since).num_seconds().max(0) as u64))
+                dim(&util::short_duration(
+                    (now - since).num_seconds().max(0) as u64
+                ))
             );
         }
         for j in &s.jobs.queued {
@@ -73,13 +113,20 @@ pub fn render(s: &Snapshot, color: bool) -> String {
                 j.name,
                 dim(&j.repo),
                 dim(&format!("[{}]", j.labels.join(", "))),
-                dim(&format!("waiting {}", util::short_duration((now - j.created_at).num_seconds().max(0) as u64)))
+                dim(&format!(
+                    "waiting {}",
+                    util::short_duration((now - j.created_at).num_seconds().max(0) as u64)
+                ))
             );
         }
     }
 
     if !s.attention.is_empty() {
-        let _ = writeln!(out, "\n{}", bold(&format!("Needs attention ({})", s.attention.len())));
+        let _ = writeln!(
+            out,
+            "\n{}",
+            bold(&format!("Needs attention ({})", s.attention.len()))
+        );
         for a in &s.attention {
             let mark = match a.level.as_str() {
                 "error" => paint("31", "✖"),
@@ -116,15 +163,32 @@ fn row(m: &Machine) -> [String; 8] {
             format!("{} unknown", s.unknown)
         }
     };
-    let cpu = p.and_then(|p| p.cpu_pct).map(|v| format!("{v:.0}%")).unwrap_or_else(dash);
+    let cpu = p
+        .and_then(|p| p.cpu_pct)
+        .map(|v| format!("{v:.0}%"))
+        .unwrap_or_else(dash);
     let mem = p
         .and_then(|p| Some((p.mem_used? as f64 / p.mem_total? as f64) * 100.0))
         .map(|v| format!("{v:.0}%"))
         .unwrap_or_else(dash);
-    let disk = p.and_then(|p| p.disk_free).map(util::bytes).unwrap_or_else(dash);
-    let uptime = p.and_then(|p| p.uptime_sec).map(util::uptime).unwrap_or_else(dash);
-    let warnings = m.diagnostics.iter().filter(|d| matches!(d.level.as_str(), "warning" | "error")).count();
-    let unknown = m.diagnostics.iter().filter(|d| d.level == "unknown").count();
+    let disk = p
+        .and_then(|p| p.disk_free)
+        .map(util::bytes)
+        .unwrap_or_else(dash);
+    let uptime = p
+        .and_then(|p| p.uptime_sec)
+        .map(util::uptime)
+        .unwrap_or_else(dash);
+    let warnings = m
+        .diagnostics
+        .iter()
+        .filter(|d| matches!(d.level.as_str(), "warning" | "error"))
+        .count();
+    let unknown = m
+        .diagnostics
+        .iter()
+        .filter(|d| d.level == "unknown")
+        .count();
     let diagnostics = match m.status.as_str() {
         "offline" => "unreachable".to_string(),
         "unchecked" | "manual" => "not checked".to_string(),
@@ -132,5 +196,18 @@ fn row(m: &Machine) -> [String; 8] {
         _ if unknown > 0 => format!("{unknown} unknown"),
         _ => "no warnings".to_string(),
     };
-    [m.name.clone(), if m.platform.is_empty() { dash() } else { m.platform.clone() }, runners, cpu, mem, disk, uptime, diagnostics]
+    [
+        m.name.clone(),
+        if m.platform.is_empty() {
+            dash()
+        } else {
+            m.platform.clone()
+        },
+        runners,
+        cpu,
+        mem,
+        disk,
+        uptime,
+        diagnostics,
+    ]
 }

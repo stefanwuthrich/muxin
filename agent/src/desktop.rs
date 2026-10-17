@@ -26,42 +26,123 @@ pub const HELLO: u8 = 22;
 /// screen → app: only what changed, as JPEG patches (see `stream`).
 pub const TILES: u8 = 23;
 
-/// DISPLAY and XAUTHORITY of this user's graphical session: our own when set,
-/// else borrowed from a process in that session.
+/// DISPLAY, XAUTHORITY, and the Wayland variables of this user's graphical
+/// session: our own when set, else borrowed from a process in that session.
+/// A clipboard helper started over ssh still needs `WAYLAND_DISPLAY` and
+/// `XDG_RUNTIME_DIR` to reach the logged-in compositor.
 #[cfg(target_os = "linux")]
 pub fn session_env() -> Option<Vec<(String, String)>> {
-    let get = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
-    if let Some(display) = get("DISPLAY") {
-        let mut env = vec![("DISPLAY".to_string(), display)];
-        if let Some(auth) = get("XAUTHORITY") {
-            env.push(("XAUTHORITY".to_string(), auth));
+    let mut env = session_pairs(std::env::vars());
+    if session_score(&env) < 3 {
+        if let Some(found) = session_from_processes() {
+            fill_session(&mut env, &found);
         }
+    }
+    if session_score(&env) > 0 {
         return Some(env);
     }
+    let home = std::env::var("HOME").map(PathBuf::from).ok()?;
+    let auth = home.join(".Xauthority");
+    auth.exists().then(|| {
+        vec![
+            ("DISPLAY".into(), ":0".into()),
+            ("XAUTHORITY".into(), auth.display().to_string()),
+        ]
+    })
+}
+
+#[cfg(target_os = "linux")]
+const SESSION_KEYS: &[&str] = &[
+    "DISPLAY",
+    "XAUTHORITY",
+    "WAYLAND_DISPLAY",
+    "XDG_RUNTIME_DIR",
+    "XDG_SESSION_TYPE",
+];
+
+/// The graphical-session variables among `vars` (empty values dropped).
+#[cfg(target_os = "linux")]
+fn session_pairs(vars: impl IntoIterator<Item = (String, String)>) -> Vec<(String, String)> {
+    vars.into_iter()
+        .filter(|(k, v)| SESSION_KEYS.contains(&k.as_str()) && !v.is_empty())
+        .collect()
+}
+
+/// 3 when both an X display and a Wayland display are present, 2 for Wayland
+/// only, 1 for X only, 0 for neither.
+#[cfg(target_os = "linux")]
+fn session_score(vars: &[(String, String)]) -> u8 {
+    let has = |key: &str| vars.iter().any(|(k, _)| k == key);
+    match (has("DISPLAY"), has("WAYLAND_DISPLAY")) {
+        (true, true) => 3,
+        (false, true) => 2,
+        (true, false) => 1,
+        (false, false) => 0,
+    }
+}
+
+/// Fills what `own` is missing from another process's session. An X display
+/// we already have is left alone; only the Wayland half is added, and the
+/// reverse.
+#[cfg(target_os = "linux")]
+fn fill_session(own: &mut Vec<(String, String)>, found: &[(String, String)]) {
+    let has = |vars: &[(String, String)], key: &str| vars.iter().any(|(k, _)| k == key);
+    let want: &[&str] = if !has(own, "DISPLAY") && !has(own, "WAYLAND_DISPLAY") {
+        SESSION_KEYS
+    } else if !has(own, "WAYLAND_DISPLAY") {
+        &["WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "XDG_SESSION_TYPE"]
+    } else if !has(own, "DISPLAY") {
+        &["DISPLAY", "XAUTHORITY"]
+    } else {
+        return;
+    };
+    for (k, v) in found {
+        if want.contains(&k.as_str()) && !v.is_empty() && !has(own, k) {
+            own.push((k.clone(), v.clone()));
+        }
+    }
+}
+
+/// The best graphical environ of a process of this user: one that has both
+/// displays, else Wayland, else X.
+#[cfg(target_os = "linux")]
+fn session_from_processes() -> Option<Vec<(String, String)>> {
     let uid = unsafe { libc::getuid() };
+    let mut best: Option<Vec<(String, String)>> = None;
+    let mut best_score = 0u8;
     let entries = std::fs::read_dir("/proc").ok()?;
     for entry in entries.flatten() {
         let path = entry.path();
-        if !path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.chars().all(|c| c.is_ascii_digit())) {
+        if !path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.chars().all(|c| c.is_ascii_digit()))
+        {
             continue;
         }
         use std::os::unix::fs::MetadataExt;
         if std::fs::metadata(&path).map(|m| m.uid()).ok() != Some(uid) {
             continue;
         }
-        let Ok(raw) = std::fs::read(path.join("environ")) else { continue };
-        let vars: Vec<(String, String)> = raw
-            .split(|b| *b == 0)
-            .filter_map(|kv| std::str::from_utf8(kv).ok()?.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
-            .filter(|(k, _)| k == "DISPLAY" || k == "XAUTHORITY")
-            .collect();
-        if vars.iter().any(|(k, v)| k == "DISPLAY" && !v.is_empty()) {
-            return Some(vars);
+        let Ok(raw) = std::fs::read(path.join("environ")) else {
+            continue;
+        };
+        let vars = session_pairs(raw.split(|b| *b == 0).filter_map(|kv| {
+            std::str::from_utf8(kv)
+                .ok()?
+                .split_once('=')
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+        }));
+        let score = session_score(&vars);
+        if score > best_score {
+            best = Some(vars);
+            best_score = score;
+            if score == 3 {
+                break;
+            }
         }
     }
-    let home = std::env::var("HOME").map(PathBuf::from).ok()?;
-    let auth = home.join(".Xauthority");
-    auth.exists().then(|| vec![("DISPLAY".into(), ":0".into()), ("XAUTHORITY".into(), auth.display().to_string())])
+    best
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -75,10 +156,21 @@ pub fn session_env() -> Option<Vec<(String, String)>> {
 /// closes. `display` is one from `displays` (see displays.rs); without it, the
 /// whole desktop (Linux) or the main display (a Mac).
 pub fn run(args: &[String]) -> i32 {
-    let num = |i: usize, default: u32| args.get(i).and_then(|a| a.parse::<u32>().ok()).unwrap_or(default);
-    let (fps, quality, max_width) = (num(0, 30).clamp(1, 60), num(1, 75).clamp(20, 95), num(2, 1920).max(320));
+    let num = |i: usize, default: u32| {
+        args.get(i)
+            .and_then(|a| a.parse::<u32>().ok())
+            .unwrap_or(default)
+    };
+    let (fps, quality, max_width) = (
+        num(0, 30).clamp(1, 60),
+        num(1, 75).clamp(20, 95),
+        num(2, 1920).max(320),
+    );
     let tiles = args.get(3).map(String::as_str) == Some("tiles");
-    let display = args.get(4).map(String::as_str).filter(|d| !d.is_empty() && *d != "main");
+    let display = args
+        .get(4)
+        .map(String::as_str)
+        .filter(|d| !d.is_empty() && *d != "main");
     #[cfg(target_os = "linux")]
     {
         match x11::X11::open(display) {
@@ -95,7 +187,9 @@ pub fn run(args: &[String]) -> i32 {
             None => 0,
             Some(Ok(id)) => id,
             Some(Err(_)) => {
-                hello(&serde_json::json!({ "error": format!("No display called {}.", display.unwrap_or_default()) }));
+                hello(
+                    &serde_json::json!({ "error": format!("No display called {}.", display.unwrap_or_default()) }),
+                );
                 return 1;
             }
         };
@@ -122,7 +216,11 @@ pub fn run(args: &[String]) -> i32 {
 fn hello(value: &Value) {
     use std::io::Write;
     let mut out = std::io::stdout().lock();
-    let _ = crate::proto::write_frame(&mut out, HELLO, &serde_json::to_vec(value).unwrap_or_default());
+    let _ = crate::proto::write_frame(
+        &mut out,
+        HELLO,
+        &serde_json::to_vec(value).unwrap_or_default(),
+    );
     let _ = out.flush();
 }
 
@@ -159,8 +257,17 @@ mod frames {
 
     impl Scaler {
         pub fn new(sw: usize, sh: usize, fw: usize, fh: usize) -> Scaler {
-            let edges = |src: usize, out: usize| (0..=out).map(|i| (i * src / out).min(src)).collect::<Vec<_>>();
-            Scaler { sw, fw, xs: edges(sw, fw), ys: edges(sh, fh) }
+            let edges = |src: usize, out: usize| {
+                (0..=out)
+                    .map(|i| (i * src / out).min(src))
+                    .collect::<Vec<_>>()
+            };
+            Scaler {
+                sw,
+                fw,
+                xs: edges(sw, fw),
+                ys: edges(sh, fh),
+            }
         }
 
         /// Frame rows `y0..y1` from the screen into `out` (BGRA, `fw * 4` a row).
@@ -208,14 +315,24 @@ mod frames {
         pub jpeg: Vec<u8>,
     }
 
-    pub fn encode(buf: &[u8], stride: usize, x: usize, y: usize, w: usize, h: usize, quality: u8) -> Option<Vec<u8>> {
+    pub fn encode(
+        buf: &[u8],
+        stride: usize,
+        x: usize,
+        y: usize,
+        w: usize,
+        h: usize,
+        quality: u8,
+    ) -> Option<Vec<u8>> {
         let mut rect = Vec::with_capacity(w * h * 4);
         for row in y..y + h {
             let o = row * stride + x * 4;
             rect.extend_from_slice(&buf[o..o + w * 4]);
         }
         let mut jpeg = Vec::with_capacity(w * h / 4);
-        jpeg_encoder::Encoder::new(&mut jpeg, quality).encode(&rect, w as u16, h as u16, jpeg_encoder::ColorType::Bgra).ok()?;
+        jpeg_encoder::Encoder::new(&mut jpeg, quality)
+            .encode(&rect, w as u16, h as u16, jpeg_encoder::ColorType::Bgra)
+            .ok()?;
         Some(jpeg)
     }
 
@@ -250,12 +367,20 @@ fn stream(mut screen: impl Screen, fps: u32, quality: u8, max_width: u32, tiles:
     let fw = (max_width as usize).min(screen.max_frame()).min(sw).max(1);
     let fh = (sh * fw / sw).max(1);
     let mut info = screen.info();
-    for (k, v) in [("width", fw), ("height", fh), ("screen_width", sw), ("screen_height", sh)] {
+    for (k, v) in [
+        ("width", fw),
+        ("height", fh),
+        ("screen_width", sw),
+        ("screen_height", sh),
+    ] {
         info.insert(k.into(), v.into());
     }
     hello(&Value::Object(info));
     let scaler = Scaler::new(sw, sh, fw, fh);
-    let workers = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).clamp(1, 16);
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .clamp(1, 16);
 
     let (tx, rx) = mpsc::channel::<Value>();
     std::thread::spawn(move || {
@@ -338,8 +463,15 @@ fn stream(mut screen: impl Screen, fps: u32, quality: u8, max_width: u32, tiles:
                                 tx += TILE;
                             }
                             let w = tx.min(fw) - start;
-                            if let Some(jpeg) = encode(out, fw * 4, start, ty - y0, w, th, quality) {
-                                found.push(Patch { x: start as u16, y: ty as u16, w: w as u16, h: th as u16, jpeg });
+                            if let Some(jpeg) = encode(out, fw * 4, start, ty - y0, w, th, quality)
+                            {
+                                found.push(Patch {
+                                    x: start as u16,
+                                    y: ty as u16,
+                                    w: w as u16,
+                                    h: th as u16,
+                                    jpeg,
+                                });
                             }
                         }
                         ty += th;
@@ -347,14 +479,18 @@ fn stream(mut screen: impl Screen, fps: u32, quality: u8, max_width: u32, tiles:
                     found
                 }));
             }
-            handles.into_iter().flat_map(|h| h.join().unwrap_or_default()).collect()
+            handles
+                .into_iter()
+                .flat_map(|h| h.join().unwrap_or_default())
+                .collect()
         });
         if patches.is_empty() {
             continue;
         }
         let sent = if tiles {
             // [width][height][count] then each [x][y][w][h][len: u32][jpeg]
-            let mut msg = Vec::with_capacity(6 + patches.iter().map(|p| 12 + p.jpeg.len()).sum::<usize>());
+            let mut msg =
+                Vec::with_capacity(6 + patches.iter().map(|p| 12 + p.jpeg.len()).sum::<usize>());
             for v in [fw as u16, fh as u16, patches.len() as u16] {
                 msg.extend(v.to_be_bytes());
             }
@@ -367,7 +503,9 @@ fn stream(mut screen: impl Screen, fps: u32, quality: u8, max_width: u32, tiles:
             }
             crate::proto::write_frame(&mut stdout, TILES, &msg)
         } else {
-            let Some(jpeg) = encode(&cur, fw * 4, 0, 0, fw, fh, quality) else { continue };
+            let Some(jpeg) = encode(&cur, fw * 4, 0, 0, fw, fh, quality) else {
+                continue;
+            };
             let mut msg = Vec::with_capacity(4 + jpeg.len());
             msg.extend((fw as u16).to_be_bytes());
             msg.extend((fh as u16).to_be_bytes());
@@ -392,7 +530,8 @@ mod x11 {
     use serde_json::Value;
     use x11rb::connection::Connection;
     use x11rb::protocol::xproto::{
-        BUTTON_PRESS_EVENT, BUTTON_RELEASE_EVENT, ConnectionExt as _, ImageFormat, KEY_PRESS_EVENT, KEY_RELEASE_EVENT, MOTION_NOTIFY_EVENT,
+        BUTTON_PRESS_EVENT, BUTTON_RELEASE_EVENT, ConnectionExt as _, ImageFormat, KEY_PRESS_EVENT,
+        KEY_RELEASE_EVENT, MOTION_NOTIFY_EVENT,
     };
     use x11rb::protocol::xtest::ConnectionExt as _;
     use x11rb::rust_connection::RustConnection;
@@ -424,39 +563,70 @@ mod x11 {
     impl Drop for X11 {
         fn drop(&mut self) {
             for code in self.pressed.drain(..) {
-                let _ = self.conn.xtest_fake_input(KEY_RELEASE_EVENT, code, 0, self.root, 0, 0, 0);
+                let _ = self
+                    .conn
+                    .xtest_fake_input(KEY_RELEASE_EVENT, code, 0, self.root, 0, 0, 0);
             }
             for b in self.buttons.drain(..) {
-                let _ = self.conn.xtest_fake_input(BUTTON_RELEASE_EVENT, b, 0, self.root, 0, 0, 0);
+                let _ = self
+                    .conn
+                    .xtest_fake_input(BUTTON_RELEASE_EVENT, b, 0, self.root, 0, 0, 0);
             }
             let _ = self.conn.flush();
         }
     }
 
     /// Where a monitor is on the desktop (None: the whole desktop), right now.
-    fn area(conn: &RustConnection, root: u32, monitor: Option<&str>) -> Result<(i16, i16, usize, usize), String> {
+    fn area(
+        conn: &RustConnection,
+        root: u32,
+        monitor: Option<&str>,
+    ) -> Result<(i16, i16, usize, usize), String> {
         use x11rb::protocol::randr::ConnectionExt as _;
         let Some(name) = monitor else {
-            let g = conn.get_geometry(root).map_err(|e| e.to_string())?.reply().map_err(|e| e.to_string())?;
+            let g = conn
+                .get_geometry(root)
+                .map_err(|e| e.to_string())?
+                .reply()
+                .map_err(|e| e.to_string())?;
             return Ok((0, 0, g.width as usize, g.height as usize));
         };
-        let monitors = conn.randr_get_monitors(root, true).ok().and_then(|c| c.reply().ok()).map(|r| r.monitors).unwrap_or_default();
-        let found = monitors.into_iter().find(|m| conn.get_atom_name(m.name).ok().and_then(|c| c.reply().ok()).is_some_and(|a| a.name == name.as_bytes()));
-        let m = found.ok_or_else(|| format!("No display called {name} here (it may have been turned off)."))?;
+        let monitors = conn
+            .randr_get_monitors(root, true)
+            .ok()
+            .and_then(|c| c.reply().ok())
+            .map(|r| r.monitors)
+            .unwrap_or_default();
+        let found = monitors.into_iter().find(|m| {
+            conn.get_atom_name(m.name)
+                .ok()
+                .and_then(|c| c.reply().ok())
+                .is_some_and(|a| a.name == name.as_bytes())
+        });
+        let m = found.ok_or_else(|| {
+            format!("No display called {name} here (it may have been turned off).")
+        })?;
         Ok((m.x, m.y, m.width as usize, m.height as usize))
     }
 
     impl X11 {
         /// The desktop, or one monitor of it (a RandR monitor's name; "all": everything).
         pub fn open(monitor: Option<&str>) -> Result<X11, String> {
-            let (conn, screen_num) = x11rb::connect(None).map_err(|e| format!("Can't reach the desktop ({e}). Is someone logged in to a graphical session?"))?;
+            let (conn, screen_num) = x11rb::connect(None).map_err(|e| {
+                format!(
+                    "Can't reach the desktop ({e}). Is someone logged in to a graphical session?"
+                )
+            })?;
             let root = conn.setup().roots[screen_num].root;
             let monitor = monitor.filter(|m| *m != "all").map(str::to_string);
             let (ox, oy, sw, sh) = area(&conn, root, monitor.as_deref())?;
             let shm = attach_shm(&conn, sw * sh * 4);
             let mut keys: HashMap<u32, (u8, bool)> = HashMap::new();
             let (min, max) = (conn.setup().min_keycode, conn.setup().max_keycode);
-            if let Ok(Ok(map)) = conn.get_keyboard_mapping(min, max - min + 1).map(|c| c.reply()) {
+            if let Ok(Ok(map)) = conn
+                .get_keyboard_mapping(min, max - min + 1)
+                .map(|c| c.reply())
+            {
                 let per = map.keysyms_per_keycode.max(1) as usize;
                 for (i, syms) in map.keysyms.chunks(per).enumerate() {
                     for (level, sym) in syms.iter().take(2).enumerate() {
@@ -466,7 +636,21 @@ mod x11 {
                     }
                 }
             }
-            Ok(X11 { conn, root, ox, oy, sw, sh, shm, scratch: Vec::new(), keys, monitor, checked: std::time::Instant::now(), pressed: Vec::new(), buttons: Vec::new() })
+            Ok(X11 {
+                conn,
+                root,
+                ox,
+                oy,
+                sw,
+                sh,
+                shm,
+                scratch: Vec::new(),
+                keys,
+                monitor,
+                checked: std::time::Instant::now(),
+                pressed: Vec::new(),
+                buttons: Vec::new(),
+            })
         }
     }
 
@@ -482,7 +666,12 @@ mod x11 {
         let attached = (addr as isize != -1)
             .then(|| conn.generate_id().ok())
             .flatten()
-            .filter(|seg| conn.shm_attach(*seg, id as u32, false).ok().and_then(|c| c.check().ok()).is_some());
+            .filter(|seg| {
+                conn.shm_attach(*seg, id as u32, false)
+                    .ok()
+                    .and_then(|c| c.check().ok())
+                    .is_some()
+            });
         unsafe { libc::shmctl(id, libc::IPC_RMID, std::ptr::null_mut()) };
         attached.map(|seg| (seg, addr as *mut u8, size))
     }
@@ -507,14 +696,36 @@ mod x11 {
             }
             let (w, h) = (self.sw as u16, self.sh as u16);
             if let Some((seg, addr, size)) = self.shm {
-                if self.conn.shm_get_image(self.root, self.ox, self.oy, w, h, !0, ImageFormat::Z_PIXMAP.into(), seg, 0).ok().and_then(|c| c.reply().ok()).is_some() {
+                if self
+                    .conn
+                    .shm_get_image(
+                        self.root,
+                        self.ox,
+                        self.oy,
+                        w,
+                        h,
+                        !0,
+                        ImageFormat::Z_PIXMAP.into(),
+                        seg,
+                        0,
+                    )
+                    .ok()
+                    .and_then(|c| c.reply().ok())
+                    .is_some()
+                {
                     return Some(Some(unsafe { std::slice::from_raw_parts(addr, size) }));
                 }
                 // Shared memory stopped working: copy through the socket from now on.
                 eprintln!("screen: shared-memory capture failed; using GetImage");
                 self.shm = None;
             }
-            self.scratch = self.conn.get_image(ImageFormat::Z_PIXMAP, self.root, self.ox, self.oy, w, h, !0).ok()?.reply().ok()?.data;
+            self.scratch = self
+                .conn
+                .get_image(ImageFormat::Z_PIXMAP, self.root, self.ox, self.oy, w, h, !0)
+                .ok()?
+                .reply()
+                .ok()?
+                .data;
             Some(Some(self.scratch.as_slice()))
         }
 
@@ -524,9 +735,17 @@ mod x11 {
 
         fn apply(&mut self, e: &Value, frame: (usize, usize)) {
             let (conn, root, keys) = (&self.conn, self.root, &self.keys);
-            let scale = (self.sw as f64 / frame.0 as f64, self.sh as f64 / frame.1 as f64);
+            let scale = (
+                self.sw as f64 / frame.0 as f64,
+                self.sh as f64 / frame.1 as f64,
+            );
             let (ox, oy) = (self.ox, self.oy);
-            let at = |e: &Value| ((e["x"].as_f64().unwrap_or(0.) * scale.0) as i16 + ox, (e["y"].as_f64().unwrap_or(0.) * scale.1) as i16 + oy);
+            let at = |e: &Value| {
+                (
+                    (e["x"].as_f64().unwrap_or(0.) * scale.0) as i16 + ox,
+                    (e["y"].as_f64().unwrap_or(0.) * scale.1) as i16 + oy,
+                )
+            };
             let fake = |kind: u8, detail: u8, x: i16, y: i16| {
                 let _ = conn.xtest_fake_input(kind, detail, 0, root, x, y, 0);
             };
@@ -540,7 +759,16 @@ mod x11 {
                     fake(MOTION_NOTIFY_EVENT, 0, x, y);
                     let b = e["b"].as_u64().unwrap_or(1).clamp(1, 9) as u8;
                     let down = e["down"].as_bool().unwrap_or(false);
-                    fake(if down { BUTTON_PRESS_EVENT } else { BUTTON_RELEASE_EVENT }, b, 0, 0);
+                    fake(
+                        if down {
+                            BUTTON_PRESS_EVENT
+                        } else {
+                            BUTTON_RELEASE_EVENT
+                        },
+                        b,
+                        0,
+                        0,
+                    );
                     self.buttons.retain(|x| *x != b);
                     if down {
                         self.buttons.push(b);
@@ -550,7 +778,10 @@ mod x11 {
                     let (x, y) = at(e);
                     fake(MOTION_NOTIFY_EVENT, 0, x, y);
                     // Wheel buttons: 4 up, 5 down, 6 left, 7 right; one click per notch.
-                    for (amount, less, more) in [(e["dy"].as_i64().unwrap_or(0), 4u8, 5u8), (e["dx"].as_i64().unwrap_or(0), 6, 7)] {
+                    for (amount, less, more) in [
+                        (e["dy"].as_i64().unwrap_or(0), 4u8, 5u8),
+                        (e["dx"].as_i64().unwrap_or(0), 6, 7),
+                    ] {
                         let button = if amount < 0 { less } else { more };
                         for _ in 0..amount.unsigned_abs().min(20) {
                             fake(BUTTON_PRESS_EVENT, button, 0, 0);
@@ -567,7 +798,9 @@ mod x11 {
                             '\t' => 0xff09,
                             c => c as u32,
                         };
-                        let Some((code, needs_shift)) = keys.get(&sym).copied() else { continue };
+                        let Some((code, needs_shift)) = keys.get(&sym).copied() else {
+                            continue;
+                        };
                         let shifted = needs_shift.then_some(shift).flatten();
                         if let Some(s) = shifted {
                             fake(KEY_PRESS_EVENT, s, 0, 0);
@@ -583,10 +816,23 @@ mod x11 {
                 "key" => {
                     let sym = e["keysym"].as_u64().unwrap_or(0) as u32;
                     // Letters arrive lowercase; shift comes as its own key.
-                    let found = keys.get(&sym).or_else(|| char::from_u32(sym).map(|c| c.to_ascii_lowercase() as u32).and_then(|s| keys.get(&s)));
+                    let found = keys.get(&sym).or_else(|| {
+                        char::from_u32(sym)
+                            .map(|c| c.to_ascii_lowercase() as u32)
+                            .and_then(|s| keys.get(&s))
+                    });
                     if let Some(&(code, _)) = found {
                         let down = e["down"].as_bool().unwrap_or(false);
-                        fake(if down { KEY_PRESS_EVENT } else { KEY_RELEASE_EVENT }, code, 0, 0);
+                        fake(
+                            if down {
+                                KEY_PRESS_EVENT
+                            } else {
+                                KEY_RELEASE_EVENT
+                            },
+                            code,
+                            0,
+                            0,
+                        );
                         self.pressed.retain(|x| *x != code);
                         if down {
                             self.pressed.push(code);
@@ -609,10 +855,27 @@ mod mac {
     type FrameFn = extern "C" fn(*mut std::ffi::c_void, *const u8, usize, usize, usize);
 
     unsafe extern "C" {
-        fn muxen_display(id: u32, pixels_w: *mut usize, pixels_h: *mut usize, points_w: *mut f64, points_h: *mut f64, x: *mut f64, y: *mut f64);
+        fn muxen_display(
+            id: u32,
+            pixels_w: *mut usize,
+            pixels_h: *mut usize,
+            points_w: *mut f64,
+            points_h: *mut f64,
+            x: *mut f64,
+            y: *mut f64,
+        );
         fn muxen_capture_allowed(ask: i32) -> i32;
         fn muxen_input_allowed(ask: i32) -> i32;
-        fn muxen_capture_start(id: u32, fps: i32, width: usize, height: usize, f: FrameFn, ctx: *mut std::ffi::c_void, err: *mut u8, errlen: usize) -> i32;
+        fn muxen_capture_start(
+            id: u32,
+            fps: i32,
+            width: usize,
+            height: usize,
+            f: FrameFn,
+            ctx: *mut std::ffi::c_void,
+            err: *mut u8,
+            errlen: usize,
+        ) -> i32;
         fn muxen_capture_stopped() -> i32;
         fn muxen_mouse(kind: u32, x: f64, y: f64, button: u32, clicks: i64);
         fn muxen_scroll(dy: i32, dx: i32);
@@ -627,13 +890,20 @@ mod mac {
         fresh: bool,
     }
 
-    extern "C" fn on_frame(ctx: *mut std::ffi::c_void, bgra: *const u8, width: usize, height: usize, stride: usize) {
+    extern "C" fn on_frame(
+        ctx: *mut std::ffi::c_void,
+        bgra: *const u8,
+        width: usize,
+        height: usize,
+        stride: usize,
+    ) {
         let latest = unsafe { &*(ctx as *const Mutex<Latest>) };
         let mut l = latest.lock().unwrap();
         l.pixels.resize(width * height * 4, 0);
         let src = unsafe { std::slice::from_raw_parts(bgra, stride * height) };
         for y in 0..height {
-            l.pixels[y * width * 4..(y + 1) * width * 4].copy_from_slice(&src[y * stride..y * stride + width * 4]);
+            l.pixels[y * width * 4..(y + 1) * width * 4]
+                .copy_from_slice(&src[y * stride..y * stride + width * 4]);
         }
         l.fresh = true;
     }
@@ -677,13 +947,17 @@ mod mac {
     impl Mac {
         /// Display `id` (0: the main one).
         pub fn open(fps: u32, max_width: u32, id: u32) -> Result<Mac, String> {
-            let (mut pw, mut ph, mut ptw, mut pth, mut ox, mut oy) = (0usize, 0usize, 0f64, 0f64, 0f64, 0f64);
+            let (mut pw, mut ph, mut ptw, mut pth, mut ox, mut oy) =
+                (0usize, 0usize, 0f64, 0f64, 0f64, 0f64);
             unsafe { muxen_display(id, &mut pw, &mut ph, &mut ptw, &mut pth, &mut ox, &mut oy) };
             if pw == 0 || ph == 0 {
                 return Err("No display here.".into());
             }
             if unsafe { muxen_capture_allowed(1) } == 0 {
-                return Err(format!("On {}, allow muxen-agent under Privacy & Security › Screen Recording, then try again.", computer_name()));
+                return Err(format!(
+                    "On {}, allow muxen-agent under Privacy & Security › Screen Recording, then try again.",
+                    computer_name()
+                ));
             }
             let input = unsafe { muxen_input_allowed(1) } == 1;
             let fw = (max_width as usize).min(pw).max(1);
@@ -692,12 +966,39 @@ mod mac {
             let mut err = [0u8; 512];
             // ScreenCaptureKit keeps calling with this pointer while the process lives.
             let ctx = Arc::into_raw(latest.clone()) as *mut std::ffi::c_void;
-            let started = unsafe { muxen_capture_start(id, fps as i32, fw, fh, on_frame, ctx, err.as_mut_ptr(), err.len()) };
+            let started = unsafe {
+                muxen_capture_start(
+                    id,
+                    fps as i32,
+                    fw,
+                    fh,
+                    on_frame,
+                    ctx,
+                    err.as_mut_ptr(),
+                    err.len(),
+                )
+            };
             if started != 0 {
-                let why = String::from_utf8_lossy(&err[..err.iter().position(|b| *b == 0).unwrap_or(err.len())]).into_owned();
+                let why = String::from_utf8_lossy(
+                    &err[..err.iter().position(|b| *b == 0).unwrap_or(err.len())],
+                )
+                .into_owned();
                 return Err(format!("Can't capture the screen: {why}"));
             }
-            Ok(Mac { fw, fh, points: (ptw, pth), origin: (ox, oy), latest, frame: Vec::new(), input, held: [false; 3], flags: 0, last_click: None, pressed: Vec::new(), at: (ox, oy) })
+            Ok(Mac {
+                fw,
+                fh,
+                points: (ptw, pth),
+                origin: (ox, oy),
+                latest,
+                frame: Vec::new(),
+                input,
+                held: [false; 3],
+                flags: 0,
+                last_click: None,
+                pressed: Vec::new(),
+                at: (ox, oy),
+            })
         }
 
         fn point(&self, e: &Value, frame: (usize, usize)) -> (f64, f64) {
@@ -742,7 +1043,14 @@ mod mac {
             let mut m = serde_json::Map::new();
             if !self.input {
                 m.insert("input".into(), false.into());
-                m.insert("note".into(), format!("view only: allow muxen-agent under Accessibility on {}", computer_name()).into());
+                m.insert(
+                    "note".into(),
+                    format!(
+                        "view only: allow muxen-agent under Accessibility on {}",
+                        computer_name()
+                    )
+                    .into(),
+                );
             }
             m
         }
@@ -775,7 +1083,14 @@ mod mac {
                     // Double clicks: the same button again, quickly, nearby.
                     let clicks = if down {
                         let n = match self.last_click {
-                            Some((at, b, lx, ly, n)) if b == button && at.elapsed().as_millis() < 500 && (lx - x).abs() < 6. && (ly - y).abs() < 6. => n + 1,
+                            Some((at, b, lx, ly, n))
+                                if b == button
+                                    && at.elapsed().as_millis() < 500
+                                    && (lx - x).abs() < 6.
+                                    && (ly - y).abs() < 6. =>
+                            {
+                                n + 1
+                            }
                             _ => 1,
                         };
                         self.last_click = Some((Instant::now(), button, x, y, n));
@@ -785,12 +1100,17 @@ mod mac {
                     };
                     self.held[index] = down;
                     self.at = (x, y);
-                    unsafe { muxen_mouse(if down { kinds.0 } else { kinds.1 }, x, y, button, clicks) };
+                    unsafe {
+                        muxen_mouse(if down { kinds.0 } else { kinds.1 }, x, y, button, clicks)
+                    };
                 }
                 "scroll" => {
                     let (x, y) = self.point(e, frame);
                     unsafe { muxen_mouse(MOVED, x, y, 0, 0) };
-                    let (dy, dx) = (e["dy"].as_i64().unwrap_or(0).clamp(-20, 20) as i32, e["dx"].as_i64().unwrap_or(0).clamp(-20, 20) as i32);
+                    let (dy, dx) = (
+                        e["dy"].as_i64().unwrap_or(0).clamp(-20, 20) as i32,
+                        e["dx"].as_i64().unwrap_or(0).clamp(-20, 20) as i32,
+                    );
                     unsafe { muxen_scroll(dy, dx) };
                 }
                 "text" => {
@@ -836,9 +1156,9 @@ mod mac {
     /// The CGEventFlags bit of a modifier keysym.
     fn modifier_flag(sym: u32) -> Option<u64> {
         Some(match sym {
-            0xffe1 | 0xffe2 => 0x20000,  // shift
-            0xffe3 | 0xffe4 => 0x40000,  // control
-            0xffe9 | 0xffea => 0x80000,  // option
+            0xffe1 | 0xffe2 => 0x20000,           // shift
+            0xffe3 | 0xffe4 => 0x40000,           // control
+            0xffe9 | 0xffea => 0x80000,           // option
             0xffeb | 0xffec | 0xffe7 => 0x100000, // command
             _ => return None,
         })
@@ -847,35 +1167,77 @@ mod mac {
     /// An X keysym's macOS virtual keycode (a US keyboard's layout).
     fn keycode(sym: u32) -> Option<u16> {
         Some(match sym {
-            0xff0d => 36,          // return
-            0xff09 => 48,          // tab
-            0x20 => 49,            // space
-            0xff08 => 51,          // backspace
-            0xff1b => 53,          // escape
-            0xffff => 117,         // forward delete
-            0xff50 => 115,         // home
-            0xff57 => 119,         // end
-            0xff55 => 116,         // page up
-            0xff56 => 121,         // page down
-            0xff51 => 123,         // left
-            0xff53 => 124,         // right
-            0xff54 => 125,         // down
-            0xff52 => 126,         // up
-            0xffe1 | 0xffe2 => 56, // shift
-            0xffe3 | 0xffe4 => 59, // control
-            0xffe9 | 0xffea => 58, // option
+            0xff0d => 36,                   // return
+            0xff09 => 48,                   // tab
+            0x20 => 49,                     // space
+            0xff08 => 51,                   // backspace
+            0xff1b => 53,                   // escape
+            0xffff => 117,                  // forward delete
+            0xff50 => 115,                  // home
+            0xff57 => 119,                  // end
+            0xff55 => 116,                  // page up
+            0xff56 => 121,                  // page down
+            0xff51 => 123,                  // left
+            0xff53 => 124,                  // right
+            0xff54 => 125,                  // down
+            0xff52 => 126,                  // up
+            0xffe1 | 0xffe2 => 56,          // shift
+            0xffe3 | 0xffe4 => 59,          // control
+            0xffe9 | 0xffea => 58,          // option
             0xffeb | 0xffec | 0xffe7 => 55, // command
-            0xffbe..=0xffc9 => [122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111][(sym - 0xffbe) as usize], // F1-F12
+            0xffbe..=0xffc9 => {
+                [122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111][(sym - 0xffbe) as usize]
+            } // F1-F12
             _ => {
                 let c = char::from_u32(sym)?.to_ascii_lowercase();
                 match c {
-                    'a' => 0, 's' => 1, 'd' => 2, 'f' => 3, 'h' => 4, 'g' => 5, 'z' => 6, 'x' => 7, 'c' => 8, 'v' => 9,
-                    'b' => 11, 'q' => 12, 'w' => 13, 'e' => 14, 'r' => 15, 'y' => 16, 't' => 17,
-                    '1' | '!' => 18, '2' | '@' => 19, '3' | '#' => 20, '4' | '$' => 21, '6' | '^' => 22, '5' | '%' => 23,
-                    '=' | '+' => 24, '9' | '(' => 25, '7' | '&' => 26, '-' | '_' => 27, '8' | '*' => 28, '0' | ')' => 29,
-                    ']' | '}' => 30, 'o' => 31, 'u' => 32, '[' | '{' => 33, 'i' => 34, 'p' => 35, 'l' => 37, 'j' => 38,
-                    '\'' | '"' => 39, 'k' => 40, ';' | ':' => 41, '\\' | '|' => 42, ',' | '<' => 43, '/' | '?' => 44,
-                    'n' => 45, 'm' => 46, '.' | '>' => 47, '`' | '~' => 50,
+                    'a' => 0,
+                    's' => 1,
+                    'd' => 2,
+                    'f' => 3,
+                    'h' => 4,
+                    'g' => 5,
+                    'z' => 6,
+                    'x' => 7,
+                    'c' => 8,
+                    'v' => 9,
+                    'b' => 11,
+                    'q' => 12,
+                    'w' => 13,
+                    'e' => 14,
+                    'r' => 15,
+                    'y' => 16,
+                    't' => 17,
+                    '1' | '!' => 18,
+                    '2' | '@' => 19,
+                    '3' | '#' => 20,
+                    '4' | '$' => 21,
+                    '6' | '^' => 22,
+                    '5' | '%' => 23,
+                    '=' | '+' => 24,
+                    '9' | '(' => 25,
+                    '7' | '&' => 26,
+                    '-' | '_' => 27,
+                    '8' | '*' => 28,
+                    '0' | ')' => 29,
+                    ']' | '}' => 30,
+                    'o' => 31,
+                    'u' => 32,
+                    '[' | '{' => 33,
+                    'i' => 34,
+                    'p' => 35,
+                    'l' => 37,
+                    'j' => 38,
+                    '\'' | '"' => 39,
+                    'k' => 40,
+                    ';' | ':' => 41,
+                    '\\' | '|' => 42,
+                    ',' | '<' => 43,
+                    '/' | '?' => 44,
+                    'n' => 45,
+                    'm' => 46,
+                    '.' | '>' => 47,
+                    '`' | '~' => 50,
                     _ => return None,
                 }
             }
@@ -895,5 +1257,57 @@ mod mac {
             assert_eq!(keycode('!' as u32), Some(18));
             assert_eq!(modifier_flag(0xffeb), Some(0x100000));
         }
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod session_env_tests {
+    use super::{fill_session, session_pairs, session_score};
+
+    #[test]
+    fn scores_x_and_wayland() {
+        let both = session_pairs([
+            ("DISPLAY".into(), ":0".into()),
+            ("WAYLAND_DISPLAY".into(), "wayland-0".into()),
+            ("EMPTY".into(), "".into()),
+        ]);
+        assert_eq!(session_score(&both), 3);
+        assert!(
+            both.iter()
+                .all(|(k, _)| k == "DISPLAY" || k == "WAYLAND_DISPLAY")
+        );
+        assert_eq!(
+            session_score(&[("WAYLAND_DISPLAY".into(), "wayland-0".into())]),
+            2
+        );
+        assert_eq!(session_score(&[("DISPLAY".into(), ":1".into())]), 1);
+        assert_eq!(session_score(&[]), 0);
+    }
+
+    #[test]
+    fn fills_only_the_missing_half() {
+        let mut own = vec![
+            ("DISPLAY".into(), ":0".into()),
+            ("XAUTHORITY".into(), "/tmp/x".into()),
+        ];
+        fill_session(
+            &mut own,
+            &[
+                ("DISPLAY".into(), ":1".into()),
+                ("WAYLAND_DISPLAY".into(), "wayland-0".into()),
+                ("XDG_RUNTIME_DIR".into(), "/run/user/1".into()),
+                ("XAUTHORITY".into(), "/other".into()),
+            ],
+        );
+        assert!(own.iter().any(|(k, v)| k == "DISPLAY" && v == ":0"));
+        assert!(own.iter().any(|(k, v)| k == "XAUTHORITY" && v == "/tmp/x"));
+        assert!(
+            own.iter()
+                .any(|(k, v)| k == "WAYLAND_DISPLAY" && v == "wayland-0")
+        );
+        assert!(
+            own.iter()
+                .any(|(k, v)| k == "XDG_RUNTIME_DIR" && v == "/run/user/1")
+        );
     }
 }

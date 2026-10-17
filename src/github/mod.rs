@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 
 use chrono::{DateTime, TimeZone, Utc};
 use futures::stream::{self, StreamExt};
-use reqwest::header::{ACCEPT, AUTHORIZATION, ETAG, IF_NONE_MATCH, LINK, USER_AGENT};
 use reqwest::StatusCode;
+use reqwest::header::{ACCEPT, AUTHORIZATION, ETAG, IF_NONE_MATCH, LINK, USER_AGENT};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -242,7 +242,9 @@ pub struct Account {
 }
 
 /// Gets the token of another machine's GitHub CLI login: (machine id, host).
-pub type TokenFetcher = Arc<dyn Fn(String, String) -> futures::future::BoxFuture<'static, Option<String>> + Send + Sync>;
+pub type TokenFetcher = Arc<
+    dyn Fn(String, String) -> futures::future::BoxFuture<'static, Option<String>> + Send + Sync,
+>;
 
 pub struct Client {
     http: reqwest::Client,
@@ -289,7 +291,10 @@ impl Client {
         let mut url = self.api_url.lock().unwrap();
         let mut account = self.account.lock().unwrap();
         let mut machine = self.account_machine.lock().unwrap();
-        if *url != settings.api_url || *account != settings.account || *machine != settings.account_machine {
+        if *url != settings.api_url
+            || *account != settings.account
+            || *machine != settings.account_machine
+        {
             *url = settings.api_url.clone();
             *account = settings.account.clone();
             *machine = settings.account_machine.clone();
@@ -303,12 +308,28 @@ impl Client {
     /// GitHub host for `gh auth token --hostname`.
     fn gh_hostname(&self) -> String {
         let api = self.api_url.lock().unwrap().clone();
-        let host = api.split("://").nth(1).unwrap_or(&api).split('/').next().unwrap_or("github.com");
-        if host == "api.github.com" { "github.com".into() } else { host.to_string() }
+        let host = api
+            .split("://")
+            .nth(1)
+            .unwrap_or(&api)
+            .split('/')
+            .next()
+            .unwrap_or("github.com");
+        if host == "api.github.com" {
+            "github.com".into()
+        } else {
+            host.to_string()
+        }
     }
 
     async fn token(&self) -> Option<Token> {
-        if let Some(t) = self.token.lock().unwrap().clone().filter(|t| t.fetched.elapsed() < TOKEN_TTL) {
+        if let Some(t) = self
+            .token
+            .lock()
+            .unwrap()
+            .clone()
+            .filter(|t| t.fetched.elapsed() < TOKEN_TTL)
+        {
             return Some(t);
         }
         let account = self.account.lock().unwrap().clone();
@@ -319,7 +340,11 @@ impl Client {
             None => {
                 let fetch = self.fetcher.lock().unwrap().clone();
                 match fetch {
-                    Some(f) => f(machine, self.gh_hostname()).await.map(|value| Token { value, source: "gh".into(), fetched: Instant::now() }),
+                    Some(f) => f(machine, self.gh_hostname()).await.map(|value| Token {
+                        value,
+                        source: "gh".into(),
+                        fetched: Instant::now(),
+                    }),
                     None => None,
                 }
             }
@@ -351,7 +376,10 @@ impl Client {
             login: String,
         }
         self.configure(settings);
-        let pages: Vec<Vec<Org>> = self.get_all("/user/orgs?per_page=100", 2).await.map_err(|e| e.message)?;
+        let pages: Vec<Vec<Org>> = self
+            .get_all("/user/orgs?per_page=100", 2)
+            .await
+            .map_err(|e| e.message)?;
         Ok(pages.into_iter().flatten().map(|o| o.login).collect())
     }
 
@@ -364,7 +392,11 @@ impl Client {
     }
 
     /// GET a JSON endpoint, following `Link: rel="next"` up to `max_pages`.
-    async fn get_all<T: DeserializeOwned>(&self, path: &str, max_pages: usize) -> Result<Vec<T>, ApiError> {
+    async fn get_all<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        max_pages: usize,
+    ) -> Result<Vec<T>, ApiError> {
         let mut out = Vec::new();
         let mut url = self.url(path);
         for _ in 0..max_pages {
@@ -383,7 +415,11 @@ impl Client {
     }
 
     fn url(&self, path: &str) -> String {
-        if path.starts_with("http") { path.to_string() } else { format!("{}{}", self.api_url.lock().unwrap(), path) }
+        if path.starts_with("http") {
+            path.to_string()
+        } else {
+            format!("{}{}", self.api_url.lock().unwrap(), path)
+        }
     }
 
     fn get_page<'a, T: DeserializeOwned>(
@@ -393,7 +429,10 @@ impl Client {
     ) -> futures::future::BoxFuture<'a, Result<(T, Option<String>), ApiError>> {
         Box::pin(async move {
             let Some(token) = self.token().await else {
-                return Err(ApiError { status: None, message: "No GitHub token".into() });
+                return Err(ApiError {
+                    status: None,
+                    message: "No GitHub token".into(),
+                });
             };
             let cached_etag = self.cache.lock().unwrap().get(url).map(|c| c.etag.clone());
             let mut req = self
@@ -416,7 +455,8 @@ impl Client {
             if status == StatusCode::NOT_MODIFIED {
                 let cache = self.cache.lock().unwrap();
                 if let Some(c) = cache.get(url) {
-                    let value = serde_json::from_slice(&c.body).map_err(|e| decode_error(url, e))?;
+                    let value =
+                        serde_json::from_slice(&c.body).map_err(|e| decode_error(url, e))?;
                     return Ok((value, c.next.clone()));
                 }
             }
@@ -430,13 +470,17 @@ impl Client {
                 // granting a permission, another account): look again, and retry
                 // once if it did.
                 self.forget_token();
-                if self.token().await.is_some_and(|fresh| status == StatusCode::UNAUTHORIZED || fresh.value != token.value) {
+                if self.token().await.is_some_and(|fresh| {
+                    status == StatusCode::UNAUTHORIZED || fresh.value != token.value
+                }) {
                     return self.get_page(url, false).await;
                 }
             }
             if !status.is_success() {
                 let body = resp.bytes().await.unwrap_or_default();
-                let message = serde_json::from_slice::<ApiErrorBody>(&body).map(|b| b.message).unwrap_or_default();
+                let message = serde_json::from_slice::<ApiErrorBody>(&body)
+                    .map(|b| b.message)
+                    .unwrap_or_default();
                 let message = if rate_limited {
                     "GitHub API rate limit reached".to_string()
                 } else if message.is_empty() {
@@ -444,20 +488,41 @@ impl Client {
                 } else {
                     message
                 };
-                return Err(ApiError { status: Some(status), message });
+                return Err(ApiError {
+                    status: Some(status),
+                    message,
+                });
             }
 
-            let etag = resp.headers().get(ETAG).and_then(|v| v.to_str().ok()).map(str::to_string);
-            let next = resp.headers().get(LINK).and_then(|v| v.to_str().ok()).and_then(next_link);
+            let etag = resp
+                .headers()
+                .get(ETAG)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string);
+            let next = resp
+                .headers()
+                .get(LINK)
+                .and_then(|v| v.to_str().ok())
+                .and_then(next_link);
             let body: std::sync::Arc<[u8]> = resp
                 .bytes()
                 .await
-                .map_err(|e| ApiError { status: None, message: format!("Reading GitHub response: {e}") })?
+                .map_err(|e| ApiError {
+                    status: None,
+                    message: format!("Reading GitHub response: {e}"),
+                })?
                 .to_vec()
                 .into();
             let value = serde_json::from_slice(&body).map_err(|e| decode_error(url, e))?;
             if let Some(etag) = etag {
-                self.cache.lock().unwrap().insert(url.to_string(), Cached { etag, body, next: next.clone() });
+                self.cache.lock().unwrap().insert(
+                    url.to_string(),
+                    Cached {
+                        etag,
+                        body,
+                        next: next.clone(),
+                    },
+                );
             }
             Ok((value, next))
         })
@@ -465,19 +530,37 @@ impl Client {
 
     fn record_rate(&self, headers: &reqwest::header::HeaderMap) {
         if let Some(s) = headers.get("x-oauth-scopes").and_then(|v| v.to_str().ok()) {
-            *self.scopes.lock().unwrap() = Some(s.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect());
+            *self.scopes.lock().unwrap() = Some(
+                s.split(',')
+                    .map(|x| x.trim().to_string())
+                    .filter(|x| !x.is_empty())
+                    .collect(),
+            );
         }
-        let num = |name: &str| headers.get(name).and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<i64>().ok());
-        if let (Some(limit), Some(remaining), Some(reset)) =
-            (num("x-ratelimit-limit"), num("x-ratelimit-remaining"), num("x-ratelimit-reset"))
-        {
+        let num = |name: &str| {
+            headers
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse::<i64>().ok())
+        };
+        if let (Some(limit), Some(remaining), Some(reset)) = (
+            num("x-ratelimit-limit"),
+            num("x-ratelimit-remaining"),
+            num("x-ratelimit-reset"),
+        ) {
             // Only the core REST bucket matters here.
-            let resource = headers.get("x-ratelimit-resource").and_then(|v| v.to_str().ok()).unwrap_or("core");
+            let resource = headers
+                .get("x-ratelimit-resource")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("core");
             if resource == "core" {
                 *self.rate.lock().unwrap() = Some(Rate {
                     limit: limit as u32,
                     remaining: remaining as u32,
-                    reset_at: Utc.timestamp_opt(reset, 0).single().unwrap_or_else(Utc::now),
+                    reset_at: Utc
+                        .timestamp_opt(reset, 0)
+                        .single()
+                        .unwrap_or_else(Utc::now),
                 });
             }
         }
@@ -530,13 +613,21 @@ impl Client {
         let per_page = (limit + 5).min(100);
         let path = format!("/orgs/{org}/repos?sort=pushed&direction=desc&per_page={per_page}");
         let repos: Vec<String> = match self.get::<Vec<ApiRepo>>(&path).await {
-            Ok(list) => list.into_iter().filter(|r| !r.archived && !r.disabled).map(|r| r.full_name).take(limit).collect(),
+            Ok(list) => list
+                .into_iter()
+                .filter(|r| !r.archived && !r.disabled)
+                .map(|r| r.full_name)
+                .take(limit)
+                .collect(),
             Err(e) => {
                 tracing::debug!("listing repos for {org}: {e}");
                 Vec::new()
             }
         };
-        self.org_repos.lock().unwrap().insert(key, (Instant::now(), repos.clone()));
+        self.org_repos
+            .lock()
+            .unwrap()
+            .insert(key, (Instant::now(), repos.clone()));
         repos
     }
 
@@ -544,7 +635,12 @@ impl Client {
     async fn active_jobs(&self, repo: &str) -> Vec<JobData> {
         let mut runs = Vec::new();
         for status in ["queued", "in_progress"] {
-            match self.get::<ApiRuns>(&format!("/repos/{repo}/actions/runs?status={status}&per_page=30")).await {
+            match self
+                .get::<ApiRuns>(&format!(
+                    "/repos/{repo}/actions/runs?status={status}&per_page=30"
+                ))
+                .await
+            {
                 Ok(r) => runs.extend(r.workflow_runs),
                 Err(e) => tracing::debug!("listing {status} runs for {repo}: {e}"),
             }
@@ -555,12 +651,20 @@ impl Client {
         let per_run = stream::iter(runs)
             .map(|run| async move {
                 let jobs = self
-                    .get::<ApiJobs>(&format!("/repos/{repo}/actions/runs/{}/jobs?per_page=100", run.id))
+                    .get::<ApiJobs>(&format!(
+                        "/repos/{repo}/actions/runs/{}/jobs?per_page=100",
+                        run.id
+                    ))
                     .await
                     .map(|j| j.jobs)
                     .unwrap_or_default();
                 jobs.into_iter()
-                    .filter(|j| matches!(j.status.as_str(), "queued" | "in_progress" | "waiting" | "pending"))
+                    .filter(|j| {
+                        matches!(
+                            j.status.as_str(),
+                            "queued" | "in_progress" | "waiting" | "pending"
+                        )
+                    })
                     .map(|j| JobData {
                         id: j.id,
                         run_id: j.run_id,
@@ -570,8 +674,14 @@ impl Client {
                         branch: j.head_branch,
                         event: run.event.clone(),
                         actor: run.actor.as_ref().map(|a| a.login.clone()),
-                        url: j.html_url.unwrap_or_else(|| format!("https://github.com/{repo}/actions/runs/{}", j.run_id)),
-                        status: if j.status == "pending" { "queued".into() } else { j.status },
+                        url: j.html_url.unwrap_or_else(|| {
+                            format!("https://github.com/{repo}/actions/runs/{}", j.run_id)
+                        }),
+                        status: if j.status == "pending" {
+                            "queued".into()
+                        } else {
+                            j.status
+                        },
                         labels: j.labels,
                         runner_name: j.runner_name.filter(|n| !n.is_empty()),
                         created_at: j.created_at,
@@ -591,7 +701,10 @@ impl Client {
                 return Some(v);
             }
         }
-        let rel: ApiRelease = self.get("/repos/actions/runner/releases/latest").await.ok()?;
+        let rel: ApiRelease = self
+            .get("/repos/actions/runner/releases/latest")
+            .await
+            .ok()?;
         let v = rel.tag_name.trim_start_matches('v').to_string();
         *self.release.lock().unwrap() = Some((Instant::now(), v.clone()));
         Some(v)
@@ -602,7 +715,8 @@ impl Client {
         self.configure(settings);
         let mut data = GitHubData::default();
         let Some(token) = self.token().await else {
-            data.error = Some("No GitHub token found. Run `gh auth login` or set GITHUB_TOKEN.".into());
+            data.error =
+                Some("No GitHub token found. Run `gh auth login` or set GITHUB_TOKEN.".into());
             return data;
         };
         data.token_source = token.source;
@@ -669,7 +783,11 @@ impl Client {
     pub async fn test_scope(&self, settings: &GitHubSettings, scope: &str) -> ScopeTest {
         self.configure(settings);
         let name = crate::config::strip_github_url(scope);
-        let kind = if name.contains('/') { ScopeKind::Repo } else { ScopeKind::Org };
+        let kind = if name.contains('/') {
+            ScopeKind::Repo
+        } else {
+            ScopeKind::Org
+        };
         if self.token().await.is_none() {
             return ScopeTest {
                 kind,
@@ -680,10 +798,22 @@ impl Client {
             };
         }
         match self.runners(kind, &name).await {
-            Ok(r) => ScopeTest { kind, name, runners: r.len(), error: None, hint: None },
+            Ok(r) => ScopeTest {
+                kind,
+                name,
+                runners: r.len(),
+                error: None,
+                hint: None,
+            },
             Err(e) => {
                 let (msg, hint) = explain(kind, &name, &e, &data_token_source(self));
-                ScopeTest { kind, name, runners: 0, error: Some(msg), hint }
+                ScopeTest {
+                    kind,
+                    name,
+                    runners: 0,
+                    error: Some(msg),
+                    hint,
+                }
             }
         }
     }
@@ -692,37 +822,69 @@ impl Client {
     // Writes, used by runner provisioning. Never cached.
 
     /// A short-lived token for `config.sh --token` (registering new runners).
-    pub async fn registration_token(&self, settings: &GitHubSettings, scope: &str) -> Result<String, String> {
+    pub async fn registration_token(
+        &self,
+        settings: &GitHubSettings,
+        scope: &str,
+    ) -> Result<String, String> {
         let (kind, name) = parse_scope(scope);
         let doing = format!("Registering runners with {name}");
-        self.scoped_token(settings, kind, &name, "registration-token", &doing).await
+        self.scoped_token(settings, kind, &name, "registration-token", &doing)
+            .await
     }
 
     /// A short-lived token for `config.sh remove --token` (deregistering a runner).
-    pub async fn remove_token(&self, settings: &GitHubSettings, scope: &str) -> Result<String, String> {
+    pub async fn remove_token(
+        &self,
+        settings: &GitHubSettings,
+        scope: &str,
+    ) -> Result<String, String> {
         let (kind, name) = parse_scope(scope);
         let doing = format!("Removing runners from {name}");
-        self.scoped_token(settings, kind, &name, "remove-token", &doing).await
+        self.scoped_token(settings, kind, &name, "remove-token", &doing)
+            .await
     }
 
     /// Deletes a runner registration directly, for runners whose machine is gone.
-    pub async fn delete_runner(&self, settings: &GitHubSettings, scope: &str, runner_id: u64) -> Result<(), String> {
+    pub async fn delete_runner(
+        &self,
+        settings: &GitHubSettings,
+        scope: &str,
+        runner_id: u64,
+    ) -> Result<(), String> {
         self.configure(settings);
         let (kind, name) = parse_scope(scope);
         let path = format!("{}/actions/runners/{runner_id}", scope_path(kind, &name));
         match self.send(reqwest::Method::DELETE, &path).await {
             Ok(_) => Ok(()),
-            Err(e) => Err(with_hint(explain_doing(kind, &name, &e, &data_token_source(self), &format!("Removing runners from {name}")))),
+            Err(e) => Err(with_hint(explain_doing(
+                kind,
+                &name,
+                &e,
+                &data_token_source(self),
+                &format!("Removing runners from {name}"),
+            ))),
         }
     }
 
     /// Cancels a workflow run: every job in it that hasn't finished.
-    pub async fn cancel_run(&self, settings: &GitHubSettings, repo: &str, run_id: u64) -> Result<(), String> {
+    pub async fn cancel_run(
+        &self,
+        settings: &GitHubSettings,
+        repo: &str,
+        run_id: u64,
+    ) -> Result<(), String> {
         self.configure(settings);
         let path = format!("/repos/{repo}/actions/runs/{run_id}/cancel");
         match self.send(reqwest::Method::POST, &path).await {
             Ok(_) => Ok(()),
-            Err(e) => Err(with_hint(explain_doing(ScopeKind::Repo, repo, &e, &data_token_source(self), &format!("Cancelling a run in {repo}")))),
+            Err(e) => Err(with_hint(explain_doing(
+                ScopeKind::Repo,
+                repo,
+                &e,
+                &data_token_source(self),
+                &format!("Cancelling a run in {repo}"),
+            ))),
         }
     }
 
@@ -739,7 +901,14 @@ impl Client {
         format!("https://{}/{name}", self.gh_hostname())
     }
 
-    async fn scoped_token(&self, settings: &GitHubSettings, kind: ScopeKind, name: &str, which: &str, doing: &str) -> Result<String, String> {
+    async fn scoped_token(
+        &self,
+        settings: &GitHubSettings,
+        kind: ScopeKind,
+        name: &str,
+        which: &str,
+        doing: &str,
+    ) -> Result<String, String> {
         #[derive(Deserialize)]
         struct TokenBody {
             token: String,
@@ -753,7 +922,13 @@ impl Client {
             Ok(body) => serde_json::from_slice::<TokenBody>(&body)
                 .map(|b| b.token)
                 .map_err(|e| format!("Unexpected response from GitHub: {e}")),
-            Err(e) => Err(with_hint(explain_doing(kind, name, &e, &data_token_source(self), doing))),
+            Err(e) => Err(with_hint(explain_doing(
+                kind,
+                name,
+                &e,
+                &data_token_source(self),
+                doing,
+            ))),
         }
     }
 
@@ -762,7 +937,10 @@ impl Client {
         let url = self.url(path);
         for attempt in 0..2 {
             let Some(token) = self.token().await else {
-                return Err(ApiError { status: None, message: "No GitHub token".into() });
+                return Err(ApiError {
+                    status: None,
+                    message: "No GitHub token".into(),
+                });
             };
             let resp = self
                 .http
@@ -773,14 +951,23 @@ impl Client {
                 .header(USER_AGENT, concat!("muxen/", env!("CARGO_PKG_VERSION")))
                 .send()
                 .await
-                .map_err(|e| ApiError { status: None, message: format!("Couldn't reach GitHub: {}", root_cause(&e)) })?;
+                .map_err(|e| ApiError {
+                    status: None,
+                    message: format!("Couldn't reach GitHub: {}", root_cause(&e)),
+                })?;
             self.record_rate(resp.headers());
             let status = resp.status();
-            let rate_limited = resp.headers().get("x-ratelimit-remaining").and_then(|v| v.to_str().ok()).is_some_and(|v| v == "0");
+            let rate_limited = resp
+                .headers()
+                .get("x-ratelimit-remaining")
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|v| v == "0");
             if attempt == 0 && refused(status, rate_limited) {
                 // As in get_page: a changed login gets one more try.
                 self.forget_token();
-                if self.token().await.is_some_and(|fresh| status == StatusCode::UNAUTHORIZED || fresh.value != token.value) {
+                if self.token().await.is_some_and(|fresh| {
+                    status == StatusCode::UNAUTHORIZED || fresh.value != token.value
+                }) {
                     continue;
                 }
             }
@@ -788,11 +975,23 @@ impl Client {
             if status.is_success() {
                 return Ok(body);
             }
-            let message = serde_json::from_slice::<ApiErrorBody>(&body).map(|b| b.message).unwrap_or_default();
-            let message = if message.is_empty() { format!("GitHub returned {status}") } else { message };
-            return Err(ApiError { status: Some(status), message });
+            let message = serde_json::from_slice::<ApiErrorBody>(&body)
+                .map(|b| b.message)
+                .unwrap_or_default();
+            let message = if message.is_empty() {
+                format!("GitHub returned {status}")
+            } else {
+                message
+            };
+            return Err(ApiError {
+                status: Some(status),
+                message,
+            });
         }
-        Err(ApiError { status: Some(StatusCode::UNAUTHORIZED), message: "GitHub rejected the token.".into() })
+        Err(ApiError {
+            status: Some(StatusCode::UNAUTHORIZED),
+            message: "GitHub rejected the token.".into(),
+        })
     }
 
     /// The accounts the GitHub CLI is signed in to on this server.
@@ -820,13 +1019,19 @@ impl Client {
             .await
             .map_err(|e| format!("Couldn't run the GitHub CLI (gh): {e}"))?;
         // It exits 1 when an account has a problem, but still lists them all.
-        let status: Status = serde_json::from_slice(&out.stdout)
-            .map_err(|_| "The GitHub CLI (gh) couldn't list its accounts. It needs gh 2.40 or newer.".to_string())?;
+        let status: Status = serde_json::from_slice(&out.stdout).map_err(|_| {
+            "The GitHub CLI (gh) couldn't list its accounts. It needs gh 2.40 or newer.".to_string()
+        })?;
         Ok(status
             .hosts
             .into_values()
             .flatten()
-            .map(|a| Account { ok: a.state.is_empty() || a.state == "success", login: a.login, gh_active: a.active, scopes: a.scopes.unwrap_or_default() })
+            .map(|a| Account {
+                ok: a.state.is_empty() || a.state == "success",
+                login: a.login,
+                gh_active: a.active,
+                scopes: a.scopes.unwrap_or_default(),
+            })
             .collect())
     }
 
@@ -846,34 +1051,66 @@ impl Client {
 
 /// GitHub turning the login away (not a rate limit): bad token, missing permission, or hidden.
 fn refused(status: StatusCode, rate_limited: bool) -> bool {
-    status == StatusCode::UNAUTHORIZED || (!rate_limited && (status == StatusCode::FORBIDDEN || status == StatusCode::NOT_FOUND))
+    status == StatusCode::UNAUTHORIZED
+        || (!rate_limited && (status == StatusCode::FORBIDDEN || status == StatusCode::NOT_FOUND))
 }
 
 fn data_token_source(client: &Client) -> String {
-    client.token.lock().unwrap().as_ref().map(|t| t.source.clone()).unwrap_or_default()
+    client
+        .token
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|t| t.source.clone())
+        .unwrap_or_default()
 }
 
 /// Turns API failures into a sentence and, where possible, the command that fixes it.
-fn explain(kind: ScopeKind, name: &str, e: &ApiError, token_source: &str) -> (String, Option<String>) {
-    explain_doing(kind, name, e, token_source, &format!("Reading {name}'s runners"))
+fn explain(
+    kind: ScopeKind,
+    name: &str,
+    e: &ApiError,
+    token_source: &str,
+) -> (String, Option<String>) {
+    explain_doing(
+        kind,
+        name,
+        e,
+        token_source,
+        &format!("Reading {name}'s runners"),
+    )
 }
 
 /// Like `explain`, for a specific action ("Registering runners with acme").
-fn explain_doing(kind: ScopeKind, name: &str, e: &ApiError, token_source: &str, doing: &str) -> (String, Option<String>) {
+fn explain_doing(
+    kind: ScopeKind,
+    name: &str,
+    e: &ApiError,
+    token_source: &str,
+    doing: &str,
+) -> (String, Option<String>) {
     let via_gh = token_source == "gh";
     match (kind, e.status.map(|s| s.as_u16())) {
         (_, Some(401)) => (
             "GitHub rejected the token.".into(),
-            Some(if via_gh { "gh auth login".into() } else { "Check GITHUB_TOKEN".into() }),
+            Some(if via_gh {
+                "gh auth login".into()
+            } else {
+                "Check GITHUB_TOKEN".into()
+            }),
         ),
         (ScopeKind::Org, Some(403)) if !e.message.contains("rate limit") => (
             format!("{doing} needs an org admin token with the admin:org scope."),
             via_gh.then(|| "gh auth refresh -h github.com -s admin:org".into()),
         ),
-        (ScopeKind::Org, Some(404)) => (format!("Organization {name} wasn't found, or you aren't an admin of it."), None),
-        (ScopeKind::Repo, Some(403 | 404)) if !e.message.contains("rate limit") => {
-            (format!("{name} wasn't found, or you don't have admin access to it."), None)
-        }
+        (ScopeKind::Org, Some(404)) => (
+            format!("Organization {name} wasn't found, or you aren't an admin of it."),
+            None,
+        ),
+        (ScopeKind::Repo, Some(403 | 404)) if !e.message.contains("rate limit") => (
+            format!("{name} wasn't found, or you don't have admin access to it."),
+            None,
+        ),
         _ => (e.message.clone(), None),
     }
 }
@@ -888,9 +1125,16 @@ fn with_hint((msg, hint): (String, Option<String>)) -> String {
 /// "acme", "org:acme" -> (Org, "acme"); "acme/api", "repo:acme/api" -> (Repo, "acme/api")
 pub fn parse_scope(scope: &str) -> (ScopeKind, String) {
     let s = scope.trim();
-    let s = s.strip_prefix("org:").or_else(|| s.strip_prefix("repo:")).unwrap_or(s);
+    let s = s
+        .strip_prefix("org:")
+        .or_else(|| s.strip_prefix("repo:"))
+        .unwrap_or(s);
     let name = crate::config::strip_github_url(s);
-    let kind = if name.contains('/') { ScopeKind::Repo } else { ScopeKind::Org };
+    let kind = if name.contains('/') {
+        ScopeKind::Repo
+    } else {
+        ScopeKind::Org
+    };
     (kind, name)
 }
 
@@ -903,30 +1147,54 @@ fn scope_path(kind: ScopeKind, name: &str) -> String {
 
 /// `MUXEN_GITHUB_TOKEN`, `GITHUB_TOKEN` or `GH_TOKEN`, which win over any login.
 fn env_token() -> Option<Token> {
-    ["MUXEN_GITHUB_TOKEN", "OPENRUNNER_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"].into_iter().find_map(|var| {
+    [
+        "MUXEN_GITHUB_TOKEN",
+        "OPENRUNNER_GITHUB_TOKEN",
+        "GITHUB_TOKEN",
+        "GH_TOKEN",
+    ]
+    .into_iter()
+    .find_map(|var| {
         let v = std::env::var(var).ok()?;
-        (!v.trim().is_empty()).then(|| Token { value: v.trim().to_string(), source: var.to_string(), fetched: Instant::now() })
+        (!v.trim().is_empty()).then(|| Token {
+            value: v.trim().to_string(),
+            source: var.to_string(),
+            fetched: Instant::now(),
+        })
     })
 }
 
 /// `gh auth token` here, for `account`, else the GitHub CLI's active account.
 async fn gh_token(hostname: &str, account: &str) -> Option<Token> {
     let mut cmd = tokio::process::Command::new(gh_program());
-    cmd.args(["auth", "token", "--hostname", hostname]).kill_on_drop(true);
+    cmd.args(["auth", "token", "--hostname", hostname])
+        .kill_on_drop(true);
     if !account.is_empty() {
         cmd.args(["--user", account]);
     }
     // A locked keyring can make gh wait indefinitely.
-    let out = tokio::time::timeout(Duration::from_secs(10), cmd.output()).await.ok()?.ok()?;
+    let out = tokio::time::timeout(Duration::from_secs(10), cmd.output())
+        .await
+        .ok()?
+        .ok()?;
     let value = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    (out.status.success() && !value.is_empty()).then(|| Token { value, source: "gh".into(), fetched: Instant::now() })
+    (out.status.success() && !value.is_empty()).then(|| Token {
+        value,
+        source: "gh".into(),
+        fetched: Instant::now(),
+    })
 }
 
 /// `gh` from PATH, or from where installers usually put it. Apps started from
 /// Finder, the Dock or a desktop launcher get a minimal PATH without Homebrew.
 fn gh_program() -> std::path::PathBuf {
     let on_path = std::env::var_os("PATH")
-        .map(|p| std::env::split_paths(&p).any(|dir| dir.join(if cfg!(windows) { "gh.exe" } else { "gh" }).is_file()))
+        .map(|p| {
+            std::env::split_paths(&p).any(|dir| {
+                dir.join(if cfg!(windows) { "gh.exe" } else { "gh" })
+                    .is_file()
+            })
+        })
         .unwrap_or(false);
     if on_path {
         return "gh".into();
@@ -942,18 +1210,29 @@ fn gh_program() -> std::path::PathBuf {
         home.join("bin/gh"),
         r"C:\Program Files\GitHub CLI\gh.exe".into(),
     ];
-    candidates.into_iter().find(|p| p.is_file()).unwrap_or_else(|| "gh".into())
+    candidates
+        .into_iter()
+        .find(|p| p.is_file())
+        .unwrap_or_else(|| "gh".into())
 }
 
 fn next_link(header: &str) -> Option<String> {
     header.split(',').find_map(|part| {
         let (url, rel) = part.split_once(';')?;
-        rel.contains("rel=\"next\"").then(|| url.trim().trim_start_matches('<').trim_end_matches('>').to_string())
+        rel.contains("rel=\"next\"").then(|| {
+            url.trim()
+                .trim_start_matches('<')
+                .trim_end_matches('>')
+                .to_string()
+        })
     })
 }
 
 fn decode_error(url: &str, e: serde_json::Error) -> ApiError {
-    ApiError { status: None, message: format!("Unexpected response from {url}: {e}") }
+    ApiError {
+        status: None,
+        message: format!("Unexpected response from {url}: {e}"),
+    }
 }
 
 fn root_cause(e: &(dyn std::error::Error + 'static)) -> String {
@@ -968,14 +1247,23 @@ fn root_cause(e: &(dyn std::error::Error + 'static)) -> String {
 /// isn't waiting for one of our machines.
 pub fn is_github_hosted_label(label: &str) -> bool {
     let l = label.to_ascii_lowercase();
-    ["ubuntu-", "windows-", "macos-"].iter().any(|p| l.starts_with(p))
+    ["ubuntu-", "windows-", "macos-"]
+        .iter()
+        .any(|p| l.starts_with(p))
 }
 
 /// "https://github.com/acme" -> "acme", "https://github.com/acme/api" -> "acme/api"
 pub fn scope_from_runner_url(url: &str) -> Option<String> {
-    let rest = url.trim().strip_prefix("https://").or_else(|| url.trim().strip_prefix("http://"))?;
+    let rest = url
+        .trim()
+        .strip_prefix("https://")
+        .or_else(|| url.trim().strip_prefix("http://"))?;
     let (_, path) = rest.split_once('/')?;
-    let parts: Vec<&str> = path.trim_matches('/').split('/').filter(|p| !p.is_empty()).collect();
+    let parts: Vec<&str> = path
+        .trim_matches('/')
+        .split('/')
+        .filter(|p| !p.is_empty())
+        .collect();
     match parts.as_slice() {
         ["enterprises", ..] => None,
         [org] => Some(org.to_string()),
@@ -991,29 +1279,56 @@ mod tests {
     #[test]
     fn parses_link_header() {
         let h = r#"<https://api.github.com/orgs/acme/actions/runners?page=2>; rel="next", <https://api.github.com/orgs/acme/actions/runners?page=5>; rel="last""#;
-        assert_eq!(next_link(h).as_deref(), Some("https://api.github.com/orgs/acme/actions/runners?page=2"));
+        assert_eq!(
+            next_link(h).as_deref(),
+            Some("https://api.github.com/orgs/acme/actions/runners?page=2")
+        );
         assert_eq!(next_link(r#"<x>; rel="prev""#), None);
     }
 
     #[test]
     fn scopes_from_urls() {
-        assert_eq!(scope_from_runner_url("https://github.com/acme").as_deref(), Some("acme"));
-        assert_eq!(scope_from_runner_url("https://github.com/acme/api/").as_deref(), Some("acme/api"));
-        assert_eq!(scope_from_runner_url("https://github.com/enterprises/big"), None);
+        assert_eq!(
+            scope_from_runner_url("https://github.com/acme").as_deref(),
+            Some("acme")
+        );
+        assert_eq!(
+            scope_from_runner_url("https://github.com/acme/api/").as_deref(),
+            Some("acme/api")
+        );
+        assert_eq!(
+            scope_from_runner_url("https://github.com/enterprises/big"),
+            None
+        );
     }
 
     #[test]
     fn parses_scopes() {
         assert_eq!(parse_scope("org:acme"), (ScopeKind::Org, "acme".into()));
-        assert_eq!(parse_scope("repo:acme/api"), (ScopeKind::Repo, "acme/api".into()));
-        assert_eq!(parse_scope(" https://github.com/acme/api "), (ScopeKind::Repo, "acme/api".into()));
+        assert_eq!(
+            parse_scope("repo:acme/api"),
+            (ScopeKind::Repo, "acme/api".into())
+        );
+        assert_eq!(
+            parse_scope(" https://github.com/acme/api "),
+            (ScopeKind::Repo, "acme/api".into())
+        );
         assert_eq!(scope_path(ScopeKind::Org, "acme"), "/orgs/acme");
     }
 
     #[test]
     fn explains_registration_errors() {
-        let e = ApiError { status: Some(StatusCode::FORBIDDEN), message: "Resource not accessible".into() };
-        let msg = with_hint(explain_doing(ScopeKind::Org, "acme", &e, "gh", "Registering runners with acme"));
+        let e = ApiError {
+            status: Some(StatusCode::FORBIDDEN),
+            message: "Resource not accessible".into(),
+        };
+        let msg = with_hint(explain_doing(
+            ScopeKind::Org,
+            "acme",
+            &e,
+            "gh",
+            "Registering runners with acme",
+        ));
         assert_eq!(
             msg,
             "Registering runners with acme needs an org admin token with the admin:org scope. Run `gh auth refresh -h github.com -s admin:org`."
@@ -1022,9 +1337,15 @@ mod tests {
 
     #[test]
     fn explains_org_permission_errors() {
-        let e = ApiError { status: Some(StatusCode::FORBIDDEN), message: "Must have admin rights".into() };
+        let e = ApiError {
+            status: Some(StatusCode::FORBIDDEN),
+            message: "Must have admin rights".into(),
+        };
         let (msg, hint) = explain(ScopeKind::Org, "acme", &e, "gh");
         assert!(msg.contains("admin:org"));
-        assert_eq!(hint.as_deref(), Some("gh auth refresh -h github.com -s admin:org"));
+        assert_eq!(
+            hint.as_deref(),
+            Some("gh auth refresh -h github.com -s admin:org")
+        );
     }
 }

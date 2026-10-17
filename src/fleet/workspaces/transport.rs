@@ -21,8 +21,7 @@ use crate::probe;
 /// sh-family login shells read the script from stdin as a login shell; anything
 /// else (fish, nushell, xonsh) falls back to a login `sh`. Valid in every one
 /// of those shells, since ssh hands the remote command to the user's shell.
-const LOGIN_WRAPPER: &str =
-    r#"case "$SHELL" in */bash|*/zsh|*/sh|*/ksh|*/dash) exec "$SHELL" -l -s;; *) exec sh -l -s;; esac"#;
+const LOGIN_WRAPPER: &str = r#"case "$SHELL" in */bash|*/zsh|*/sh|*/ksh|*/dash) exec "$SHELL" -l -s;; *) exec sh -l -s;; esac"#;
 /// After the script reports its exit status, give stragglers holding the
 /// output pipes (a server the command left running) this long, then hang up.
 const AFTER_EXIT_GRACE: Duration = Duration::from_secs(2);
@@ -37,8 +36,16 @@ pub struct Limits {
 }
 
 impl Limits {
-    pub const OUTPUT: Limits = Limits { head: 16 * 1024, tail: 48 * 1024, line: 16 * 1024 };
-    pub const DATA: Limits = Limits { head: 8 * 1024 * 1024, tail: 0, line: 8 * 1024 * 1024 };
+    pub const OUTPUT: Limits = Limits {
+        head: 16 * 1024,
+        tail: 48 * 1024,
+        line: 16 * 1024,
+    };
+    pub const DATA: Limits = Limits {
+        head: 8 * 1024 * 1024,
+        tail: 0,
+        line: 8 * 1024 * 1024,
+    };
 }
 
 #[derive(Debug, Default)]
@@ -62,7 +69,12 @@ impl Output {
     pub fn reason(&self) -> String {
         // PowerShell's errors arrive as CLIXML when stderr isn't a terminal: their text.
         let stderr = clixml_text(&self.stderr);
-        let lines: Vec<&str> = stderr.lines().chain(self.preamble.lines()).map(str::trim).filter(|l| !l.is_empty() && !l.starts_with("At line:") && !l.starts_with('+')).collect();
+        let lines: Vec<&str> = stderr
+            .lines()
+            .chain(self.preamble.lines())
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with("At line:") && !l.starts_with('+'))
+            .collect();
         if let Some(e) = lines.iter().find_map(|l| l.strip_prefix("error: ")) {
             return e.to_string();
         }
@@ -84,7 +96,15 @@ pub fn clixml_text(stderr: &str) -> String {
     let mut out = String::new();
     for part in stderr.split("<S S=\"Error\">").skip(1) {
         let text = part.split("</S>").next().unwrap_or("");
-        out.push_str(&text.replace("_x000D__x000A_", "\n").replace("&apos;", "'").replace("&quot;", "\"").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&"));
+        out.push_str(
+            &text
+                .replace("_x000D__x000A_", "\n")
+                .replace("&apos;", "'")
+                .replace("&quot;", "\"")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&amp;", "&"),
+        );
     }
     out
 }
@@ -96,7 +116,9 @@ pub fn new_marker() -> String {
 /// Prepends the marker preamble for `windows` (PowerShell) or sh scripts.
 pub fn with_marker(marker: &str, windows: bool, script: &str) -> String {
     if windows {
-        format!("$OR_MARK = '{marker}'\nWrite-Output $OR_MARK\n[Console]::Error.WriteLine($OR_MARK)\n{script}")
+        format!(
+            "$OR_MARK = '{marker}'\nWrite-Output $OR_MARK\n[Console]::Error.WriteLine($OR_MARK)\n{script}"
+        )
     } else {
         // zsh as a login shell: behave like sh for the rest of the script.
         format!(
@@ -120,7 +142,10 @@ fn command(spec: &MachineSpec, windows: bool) -> Command {
         let mut c = Command::new("ssh");
         c.args(probe::ssh_args(spec));
         c.arg(if windows {
-            format!("powershell {}", crate::ops::remote::ps_stdin_args().join(" "))
+            format!(
+                "powershell {}",
+                crate::ops::remote::ps_stdin_args().join(" ")
+            )
         } else {
             format!("sh -c '{LOGIN_WRAPPER}'")
         });
@@ -146,7 +171,8 @@ pub async fn run(
     // that stream their output (operation logs) and big uploads still use ssh.
     if !windows && !spec.is_local() && on_line.is_none() && script.len() < 8 << 20 {
         if let Some(link) = crate::fleet::link::get(spec).await {
-            let req = serde_json::json!({ "op": "sh", "script": script, "timeout": timeout.as_secs() });
+            let req =
+                serde_json::json!({ "op": "sh", "script": script, "timeout": timeout.as_secs() });
             if let Ok(reply) = link.request(req, timeout + Duration::from_secs(10)).await {
                 if reply["ok"].as_bool() == Some(true) {
                     return Ok(from_link(marker, limits, secrets, &reply));
@@ -155,9 +181,16 @@ pub async fn run(
         }
     }
     let mut cmd = command(spec, windows);
-    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
     let mut child = cmd.spawn().map_err(|e| {
-        if spec.is_local() { format!("Couldn't start a shell: {e}") } else { format!("Couldn't run ssh: {e}") }
+        if spec.is_local() {
+            format!("Couldn't start a shell: {e}")
+        } else {
+            format!("Couldn't run ssh: {e}")
+        }
     })?;
     let mut stdin = child.stdin.take().ok_or("No stdin for the script")?;
     let mut stdout = child.stdout.take().ok_or("No stdout for the script")?;
@@ -168,7 +201,11 @@ pub async fn run(
 
     let work = async {
         // The script is small (or a bounded file upload); write it whole, then close stdin.
-        let script = if windows { crate::ops::remote::ps_sendable(&script) } else { script };
+        let script = if windows {
+            crate::ops::remote::ps_sendable(&script)
+        } else {
+            script
+        };
         let writer = async {
             let _ = stdin.write_all(script.as_bytes()).await;
             drop(stdin);
@@ -238,7 +275,12 @@ pub async fn run(
 }
 
 /// A script's result from the agent's link, read the same way as ssh output.
-fn from_link(marker: &str, limits: Limits, secrets: &[String], reply: &serde_json::Value) -> Output {
+fn from_link(
+    marker: &str,
+    limits: Limits,
+    secrets: &[String],
+    reply: &serde_json::Value,
+) -> Output {
     let mut out = Collector::new(marker, limits, secrets, false);
     let mut err = Collector::new(marker, Limits::OUTPUT, secrets, true);
     out.push(reply["stdout"].as_str().unwrap_or("").as_bytes(), None);
@@ -329,7 +371,11 @@ impl<'a> Collector<'a> {
     /// Until the marker shows up, lines may be login-profile noise or the marker
     /// itself, so a tiny cap can't be allowed to cut the marker.
     fn line_cap(&self) -> usize {
-        if self.started { self.limits.line } else { self.limits.line.max(4096) }
+        if self.started {
+            self.limits.line
+        } else {
+            self.limits.line.max(4096)
+        }
     }
 
     fn finish(&mut self, on_line: Option<&(dyn Fn(&str) + Send + Sync)>) {
@@ -411,7 +457,10 @@ impl<'a> Collector<'a> {
         let mut lines: Vec<&str> = self.head.iter().map(String::as_str).collect();
         let note;
         if self.dropped_bytes > 0 {
-            note = format!("[… {} of output omitted …]", crate::util::bytes(self.dropped_bytes as u64));
+            note = format!(
+                "[… {} of output omitted …]",
+                crate::util::bytes(self.dropped_bytes as u64)
+            );
             lines.push(&note);
         }
         lines.extend(self.tail.iter().map(String::as_str));
@@ -423,7 +472,12 @@ impl<'a> Collector<'a> {
 mod tests {
     use super::*;
 
-    fn collect(marker: &str, limits: Limits, input: &str, stderr: bool) -> (Collector<'static>, String, bool) {
+    fn collect(
+        marker: &str,
+        limits: Limits,
+        input: &str,
+        stderr: bool,
+    ) -> (Collector<'static>, String, bool) {
         let marker: &'static str = Box::leak(marker.to_string().into_boxed_str());
         let mut c = Collector::new(marker, limits, &[], stderr);
         c.push(input.as_bytes(), None);
@@ -435,13 +489,27 @@ mod tests {
     #[test]
     fn drops_profile_noise_and_reads_markers() {
         let m = "__muxen_test__";
-        let (c, text, _) = collect(m, Limits::OUTPUT, &format!("Welcome!{m}\nreal error\nlast{m}:exit=3\n"), true);
+        let (c, text, _) = collect(
+            m,
+            Limits::OUTPUT,
+            &format!("Welcome!{m}\nreal error\nlast{m}:exit=3\n"),
+            true,
+        );
         assert!(c.started);
-        assert_eq!(c.preamble, Vec::<String>::new(), "noise on the marker's line is dropped");
+        assert_eq!(
+            c.preamble,
+            Vec::<String>::new(),
+            "noise on the marker's line is dropped"
+        );
         assert_eq!(c.exit, Some(3));
         assert_eq!(text, "real error\nlast");
 
-        let (c, text, _) = collect(m, Limits::OUTPUT, &format!("motd line\n{m}\n\u{1b}[31mred\u{1b}[0m\n{m}:timeout\n"), true);
+        let (c, text, _) = collect(
+            m,
+            Limits::OUTPUT,
+            &format!("motd line\n{m}\n\u{1b}[31mred\u{1b}[0m\n{m}:timeout\n"),
+            true,
+        );
         assert_eq!(c.preamble, vec!["motd line"]);
         assert!(c.timed_out);
         assert_eq!(text, "red");
@@ -450,7 +518,11 @@ mod tests {
     #[test]
     fn caps_long_output_keeping_head_and_tail() {
         let m = "__muxen_cap__";
-        let limits = Limits { head: 20, tail: 20, line: 1000 };
+        let limits = Limits {
+            head: 20,
+            tail: 20,
+            line: 1000,
+        };
         let body: String = (0..100).map(|i| format!("line {i:03}\n")).collect();
         let (_, text, truncated) = collect(m, limits, &format!("{m}\n{body}"), false);
         assert!(truncated);
@@ -462,8 +534,13 @@ mod tests {
     #[test]
     fn cuts_huge_lines() {
         let m = "__muxen_line__";
-        let limits = Limits { head: 1 << 20, tail: 0, line: 10 };
-        let (_, text, truncated) = collect(m, limits, &format!("{m}\n{}\nok\n", "x".repeat(50)), false);
+        let limits = Limits {
+            head: 1 << 20,
+            tail: 0,
+            line: 10,
+        };
+        let (_, text, truncated) =
+            collect(m, limits, &format!("{m}\n{}\nok\n", "x".repeat(50)), false);
         assert!(truncated);
         assert_eq!(text, "xxxxxxxxxx\nok");
     }

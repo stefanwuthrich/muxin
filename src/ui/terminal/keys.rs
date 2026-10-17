@@ -23,17 +23,37 @@ pub fn to_bytes(ks: &Keystroke, mode: TermMode) -> Option<Vec<u8>> {
         }
     };
     let tilde = |n: u8| -> Vec<u8> {
-        if param > 1 { format!("\x1b[{n};{param}~").into_bytes() } else { format!("\x1b[{n}~").into_bytes() }
+        if param > 1 {
+            format!("\x1b[{n};{param}~").into_bytes()
+        } else {
+            format!("\x1b[{n}~").into_bytes()
+        }
     };
     let meta = |bytes: &[u8]| -> Vec<u8> {
-        if m.alt { [b"\x1b".as_slice(), bytes].concat() } else { bytes.to_vec() }
+        if m.alt {
+            [b"\x1b".as_slice(), bytes].concat()
+        } else {
+            bytes.to_vec()
+        }
     };
 
     let named = match ks.key.as_str() {
         // Shift/Option+Enter: a newline in Claude Code, Codex and friends.
-        "enter" => Some(if m.shift || m.alt { b"\x1b\r".to_vec() } else { b"\r".to_vec() }),
-        "backspace" => Some(if m.control { b"\x08".to_vec() } else { meta(b"\x7f") }),
-        "tab" => Some(if m.shift { b"\x1b[Z".to_vec() } else { b"\t".to_vec() }),
+        "enter" => Some(if m.shift || m.alt {
+            b"\x1b\r".to_vec()
+        } else {
+            b"\r".to_vec()
+        }),
+        "backspace" => Some(if m.control {
+            b"\x08".to_vec()
+        } else {
+            meta(b"\x7f")
+        }),
+        "tab" => Some(if m.shift {
+            b"\x1b[Z".to_vec()
+        } else {
+            b"\t".to_vec()
+        }),
         "escape" => Some(meta(b"\x1b")),
         "space" if m.control => Some(b"\x00".to_vec()),
         "space" => Some(meta(b" ")),
@@ -49,7 +69,11 @@ pub fn to_bytes(ks: &Keystroke, mode: TermMode) -> Option<Vec<u8>> {
         "pagedown" => Some(tilde(6)),
         "f1" | "f2" | "f3" | "f4" => {
             let letter = (b'P' + ks.key.as_bytes()[1] - b'1') as char;
-            Some(if param > 1 { format!("\x1b[1;{param}{letter}").into_bytes() } else { format!("\x1bO{letter}").into_bytes() })
+            Some(if param > 1 {
+                format!("\x1b[1;{param}{letter}").into_bytes()
+            } else {
+                format!("\x1bO{letter}").into_bytes()
+            })
         }
         "f5" => Some(tilde(15)),
         "f6" => Some(tilde(17)),
@@ -68,7 +92,9 @@ pub fn to_bytes(ks: &Keystroke, mode: TermMode) -> Option<Vec<u8>> {
     let key = ks.key.as_str();
     if m.control {
         let code = match key {
-            k if k.len() == 1 && k.as_bytes()[0].is_ascii_alphabetic() => Some(k.as_bytes()[0].to_ascii_lowercase() - b'a' + 1),
+            k if k.len() == 1 && k.as_bytes()[0].is_ascii_alphabetic() => {
+                Some(k.as_bytes()[0].to_ascii_lowercase() - b'a' + 1)
+            }
             "@" | "2" => Some(0),
             "[" | "3" => Some(27),
             "\\" | "4" => Some(28),
@@ -84,7 +110,11 @@ pub fn to_bytes(ks: &Keystroke, mode: TermMode) -> Option<Vec<u8>> {
     }
     if m.alt {
         // Option composes characters on macOS ("∫" for b); send Meta+key instead.
-        let base = if m.shift && key.len() == 1 { key.to_uppercase() } else { key.to_string() };
+        let base = if m.shift && key.len() == 1 {
+            key.to_uppercase()
+        } else {
+            key.to_string()
+        };
         if base.chars().count() == 1 {
             return Some(meta(base.as_bytes()));
         }
@@ -124,12 +154,18 @@ mod tests {
         assert_eq!(to_bytes(&ks("ctrl-c"), none).unwrap(), b"\x03");
         assert_eq!(to_bytes(&ks("escape"), none).unwrap(), b"\x1b");
         assert_eq!(to_bytes(&ks("up"), none).unwrap(), b"\x1b[A");
-        assert_eq!(to_bytes(&ks("up"), TermMode::APP_CURSOR).unwrap(), b"\x1bOA");
+        assert_eq!(
+            to_bytes(&ks("up"), TermMode::APP_CURSOR).unwrap(),
+            b"\x1bOA"
+        );
         assert_eq!(to_bytes(&ks("alt-left"), none).unwrap(), b"\x1b[1;3D");
         assert_eq!(to_bytes(&ks("alt-b"), none).unwrap(), b"\x1bb");
         assert_eq!(to_bytes(&ks("shift-tab"), none).unwrap(), b"\x1b[Z");
         assert_eq!(to_bytes(&ks("f5"), none).unwrap(), b"\x1b[15~");
         assert!(to_bytes(&ks("cmd-c"), none).is_none());
-        assert_eq!(paste("a\nb", TermMode::BRACKETED_PASTE), b"\x1b[200~a\rb\x1b[201~");
+        assert_eq!(
+            paste("a\nb", TermMode::BRACKETED_PASTE),
+            b"\x1b[200~a\rb\x1b[201~"
+        );
     }
 }

@@ -5,7 +5,10 @@
 //! its sides. Where the system draws the frame (macOS, Windows, X11) none of
 //! this shows.
 
-use gpui::{AnyElement, App, CursorStyle, Decorations, ElementId, MouseButton, MouseDownEvent, ResizeEdge, Tiling, Window, WindowDecorations, div, prelude::*, px};
+use gpui::{
+    AnyElement, App, CursorStyle, Decorations, ElementId, MouseButton, MouseDownEvent, ResizeEdge,
+    Tiling, Window, WindowDecorations, div, prelude::*, px,
+};
 
 use super::kit::Button;
 
@@ -17,7 +20,8 @@ const CORNER: f32 = 12.;
 /// has no other; GPUI can't tell when the compositor gives none), the way Zed
 /// does; elsewhere the system's.
 pub fn requested() -> Option<WindowDecorations> {
-    let wayland = cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some_and(|d| !d.is_empty());
+    let wayland = cfg!(target_os = "linux")
+        && std::env::var_os("WAYLAND_DISPLAY").is_some_and(|d| !d.is_empty());
     wayland.then_some(WindowDecorations::Client)
 }
 
@@ -46,7 +50,11 @@ pub fn window_buttons(window: &Window, _cx: &App) -> Option<AnyElement> {
             .gap(px(2.))
             .ml(px(4.))
             .when(controls.minimize, |d| {
-                d.child(Button::icon_only("window-minimize", "minus").tooltip("Minimize").on_click(|_, window, _| window.minimize_window()))
+                d.child(
+                    Button::icon_only("window-minimize", "minus")
+                        .tooltip("Minimize")
+                        .on_click(|_, window, _| window.minimize_window()),
+                )
             })
             .when(controls.maximize, |d| {
                 d.child(
@@ -55,7 +63,11 @@ pub fn window_buttons(window: &Window, _cx: &App) -> Option<AnyElement> {
                         .on_click(|_, window, _| window.zoom_window()),
                 )
             })
-            .child(Button::icon_only("window-close", "x").tooltip("Close").on_click(|_, window, _| window.remove_window()))
+            .child(
+                Button::icon_only("window-close", "x")
+                    .tooltip("Close")
+                    .on_click(|_, window, _| window.remove_window()),
+            )
             .into_any_element(),
     )
 }
@@ -71,42 +83,130 @@ pub fn title_bar_menu(e: &MouseDownEvent, window: &mut Window) {
 /// be `relative`): none when it fills the screen, or along a side it's tiled
 /// against.
 pub fn resize_edges(window: &Window) -> Vec<AnyElement> {
-    let Decorations::Client { tiling } = window.window_decorations() else { return Vec::new() };
+    let Decorations::Client { tiling } = window.window_decorations() else {
+        return Vec::new();
+    };
     if !cfg!(target_os = "linux") || window.is_maximized() || window.is_fullscreen() {
         return Vec::new();
     }
-    let Tiling { top, left, right, bottom } = tiling;
+    let Tiling {
+        top,
+        left,
+        right,
+        bottom,
+    } = tiling;
     let grip = |id: &'static str, edge: ResizeEdge, cursor: CursorStyle| {
-        div().id(ElementId::Name(id.into())).absolute().occlude().cursor(cursor).on_mouse_down(MouseButton::Left, move |_, window, cx| {
-            cx.stop_propagation();
-            window.start_window_resize(edge);
-        })
+        div()
+            .id(ElementId::Name(id.into()))
+            .absolute()
+            .occlude()
+            .cursor(cursor)
+            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                cx.stop_propagation();
+                window.start_window_resize(edge);
+            })
     };
     let mut out = Vec::new();
     if !top {
-        out.push(grip("resize-top", ResizeEdge::Top, CursorStyle::ResizeUpDown).top_0().left(px(CORNER)).right(px(CORNER)).h(px(EDGE)).into_any_element());
+        out.push(
+            grip("resize-top", ResizeEdge::Top, CursorStyle::ResizeUpDown)
+                .top_0()
+                .left(px(CORNER))
+                .right(px(CORNER))
+                .h(px(EDGE))
+                .into_any_element(),
+        );
     }
     if !bottom {
-        out.push(grip("resize-bottom", ResizeEdge::Bottom, CursorStyle::ResizeUpDown).bottom_0().left(px(CORNER)).right(px(CORNER)).h(px(EDGE)).into_any_element());
+        out.push(
+            grip(
+                "resize-bottom",
+                ResizeEdge::Bottom,
+                CursorStyle::ResizeUpDown,
+            )
+            .bottom_0()
+            .left(px(CORNER))
+            .right(px(CORNER))
+            .h(px(EDGE))
+            .into_any_element(),
+        );
     }
     if !left {
-        out.push(grip("resize-left", ResizeEdge::Left, CursorStyle::ResizeLeftRight).left_0().top(px(CORNER)).bottom(px(CORNER)).w(px(EDGE)).into_any_element());
+        out.push(
+            grip(
+                "resize-left",
+                ResizeEdge::Left,
+                CursorStyle::ResizeLeftRight,
+            )
+            .left_0()
+            .top(px(CORNER))
+            .bottom(px(CORNER))
+            .w(px(EDGE))
+            .into_any_element(),
+        );
     }
     if !right {
-        out.push(grip("resize-right", ResizeEdge::Right, CursorStyle::ResizeLeftRight).right_0().top(px(CORNER)).bottom(px(CORNER)).w(px(EDGE)).into_any_element());
+        out.push(
+            grip(
+                "resize-right",
+                ResizeEdge::Right,
+                CursorStyle::ResizeLeftRight,
+            )
+            .right_0()
+            .top(px(CORNER))
+            .bottom(px(CORNER))
+            .w(px(EDGE))
+            .into_any_element(),
+        );
     }
     let corner = |id, edge, cursor| grip(id, edge, cursor).size(px(CORNER));
     if !top && !left {
-        out.push(corner("resize-top-left", ResizeEdge::TopLeft, CursorStyle::ResizeUpLeftDownRight).top_0().left_0().into_any_element());
+        out.push(
+            corner(
+                "resize-top-left",
+                ResizeEdge::TopLeft,
+                CursorStyle::ResizeUpLeftDownRight,
+            )
+            .top_0()
+            .left_0()
+            .into_any_element(),
+        );
     }
     if !top && !right {
-        out.push(corner("resize-top-right", ResizeEdge::TopRight, CursorStyle::ResizeUpRightDownLeft).top_0().right_0().into_any_element());
+        out.push(
+            corner(
+                "resize-top-right",
+                ResizeEdge::TopRight,
+                CursorStyle::ResizeUpRightDownLeft,
+            )
+            .top_0()
+            .right_0()
+            .into_any_element(),
+        );
     }
     if !bottom && !left {
-        out.push(corner("resize-bottom-left", ResizeEdge::BottomLeft, CursorStyle::ResizeUpRightDownLeft).bottom_0().left_0().into_any_element());
+        out.push(
+            corner(
+                "resize-bottom-left",
+                ResizeEdge::BottomLeft,
+                CursorStyle::ResizeUpRightDownLeft,
+            )
+            .bottom_0()
+            .left_0()
+            .into_any_element(),
+        );
     }
     if !bottom && !right {
-        out.push(corner("resize-bottom-right", ResizeEdge::BottomRight, CursorStyle::ResizeUpLeftDownRight).bottom_0().right_0().into_any_element());
+        out.push(
+            corner(
+                "resize-bottom-right",
+                ResizeEdge::BottomRight,
+                CursorStyle::ResizeUpLeftDownRight,
+            )
+            .bottom_0()
+            .right_0()
+            .into_any_element(),
+        );
     }
     out
 }

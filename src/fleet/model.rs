@@ -498,10 +498,23 @@ impl Job {
     /// its labels no runner has.
     pub fn waiting_reason(&self, runners: &[Runner]) -> String {
         if self.matching_online > 0 {
-            return format!("{} runner{} can take it", self.matching_online, if self.matching_online == 1 { "" } else { "s" });
+            return format!(
+                "{} runner{} can take it",
+                self.matching_online,
+                if self.matching_online == 1 { "" } else { "s" }
+            );
         }
-        let anyone_has = |label: &str| runners.iter().any(|r| r.labels.iter().any(|l| l.eq_ignore_ascii_case(label)));
-        let missing: Vec<&str> = self.labels.iter().map(String::as_str).filter(|l| !l.eq_ignore_ascii_case("self-hosted") && !anyone_has(l)).collect();
+        let anyone_has = |label: &str| {
+            runners
+                .iter()
+                .any(|r| r.labels.iter().any(|l| l.eq_ignore_ascii_case(label)))
+        };
+        let missing: Vec<&str> = self
+            .labels
+            .iter()
+            .map(String::as_str)
+            .filter(|l| !l.eq_ignore_ascii_case("self-hosted") && !anyone_has(l))
+            .collect();
         match missing.as_slice() {
             [] if !self.matching.is_empty() => "Its runners are offline".into(),
             [] => "No runner has all its labels".into(),

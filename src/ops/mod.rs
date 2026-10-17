@@ -13,19 +13,19 @@ pub(crate) mod cloud;
 mod docker;
 pub(crate) mod inventory_edit;
 mod power;
-pub(crate) mod vm;
 pub(crate) mod remote;
+pub(crate) mod vm;
 
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::config::{MachineSpec, Settings};
-use crate::fleet::model::Runner;
 use crate::fleet::Engine;
+use crate::fleet::model::Runner;
 use crate::github::scope_from_runner_url;
 use crate::probe::{self, ProbeResult, Shell};
-use remote::{with_params, Param};
+use remote::{Param, with_params};
 
 const INSTALL_SH: &str = include_str!("scripts/install.sh");
 const INSTALL_PS1: &str = include_str!("scripts/install.ps1");
@@ -92,14 +92,27 @@ impl InstallMode {
     }
 
     /// From the API/CLI spelling. `image` and `docker_socket` only apply to docker.
-    pub fn parse(mode: &str, image: Option<String>, docker_socket: bool) -> Result<InstallMode, String> {
-        let image = image.map(|i| i.trim().to_string()).filter(|i| !i.is_empty());
+    pub fn parse(
+        mode: &str,
+        image: Option<String>,
+        docker_socket: bool,
+    ) -> Result<InstallMode, String> {
+        let image = image
+            .map(|i| i.trim().to_string())
+            .filter(|i| !i.is_empty());
         let mode = match mode.trim().to_ascii_lowercase().as_str() {
             "" | "auto" => InstallMode::Auto,
             "service" => InstallMode::Service,
             "background" | "run" => InstallMode::Background,
-            "docker" | "container" => InstallMode::Docker { image: image.clone(), docker_socket },
-            other => return Err(format!("\"{other}\" isn't an install mode. Use auto, service, background or docker.")),
+            "docker" | "container" => InstallMode::Docker {
+                image: image.clone(),
+                docker_socket,
+            },
+            other => {
+                return Err(format!(
+                    "\"{other}\" isn't an install mode. Use auto, service, background or docker."
+                ));
+            }
         };
         if !matches!(mode, InstallMode::Docker { .. }) && (image.is_some() || docker_socket) {
             return Err("image and docker_socket only apply to mode \"docker\".".into());
@@ -110,8 +123,15 @@ impl InstallMode {
 
 /// What `Auto` means on this machine, plus a sentence for the log when the choice
 /// isn't the obvious one.
-pub(crate) fn resolve_mode(mode: &InstallMode, as_service: bool, probe: &ProbeResult) -> (InstallMode, Option<String>) {
-    let docker = || InstallMode::Docker { image: None, docker_socket: false };
+pub(crate) fn resolve_mode(
+    mode: &InstallMode,
+    as_service: bool,
+    probe: &ProbeResult,
+) -> (InstallMode, Option<String>) {
+    let docker = || InstallMode::Docker {
+        image: None,
+        docker_socket: false,
+    };
     match mode {
         InstallMode::Auto if !as_service => (InstallMode::Background, None),
         InstallMode::Auto => match probe.os.as_deref() {
@@ -136,7 +156,9 @@ fn valid_image(image: &str) -> bool {
     !image.is_empty()
         && image.len() <= 255
         && !image.starts_with(['-', '.', '/', ':'])
-        && image.chars().all(|c| c.is_ascii_alphanumeric() || "._-/:@".contains(c))
+        && image
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._-/:@".contains(c))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -147,7 +169,9 @@ pub enum RunnerAction {
     /// Tail the newest _diag log into the operation output (read-only).
     Logs,
     /// Stop, uninstall the service, deregister from GitHub, and drop it from config.toml.
-    Remove { delete_files: bool },
+    Remove {
+        delete_files: bool,
+    },
 }
 
 impl RunnerAction {
@@ -184,7 +208,9 @@ impl Engine {
     /// Starts installing runners. Returns the operation id.
     pub fn install_runners(self: &Arc<Self>, req: InstallRequest) -> Result<u64, String> {
         let req = self.validate_install(req)?;
-        let (spec, probe) = self.machine(&req.machine_id).ok_or("That machine isn't in config.toml anymore.")?;
+        let (spec, probe) = self
+            .machine(&req.machine_id)
+            .ok_or("That machine isn't in config.toml anymore.")?;
         let title = match req.names.as_slice() {
             [one] => format!("Install {one} on {}", spec.name),
             many => format!("Install {} runners on {}", many.len(), spec.name),
@@ -202,9 +228,18 @@ impl Engine {
     }
 
     /// Starts an action on a runner (id as in `Runner::id`). Returns the operation id.
-    pub fn runner_action(self: &Arc<Self>, runner_id: &str, action: RunnerAction) -> Result<u64, String> {
+    pub fn runner_action(
+        self: &Arc<Self>,
+        runner_id: &str,
+        action: RunnerAction,
+    ) -> Result<u64, String> {
         let snap = self.current();
-        let runner = snap.runners.iter().find(|r| r.id == runner_id).cloned().ok_or("That runner isn't in Muxin anymore.")?;
+        let runner = snap
+            .runners
+            .iter()
+            .find(|r| r.id == runner_id)
+            .cloned()
+            .ok_or("That runner isn't in Muxin anymore.")?;
         let machine = runner.machine_id.as_deref().and_then(|id| self.machine(id));
         let reachable = runner
             .machine_id
@@ -218,7 +253,12 @@ impl Engine {
             // The last check may be stale (one that ran while the machine
             // restarted): look again before settling for GitHub alone, which
             // would leave the runner's service and folder on the machine.
-            RunnerAction::Remove { delete_files } if machine.as_ref().is_some_and(|(spec, _)| spec.is_checkable()) && !(reachable && dir.is_some()) => {
+            RunnerAction::Remove { delete_files }
+                if machine
+                    .as_ref()
+                    .is_some_and(|(spec, _)| spec.is_checkable())
+                    && !(reachable && dir.is_some()) =>
+            {
                 Plan::CheckFirst { delete_files }
             }
             RunnerAction::Remove { delete_files } => self.remove_plan(&runner, delete_files)?,
@@ -232,7 +272,14 @@ impl Engine {
                 let dir = dir.clone().ok_or_else(|| {
                     format!("{} wasn't found on {} at the last check. Check the machine again, or install the runner.", runner.name, spec.name)
                 })?;
-                Plan::OnMachine { spec, probe, dir, container, scope: None, delete_files: false }
+                Plan::OnMachine {
+                    spec,
+                    probe,
+                    dir,
+                    container,
+                    scope: None,
+                    delete_files: false,
+                }
             }
         };
 
@@ -248,7 +295,12 @@ impl Engine {
             RunnerAction::Logs => format!("Logs · {}", runner.name),
             other => format!("{} {}", other.label(), runner.name),
         };
-        let op = self.begin_op(action.kind(), title, runner.machine_id.clone(), Some(runner.id.clone()));
+        let op = self.begin_op(
+            action.kind(),
+            title,
+            runner.machine_id.clone(),
+            Some(runner.id.clone()),
+        );
         let me = self.clone();
         self.runtime().spawn(async move {
             let result = match me.demo_world().cloned() {
@@ -264,12 +316,22 @@ impl Engine {
     fn remove_plan(&self, runner: &Runner, delete_files: bool) -> Result<Plan, String> {
         let snap = self.current();
         let machine = runner.machine_id.as_deref().and_then(|id| self.machine(id));
-        let reachable = runner.machine_id.as_deref().and_then(|id| snap.machines.iter().find(|m| m.id == id)).is_some_and(|m| m.status == "online");
+        let reachable = runner
+            .machine_id
+            .as_deref()
+            .and_then(|id| snap.machines.iter().find(|m| m.id == id))
+            .is_some_and(|m| m.status == "online");
         let dir = runner.local.as_ref().map(|l| l.dir.clone());
-        let on_machine = machine.filter(|(spec, _)| spec.is_checkable() && reachable && dir.is_some());
+        let on_machine =
+            machine.filter(|(spec, _)| spec.is_checkable() && reachable && dir.is_some());
         Ok(match on_machine {
             Some((spec, probe)) => {
-                let scope = runner_scope(runner).ok_or_else(|| format!("Muxin doesn't know which GitHub org or repo {} is registered with.", runner.name))?;
+                let scope = runner_scope(runner).ok_or_else(|| {
+                    format!(
+                        "Muxin doesn't know which GitHub org or repo {} is registered with.",
+                        runner.name
+                    )
+                })?;
                 Plan::OnMachine {
                     spec,
                     probe,
@@ -281,7 +343,12 @@ impl Engine {
             }
             None if runner.github.is_some() => Plan::GitHubOnly,
             None if runner.declared => Plan::InventoryOnly,
-            None => return Err(format!("{} isn't on a reachable machine or on GitHub, so there's nothing to remove.", runner.name)),
+            None => {
+                return Err(format!(
+                    "{} isn't on a reachable machine or on GitHub, so there's nothing to remove.",
+                    runner.name
+                ));
+            }
         })
     }
 
@@ -289,18 +356,42 @@ impl Engine {
     /// its jobs, as GitHub cancels whole runs). Returns the operation id.
     pub fn cancel_run(self: &Arc<Self>, job_id: u64) -> Result<u64, String> {
         let snap = self.current();
-        let job = snap.jobs.queued.iter().chain(snap.jobs.running.iter()).find(|j| j.id == job_id).cloned().ok_or("That job isn't queued or running anymore.")?;
+        let job = snap
+            .jobs
+            .queued
+            .iter()
+            .chain(snap.jobs.running.iter())
+            .find(|j| j.id == job_id)
+            .cloned()
+            .ok_or("That job isn't queued or running anymore.")?;
         if self.demo_world().is_some() {
             return Err("The demo can't cancel runs.".into());
         }
-        let op = self.begin_op("cancel-run", format!("Cancel {} in {}", job.workflow, job.repo), None, None);
+        let op = self.begin_op(
+            "cancel-run",
+            format!("Cancel {} in {}", job.workflow, job.repo),
+            None,
+            None,
+        );
         let me = self.clone();
         self.runtime().spawn(async move {
             let settings = me.settings();
-            me.op_log(op, format!("Cancelling run {} of {} ({})", job.run_id, job.workflow, job.repo));
-            let result = me.github().cancel_run(&settings.github, &job.repo, job.run_id).await;
+            me.op_log(
+                op,
+                format!(
+                    "Cancelling run {} of {} ({})",
+                    job.run_id, job.workflow, job.repo
+                ),
+            );
+            let result = me
+                .github()
+                .cancel_run(&settings.github, &job.repo, job.run_id)
+                .await;
             if result.is_ok() {
-                me.op_log(op, "GitHub is cancelling it; its jobs stop in a few seconds.");
+                me.op_log(
+                    op,
+                    "GitHub is cancelling it; its jobs stop in a few seconds.",
+                );
                 me.trigger_sync();
             }
             finish(&me, op, result);
@@ -314,7 +405,11 @@ impl Engine {
         let name = machine.name.trim().to_string();
         let host = machine.host.trim().to_string();
         validate_machine(&name, &host)?;
-        let taken = self.current().machines.iter().any(|m| m.name.eq_ignore_ascii_case(&name));
+        let taken = self
+            .current()
+            .machines
+            .iter()
+            .any(|m| m.name.eq_ignore_ascii_case(&name));
         if taken {
             return Err(format!("You already have a machine called \"{name}\"."));
         }
@@ -341,7 +436,9 @@ impl Engine {
             return Err("That machine isn't in config.toml anymore.".into());
         }
         if self.machine_busy(machine_id) {
-            return Err("An operation is still running on this machine. Wait for it to finish.".into());
+            return Err(
+                "An operation is still running on this machine. Wait for it to finish.".into(),
+            );
         }
         self.forget_machine(machine_id)
     }
@@ -351,11 +448,18 @@ impl Engine {
     pub fn rename_machine(self: &Arc<Self>, machine_id: &str, name: &str) -> Result<(), String> {
         let name = name.trim();
         validate_name(name)?;
-        let (spec, _) = self.machine(machine_id).ok_or("That machine isn't in config.toml anymore.")?;
+        let (spec, _) = self
+            .machine(machine_id)
+            .ok_or("That machine isn't in config.toml anymore.")?;
         if spec.name == name {
             return Ok(());
         }
-        if self.current().machines.iter().any(|m| m.id != spec.id && m.name.eq_ignore_ascii_case(name)) {
+        if self
+            .current()
+            .machines
+            .iter()
+            .any(|m| m.id != spec.id && m.name.eq_ignore_ascii_case(name))
+        {
             return Err(format!("You already have a machine called \"{name}\"."));
         }
         let edit = |text: &str| inventory_edit::rename_machine(text, &spec.id, name);
@@ -381,7 +485,12 @@ impl Engine {
 
     /// Unused runner names for a machine: "<machine-id>-01", "-02", ... skipping taken ones.
     pub fn suggest_runner_names(&self, machine_id: &str, count: usize) -> Vec<String> {
-        let taken: HashSet<String> = self.current().runners.iter().map(|r| r.name.to_ascii_lowercase()).collect();
+        let taken: HashSet<String> = self
+            .current()
+            .runners
+            .iter()
+            .map(|r| r.name.to_ascii_lowercase())
+            .collect();
         (1..)
             .map(|i| format!("{machine_id}-{i:02}"))
             .filter(|n| !taken.contains(&n.to_ascii_lowercase()))
@@ -390,31 +499,56 @@ impl Engine {
     }
 
     fn validate_install(&self, mut req: InstallRequest) -> Result<InstallRequest, String> {
-        let (spec, _) = self.machine(&req.machine_id).ok_or("That machine isn't in config.toml anymore.")?;
+        let (spec, _) = self
+            .machine(&req.machine_id)
+            .ok_or("That machine isn't in config.toml anymore.")?;
         if !spec.is_checkable() {
-            return Err(format!("{} has no host in config.toml, so Muxin can't reach it.", spec.name));
+            return Err(format!(
+                "{} has no host in config.toml, so Muxin can't reach it.",
+                spec.name
+            ));
         }
         if self.machine_busy(&spec.id) {
-            return Err(format!("Another operation is already changing {}. Wait for it to finish.", spec.name));
+            return Err(format!(
+                "Another operation is already changing {}. Wait for it to finish.",
+                spec.name
+            ));
         }
 
         req.scope = crate::config::strip_github_url(&req.scope);
         if req.scope.is_empty() {
             return Err("Pick the GitHub org or repo to register the runners with.".into());
         }
-        if req.scope.split('/').count() > 2 || !req.scope.chars().all(|c| c.is_ascii_alphanumeric() || "-_./".contains(c)) {
+        if req.scope.split('/').count() > 2
+            || !req
+                .scope
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "-_./".contains(c))
+        {
             return Err(format!("\"{}\" isn't an org or owner/repo.", req.scope));
         }
 
-        req.names = req.names.iter().map(|n| n.trim().to_string()).filter(|n| !n.is_empty()).collect();
+        req.names = req
+            .names
+            .iter()
+            .map(|n| n.trim().to_string())
+            .filter(|n| !n.is_empty())
+            .collect();
         if req.names.is_empty() {
             return Err("Give the runner a name.".into());
         }
-        let taken: HashSet<String> = self.current().runners.iter().map(|r| r.name.to_ascii_lowercase()).collect();
+        let taken: HashSet<String> = self
+            .current()
+            .runners
+            .iter()
+            .map(|r| r.name.to_ascii_lowercase())
+            .collect();
         let mut seen = HashSet::new();
         for n in &req.names {
             if !valid_runner_name(n) {
-                return Err(format!("\"{n}\" isn't a valid runner name. Use letters, numbers, '-', '_' and '.'."));
+                return Err(format!(
+                    "\"{n}\" isn't a valid runner name. Use letters, numbers, '-', '_' and '.'."
+                ));
             }
             if !seen.insert(n.to_ascii_lowercase()) {
                 return Err(format!("\"{n}\" is listed twice."));
@@ -424,23 +558,48 @@ impl Engine {
             }
         }
 
-        req.labels = req.labels.iter().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
+        req.labels = req
+            .labels
+            .iter()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect();
         for l in &req.labels {
-            if l.len() > 100 || !l.chars().all(|c| c.is_ascii_alphanumeric() || "-_.:/".contains(c)) {
-                return Err(format!("\"{l}\" isn't a valid label. Use letters, numbers, '-', '_', '.', ':' and '/'."));
+            if l.len() > 100
+                || !l
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "-_.:/".contains(c))
+            {
+                return Err(format!(
+                    "\"{l}\" isn't a valid label. Use letters, numbers, '-', '_', '.', ':' and '/'."
+                ));
             }
         }
-        if let InstallMode::Docker { image: Some(image), .. } = &req.mode {
+        if let InstallMode::Docker {
+            image: Some(image), ..
+        } = &req.mode
+        {
             if !valid_image(image) {
                 return Err(format!("\"{image}\" isn't a Docker image reference."));
             }
         }
-        if matches!(req.mode, InstallMode::Docker { .. }) && (spec.shell == Some(Shell::Powershell)) {
-            return Err(format!("Docker runners need a machine with a POSIX shell; {} uses PowerShell.", spec.name));
+        if matches!(req.mode, InstallMode::Docker { .. }) && (spec.shell == Some(Shell::Powershell))
+        {
+            return Err(format!(
+                "Docker runners need a machine with a POSIX shell; {} uses PowerShell.",
+                spec.name
+            ));
         }
-        req.group = req.group.map(|g| g.trim().to_string()).filter(|g| !g.is_empty() && !g.eq_ignore_ascii_case("default"));
+        req.group = req
+            .group
+            .map(|g| g.trim().to_string())
+            .filter(|g| !g.is_empty() && !g.eq_ignore_ascii_case("default"));
         if let Some(g) = &req.group {
-            if g.len() > 100 || !g.chars().all(|c| c.is_ascii_alphanumeric() || " -_.".contains(c)) {
+            if g.len() > 100
+                || !g
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || " -_.".contains(c))
+            {
                 return Err(format!("\"{g}\" isn't a valid runner group name."));
             }
             if req.scope.contains('/') {
@@ -453,16 +612,27 @@ impl Engine {
 
 /// Host aliases from ~/.ssh/config (no wildcards), for the "Add machine" suggestions.
 pub fn ssh_hosts() -> Vec<String> {
-    let Some(home) = dirs::home_dir() else { return Vec::new() };
-    std::fs::read_to_string(home.join(".ssh").join("config")).map(|t| parse_ssh_hosts(&t)).unwrap_or_default()
+    let Some(home) = dirs::home_dir() else {
+        return Vec::new();
+    };
+    std::fs::read_to_string(home.join(".ssh").join("config"))
+        .map(|t| parse_ssh_hosts(&t))
+        .unwrap_or_default()
 }
 
 /// Git hosting entries in ~/.ssh/config aren't machines you'd put runners on.
 fn is_git_host(name: &str) -> bool {
     let n = name.to_ascii_lowercase();
-    ["github.com", "gitlab.com", "bitbucket.org", "codeberg.org", "ssh.dev.azure.com", "vs-ssh.visualstudio.com"]
-        .iter()
-        .any(|g| n == *g || n.ends_with(&format!(".{g}")))
+    [
+        "github.com",
+        "gitlab.com",
+        "bitbucket.org",
+        "codeberg.org",
+        "ssh.dev.azure.com",
+        "vs-ssh.visualstudio.com",
+    ]
+    .iter()
+    .any(|g| n == *g || n.ends_with(&format!(".{g}")))
 }
 
 fn parse_ssh_hosts(text: &str) -> Vec<String> {
@@ -481,8 +651,15 @@ fn parse_ssh_hosts(text: &str) -> Vec<String> {
             continue;
         }
         let rest = rest.split('#').next().unwrap_or("");
-        for name in rest.split(|c: char| c.is_whitespace() || c == '=').map(|n| n.trim_matches('"')) {
-            if !name.is_empty() && !name.contains(['*', '?', '!']) && !is_git_host(name) && !hosts.iter().any(|h| h == name) {
+        for name in rest
+            .split(|c: char| c.is_whitespace() || c == '=')
+            .map(|n| n.trim_matches('"'))
+        {
+            if !name.is_empty()
+                && !name.contains(['*', '?', '!'])
+                && !is_git_host(name)
+                && !hosts.iter().any(|h| h == name)
+            {
                 hosts.push(name.to_string());
             }
         }
@@ -495,7 +672,14 @@ fn parse_ssh_hosts(text: &str) -> Vec<String> {
 
 enum Plan {
     /// Run the control script on the runner's machine.
-    OnMachine { spec: MachineSpec, probe: Option<ProbeResult>, dir: String, container: Option<String>, scope: Option<String>, delete_files: bool },
+    OnMachine {
+        spec: MachineSpec,
+        probe: Option<ProbeResult>,
+        dir: String,
+        container: Option<String>,
+        scope: Option<String>,
+        delete_files: bool,
+    },
     /// The machine is gone or unreachable: deregister through the GitHub API.
     GitHubOnly,
     /// Remove, but check the runner's machine first and plan from that.
@@ -519,7 +703,8 @@ fn valid_runner_name(n: &str) -> bool {
     !n.is_empty()
         && n.len() <= 64
         && !n.starts_with(['-', '.'])
-        && n.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
+        && n.chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
 }
 
 fn validate_name(name: &str) -> Result<(), String> {
@@ -538,8 +723,15 @@ fn validate_machine(name: &str, host: &str) -> Result<(), String> {
         return Err("Enter an ssh destination (like ci@studio.local or an ~/.ssh/config alias), or \"local\".".into());
     }
     // A leading '-' would be read by ssh as an option.
-    if host.starts_with('-') || host.len() > 255 || !host.chars().all(|c| c.is_ascii_alphanumeric() || "@._-:[]%".contains(c)) {
-        return Err(format!("\"{host}\" isn't an ssh destination Muxin can use."));
+    if host.starts_with('-')
+        || host.len() > 255
+        || !host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "@._-:[]%".contains(c))
+    {
+        return Err(format!(
+            "\"{host}\" isn't an ssh destination Muxin can use."
+        ));
     }
     Ok(())
 }
@@ -549,36 +741,84 @@ fn runner_scope(runner: &Runner) -> Option<String> {
     runner
         .github
         .as_ref()
-        .map(|g| g.scope.split_once(':').map(|(_, s)| s.to_string()).unwrap_or_else(|| g.scope.clone()))
-        .or_else(|| runner.local.as_ref().and_then(|l| l.url.as_deref()).and_then(scope_from_runner_url))
+        .map(|g| {
+            g.scope
+                .split_once(':')
+                .map(|(_, s)| s.to_string())
+                .unwrap_or_else(|| g.scope.clone())
+        })
+        .or_else(|| {
+            runner
+                .local
+                .as_ref()
+                .and_then(|l| l.url.as_deref())
+                .and_then(scope_from_runner_url)
+        })
 }
 
 /// Names the install script reported as done ("✓ <name> is installed").
 fn installed_names(engine: &Engine, op: u64, names: &[String]) -> Vec<String> {
     let snap = engine.current();
-    let Some(o) = snap.operations.iter().find(|o| o.id == op) else { return Vec::new() };
-    names.iter().filter(|n| o.log.iter().any(|l| l == &format!("✓ {n} is installed"))).cloned().collect()
+    let Some(o) = snap.operations.iter().find(|o| o.id == op) else {
+        return Vec::new();
+    };
+    names
+        .iter()
+        .filter(|n| o.log.iter().any(|l| l == &format!("✓ {n} is installed")))
+        .cloned()
+        .collect()
 }
 
-async fn install(engine: &Arc<Engine>, op: u64, req: &InstallRequest, spec: &MachineSpec, probe: Option<ProbeResult>) -> Result<(), String> {
+async fn install(
+    engine: &Arc<Engine>,
+    op: u64,
+    req: &InstallRequest,
+    spec: &MachineSpec,
+    probe: Option<ProbeResult>,
+) -> Result<(), String> {
     let settings: Settings = engine.settings();
     // Always look at the machine first: the install mode depends on what it can do
     // right now (sudo, Docker), and the last check may be old.
     step(engine, op, format!("Checking {}", spec.name));
     let probe = probe::probe(spec, probe.and_then(|p| p.shell)).await;
     if !probe.ok {
-        return Err(format!("Couldn't reach {}: {}", spec.name, probe.error.unwrap_or_default()));
+        return Err(format!(
+            "Couldn't reach {}: {}",
+            spec.name,
+            probe.error.unwrap_or_default()
+        ));
     }
     let (mode, why) = resolve_mode(&req.mode, req.as_service, &probe);
-    engine.op_log(op, format!("Install mode: {}{}", mode_label(&mode), why.map(|w| format!(" ({w})")).unwrap_or_default()));
-    if let InstallMode::Docker { image, docker_socket } = &mode {
+    engine.op_log(
+        op,
+        format!(
+            "Install mode: {}{}",
+            mode_label(&mode),
+            why.map(|w| format!(" ({w})")).unwrap_or_default()
+        ),
+    );
+    if let InstallMode::Docker {
+        image,
+        docker_socket,
+    } = &mode
+    {
         return install_docker(engine, op, req, spec, &probe, image.clone(), *docker_socket).await;
     }
     let as_service = mode == InstallMode::Service;
     let shell = remote::shell_for(spec, Some(&probe));
 
-    step(engine, op, format!("Requesting a registration token from GitHub for {}", req.scope));
-    let token = engine.github().registration_token(&settings.github, &req.scope).await?;
+    step(
+        engine,
+        op,
+        format!(
+            "Requesting a registration token from GitHub for {}",
+            req.scope
+        ),
+    );
+    let token = engine
+        .github()
+        .registration_token(&settings.github, &req.scope)
+        .await?;
     step(engine, op, "Looking up the latest runner release");
     let version = engine
         .github()
@@ -587,7 +827,11 @@ async fn install(engine: &Arc<Engine>, op: u64, req: &InstallRequest, spec: &Mac
         .unwrap_or_else(|| FALLBACK_RUNNER_VERSION.to_string());
     engine.op_log(op, format!("actions-runner {version}"));
 
-    step(engine, op, format!("Installing on {} ({})", spec.name, spec.host.trim()));
+    step(
+        engine,
+        op,
+        format!("Installing on {} ({})", spec.name, spec.host.trim()),
+    );
     let url = engine.github().web_url(&settings.github, &req.scope);
     let labels = req.labels.join(",");
     let group = req.group.clone().unwrap_or_default();
@@ -613,10 +857,20 @@ fn mode_label(mode: &InstallMode) -> String {
     match mode {
         InstallMode::Auto | InstallMode::Service => mode.name().into(),
         InstallMode::Background => "background (run.sh, not restarted after a reboot)".into(),
-        InstallMode::Docker { image, docker_socket } => format!(
+        InstallMode::Docker {
+            image,
+            docker_socket,
+        } => format!(
             "Docker{}{}",
-            image.as_ref().map(|i| format!(" ({i})")).unwrap_or_default(),
-            if *docker_socket { ", with the host's Docker socket" } else { "" }
+            image
+                .as_ref()
+                .map(|i| format!(" ({i})"))
+                .unwrap_or_default(),
+            if *docker_socket {
+                ", with the host's Docker socket"
+            } else {
+                ""
+            }
         ),
     }
 }
@@ -633,29 +887,77 @@ async fn install_docker(
     docker_socket: bool,
 ) -> Result<(), String> {
     if probe.docker.is_none() {
-        let why = probe.docker_error.clone().unwrap_or_else(|| "it isn't installed".into());
+        let why = probe
+            .docker_error
+            .clone()
+            .unwrap_or_else(|| "it isn't installed".into());
         return Err(format!("Docker isn't usable on {}: {why}", spec.name));
     }
     if probe.os.as_deref() == Some("windows") {
         return Err("Docker runners aren't supported on Windows machines yet.".into());
     }
     let settings = engine.settings();
-    step(engine, op, format!("Requesting a registration token from GitHub for {}", req.scope));
-    let token = engine.github().registration_token(&settings.github, &req.scope).await?;
+    step(
+        engine,
+        op,
+        format!(
+            "Requesting a registration token from GitHub for {}",
+            req.scope
+        ),
+    );
+    let token = engine
+        .github()
+        .registration_token(&settings.github, &req.scope)
+        .await?;
     let (image, fallback) = match image {
         Some(i) => (i, String::new()),
         None => {
             step(engine, op, "Looking up the latest runner release");
-            let version = engine.github().latest_runner_release(&settings.github).await.unwrap_or_else(|| FALLBACK_RUNNER_VERSION.to_string());
-            (format!("{RUNNER_IMAGE}:{version}"), format!("{RUNNER_IMAGE}:latest"))
+            let version = engine
+                .github()
+                .latest_runner_release(&settings.github)
+                .await
+                .unwrap_or_else(|| FALLBACK_RUNNER_VERSION.to_string());
+            (
+                format!("{RUNNER_IMAGE}:{version}"),
+                format!("{RUNNER_IMAGE}:latest"),
+            )
         }
     };
     let url = engine.github().web_url(&settings.github, &req.scope);
     let labels = docker_labels(&req.labels).join(",");
     let group = req.group.clone().unwrap_or_default();
-    step(engine, op, format!("Starting runner containers on {} ({})", spec.name, spec.host.trim()));
-    let script = docker_install_script(&image, &fallback, &url, &req.scope, &token, &req.names, &labels, &group, docker_socket, false);
-    let ran = remote::run(engine, op, spec, Shell::Sh, script, &[token], INSTALL_TIMEOUT).await;
+    step(
+        engine,
+        op,
+        format!(
+            "Starting runner containers on {} ({})",
+            spec.name,
+            spec.host.trim()
+        ),
+    );
+    let script = docker_install_script(
+        &image,
+        &fallback,
+        &url,
+        &req.scope,
+        &token,
+        &req.names,
+        &labels,
+        &group,
+        docker_socket,
+        false,
+    );
+    let ran = remote::run(
+        engine,
+        op,
+        spec,
+        Shell::Sh,
+        script,
+        &[token],
+        INSTALL_TIMEOUT,
+    )
+    .await;
     record_installed(engine, op, req, spec, ran).await
 }
 
@@ -697,13 +999,32 @@ fn docker_install_script(
 }
 
 /// Adds what got installed to config.toml (even if a later runner failed) and refreshes.
-async fn record_installed(engine: &Arc<Engine>, op: u64, req: &InstallRequest, spec: &MachineSpec, ran: Result<(), String>) -> Result<(), String> {
-    let done = if ran.is_ok() { req.names.clone() } else { installed_names(engine, op, &req.names) };
+async fn record_installed(
+    engine: &Arc<Engine>,
+    op: u64,
+    req: &InstallRequest,
+    spec: &MachineSpec,
+    ran: Result<(), String>,
+) -> Result<(), String> {
+    let done = if ran.is_ok() {
+        req.names.clone()
+    } else {
+        installed_names(engine, op, &req.names)
+    };
     if !done.is_empty() {
-        step(engine, op, format!("Adding {} to config.toml", done.join(", ")));
-        let edit = inventory_edit::edit_file(engine.inventory_path(), |t| inventory_edit::add_runners(t, &spec.id, &done));
+        step(
+            engine,
+            op,
+            format!("Adding {} to config.toml", done.join(", ")),
+        );
+        let edit = inventory_edit::edit_file(engine.inventory_path(), |t| {
+            inventory_edit::add_runners(t, &spec.id, &done)
+        });
         if let Err(e) = edit {
-            engine.op_log(op, format!("warning: {e} The runners still show up because Muxin discovers them."));
+            engine.op_log(
+                op,
+                format!("warning: {e} The runners still show up because Muxin discovers them."),
+            );
         }
         engine.reload_inventory_now();
     }
@@ -711,25 +1032,52 @@ async fn record_installed(engine: &Arc<Engine>, op: u64, req: &InstallRequest, s
     ran
 }
 
-async fn run_action(engine: &Arc<Engine>, op: u64, runner: &Runner, action: RunnerAction, plan: Plan) -> Result<(), String> {
+async fn run_action(
+    engine: &Arc<Engine>,
+    op: u64,
+    runner: &Runner,
+    action: RunnerAction,
+    plan: Plan,
+) -> Result<(), String> {
     let settings = engine.settings();
     let plan = match plan {
         Plan::CheckFirst { delete_files } => {
             let mid = runner.machine_id.clone().unwrap_or_default();
             step(engine, op, format!("Checking {mid} first"));
             engine.run_check(Some(vec![mid])).await;
-            let fresh = engine.current().runners.iter().find(|r| r.id == runner.id).cloned().unwrap_or_else(|| runner.clone());
+            let fresh = engine
+                .current()
+                .runners
+                .iter()
+                .find(|r| r.id == runner.id)
+                .cloned()
+                .unwrap_or_else(|| runner.clone());
             engine.remove_plan(&fresh, delete_files)?
         }
         plan => plan,
     };
     match plan {
-        Plan::OnMachine { spec, probe, dir, container, scope, delete_files } => {
-            let shell = if container.is_some() { Shell::Sh } else { remote::shell_for(&spec, probe.as_ref()) };
+        Plan::OnMachine {
+            spec,
+            probe,
+            dir,
+            container,
+            scope,
+            delete_files,
+        } => {
+            let shell = if container.is_some() {
+                Shell::Sh
+            } else {
+                remote::shell_for(&spec, probe.as_ref())
+            };
             let mut secrets = Vec::new();
             let mut token = String::new();
             if let (RunnerAction::Remove { .. }, Some(scope)) = (action, scope.as_deref()) {
-                step(engine, op, format!("Requesting a removal token from GitHub for {scope}"));
+                step(
+                    engine,
+                    op,
+                    format!("Requesting a removal token from GitHub for {scope}"),
+                );
                 token = match engine.github().remove_token(&settings.github, scope).await {
                     Ok(t) => t,
                     // The repo or org is gone (its runners with it), or out of reach: still clean up the machine.
@@ -743,7 +1091,11 @@ async fn run_action(engine: &Arc<Engine>, op: u64, runner: &Runner, action: Runn
                     secrets.push(token.clone());
                 }
             }
-            step(engine, op, format!("{} {} on {}", verb(action), runner.name, spec.name));
+            step(
+                engine,
+                op,
+                format!("{} {} on {}", verb(action), runner.name, spec.name),
+            );
             let script = match &container {
                 Some(c) => control_docker_script(action, c, &token, delete_files),
                 None => {
@@ -764,10 +1116,21 @@ async fn run_action(engine: &Arc<Engine>, op: u64, runner: &Runner, action: Runn
                 // A folder deleted by hand leaves the runner registered: finish that through the API.
                 if let Some(gh) = runner.github.as_ref() {
                     engine.sync_github().await;
-                    let registered = engine.current().runners.iter().any(|r| r.github.as_ref().is_some_and(|g| g.id == gh.id && g.scope == gh.scope));
+                    let registered = engine.current().runners.iter().any(|r| {
+                        r.github
+                            .as_ref()
+                            .is_some_and(|g| g.id == gh.id && g.scope == gh.scope)
+                    });
                     if registered {
-                        step(engine, op, format!("Removing {} from GitHub ({})", runner.name, gh.scope));
-                        engine.github().delete_runner(&settings.github, &gh.scope, gh.id).await?;
+                        step(
+                            engine,
+                            op,
+                            format!("Removing {} from GitHub ({})", runner.name, gh.scope),
+                        );
+                        engine
+                            .github()
+                            .delete_runner(&settings.github, &gh.scope, gh.id)
+                            .await?;
                     }
                 }
                 forget_runner(engine, op, runner);
@@ -778,9 +1141,19 @@ async fn run_action(engine: &Arc<Engine>, op: u64, runner: &Runner, action: Runn
             Ok(())
         }
         Plan::GitHubOnly => {
-            let gh = runner.github.as_ref().ok_or("GitHub doesn't know this runner.")?;
-            step(engine, op, format!("Removing {} from GitHub ({})", runner.name, gh.scope));
-            engine.github().delete_runner(&settings.github, &gh.scope, gh.id).await?;
+            let gh = runner
+                .github
+                .as_ref()
+                .ok_or("GitHub doesn't know this runner.")?;
+            step(
+                engine,
+                op,
+                format!("Removing {} from GitHub ({})", runner.name, gh.scope),
+            );
+            engine
+                .github()
+                .delete_runner(&settings.github, &gh.scope, gh.id)
+                .await?;
             engine.op_log(op, format!("✓ {} is no longer registered", runner.name));
             if let Some(mid) = &runner.machine_id {
                 engine.op_log(op, format!("! {mid} couldn't be reached, so {}'s service and folder are still there. Remove them on the machine when it's back.", runner.name));
@@ -798,7 +1171,12 @@ async fn run_action(engine: &Arc<Engine>, op: u64, runner: &Runner, action: Runn
     }
 }
 
-fn control_docker_script(action: RunnerAction, container: &str, token: &str, delete_files: bool) -> String {
+fn control_docker_script(
+    action: RunnerAction,
+    container: &str,
+    token: &str,
+    delete_files: bool,
+) -> String {
     let params = [
         ("OR_ACTION", Param::Str(action.kind())),
         ("OR_CONTAINER", Param::Str(container)),
@@ -810,8 +1188,14 @@ fn control_docker_script(action: RunnerAction, container: &str, token: &str, del
 
 /// Drops a removed runner from config.toml if it was listed there.
 fn forget_runner(engine: &Arc<Engine>, op: u64, runner: &Runner) {
-    let (Some(mid), true) = (runner.machine_id.as_deref(), runner.declared) else { return };
-    step(engine, op, format!("Removing {} from config.toml", runner.name));
+    let (Some(mid), true) = (runner.machine_id.as_deref(), runner.declared) else {
+        return;
+    };
+    step(
+        engine,
+        op,
+        format!("Removing {} from config.toml", runner.name),
+    );
     let edit = |t: &str| inventory_edit::remove_runner(t, mid, &runner.name);
     let result = match engine.demo_world() {
         Some(w) => w.edit_inventory(edit),
@@ -849,27 +1233,57 @@ async fn pause(ms: u64) {
     tokio::time::sleep(Duration::from_millis(ms)).await;
 }
 
-async fn demo_install(engine: &Arc<Engine>, op: u64, req: &InstallRequest, spec: &MachineSpec) -> Result<(), String> {
+async fn demo_install(
+    engine: &Arc<Engine>,
+    op: u64,
+    req: &InstallRequest,
+    spec: &MachineSpec,
+) -> Result<(), String> {
     let w = engine.demo_world().cloned().ok_or("not in demo mode")?;
     step(engine, op, format!("Checking {}", spec.name));
     pause(300).await;
     w.reachable(&spec.id, spec.host.trim())?;
     let probe = w.probe(spec).await;
     let (mode, why) = resolve_mode(&req.mode, req.as_service, &probe);
-    engine.op_log(op, format!("Install mode: {}{}", mode_label(&mode), why.map(|w| format!(" ({w})")).unwrap_or_default()));
-    if let InstallMode::Docker { image, docker_socket } = &mode {
+    engine.op_log(
+        op,
+        format!(
+            "Install mode: {}{}",
+            mode_label(&mode),
+            why.map(|w| format!(" ({w})")).unwrap_or_default()
+        ),
+    );
+    if let InstallMode::Docker {
+        image,
+        docker_socket,
+    } = &mode
+    {
         if probe.docker.is_none() {
-            return Err(format!("Docker isn't usable on {}: it isn't installed", spec.name));
+            return Err(format!(
+                "Docker isn't usable on {}: it isn't installed",
+                spec.name
+            ));
         }
         return demo_install_docker(engine, op, req, spec, image.clone(), *docker_socket).await;
     }
     let as_service = mode == InstallMode::Service;
-    step(engine, op, format!("Requesting a registration token from GitHub for {}", req.scope));
+    step(
+        engine,
+        op,
+        format!(
+            "Requesting a registration token from GitHub for {}",
+            req.scope
+        ),
+    );
     pause(500).await;
     step(engine, op, "Looking up the latest runner release");
     pause(300).await;
     engine.op_log(op, "actions-runner 2.329.0");
-    step(engine, op, format!("Installing on {} ({})", spec.name, spec.host.trim()));
+    step(
+        engine,
+        op,
+        format!("Installing on {} ({})", spec.name, spec.host.trim()),
+    );
     pause(400).await;
     w.reachable(&spec.id, spec.host.trim())?;
 
@@ -880,16 +1294,22 @@ async fn demo_install(engine: &Arc<Engine>, op: u64, req: &InstallRequest, spec:
         _ => "/Users/ci/actions-runner".to_string(),
     };
     let sep = if os == "win" { "\\" } else { "/" };
-    engine.op_log(op, format!("Downloading actions-runner 2.329.0 for {os}-{arch}…"));
+    engine.op_log(
+        op,
+        format!("Downloading actions-runner 2.329.0 for {os}-{arch}…"),
+    );
     pause(900).await;
     for name in &req.names {
         let dir = format!("{home}{sep}{name}");
         let url = format!("https://github.com/{}", req.scope);
         let lines = [
             format!("Setting up {name} in {dir}"),
-            "--------------------------------------------------------------------------------".into(),
-            "|        Self-hosted runner registration                                       |".into(),
-            "--------------------------------------------------------------------------------".into(),
+            "--------------------------------------------------------------------------------"
+                .into(),
+            "|        Self-hosted runner registration                                       |"
+                .into(),
+            "--------------------------------------------------------------------------------"
+                .into(),
             "# Authentication".into(),
             format!("√ Connected to GitHub ({url})"),
             "# Runner Registration".into(),
@@ -910,7 +1330,13 @@ async fn demo_install(engine: &Arc<Engine>, op: u64, req: &InstallRequest, spec:
                 "win" => format!("Service actions.runner.{}.{name} successfully installed", req.scope.replace('/', "-")),
                 _ => format!("Creating launch runner in /etc/systemd/system/actions.runner.{}.{name}.service", req.scope.replace('/', "-")),
             });
-            engine.op_log(op, format!("Starting actions.runner.{}.{name}", req.scope.replace('/', "-")));
+            engine.op_log(
+                op,
+                format!(
+                    "Starting actions.runner.{}.{name}",
+                    req.scope.replace('/', "-")
+                ),
+            );
         } else {
             engine.op_log(op, format!("Starting {name} in the background (not a service, so it won't come back after a reboot)…"));
         }
@@ -919,22 +1345,52 @@ async fn demo_install(engine: &Arc<Engine>, op: u64, req: &InstallRequest, spec:
     }
 
     w.install_runners(&spec.id, &req.names, &req.labels, false);
-    step(engine, op, format!("Adding {} to config.toml", req.names.join(", ")));
+    step(
+        engine,
+        op,
+        format!("Adding {} to config.toml", req.names.join(", ")),
+    );
     w.edit_inventory(|t| inventory_edit::add_runners(t, &spec.id, &req.names))?;
     engine.reload_inventory_now();
     refresh(engine, op, Some(spec)).await;
     Ok(())
 }
 
-async fn demo_install_docker(engine: &Arc<Engine>, op: u64, req: &InstallRequest, spec: &MachineSpec, image: Option<String>, docker_socket: bool) -> Result<(), String> {
+async fn demo_install_docker(
+    engine: &Arc<Engine>,
+    op: u64,
+    req: &InstallRequest,
+    spec: &MachineSpec,
+    image: Option<String>,
+    docker_socket: bool,
+) -> Result<(), String> {
     let w = engine.demo_world().cloned().ok_or("not in demo mode")?;
-    step(engine, op, format!("Requesting a registration token from GitHub for {}", req.scope));
+    step(
+        engine,
+        op,
+        format!(
+            "Requesting a registration token from GitHub for {}",
+            req.scope
+        ),
+    );
     pause(500).await;
     let image = image.unwrap_or_else(|| format!("{RUNNER_IMAGE}:2.329.0"));
-    step(engine, op, format!("Starting runner containers on {} ({})", spec.name, spec.host.trim()));
+    step(
+        engine,
+        op,
+        format!(
+            "Starting runner containers on {} ({})",
+            spec.name,
+            spec.host.trim()
+        ),
+    );
     engine.op_log(op, format!("Pulling {image} (about 2 GB the first time)…"));
     pause(400).await;
-    for l in ["2.329.0: Pulling from actions/actions-runner", "Digest: sha256:7c1f0d2e9a4b…", &format!("Status: Downloaded newer image for {image}")] {
+    for l in [
+        "2.329.0: Pulling from actions/actions-runner",
+        "Digest: sha256:7c1f0d2e9a4b…",
+        &format!("Status: Downloaded newer image for {image}"),
+    ] {
         engine.op_log(op, l.to_string());
         pause(250).await;
     }
@@ -942,7 +1398,10 @@ async fn demo_install_docker(engine: &Arc<Engine>, op: u64, req: &InstallRequest
         engine.op_log(op, "warning: the runners get this machine's Docker socket, which is root-equivalent access to the machine. Only run trusted workflows on them.");
     }
     for name in &req.names {
-        engine.op_log(op, format!("Setting up {name} (container muxen-{name}, volume muxen-{name})"));
+        engine.op_log(
+            op,
+            format!("Setting up {name} (container muxen-{name}, volume muxen-{name})"),
+        );
         pause(300).await;
         for l in [
             "# Authentication".to_string(),
@@ -958,18 +1417,34 @@ async fn demo_install_docker(engine: &Arc<Engine>, op: u64, req: &InstallRequest
         engine.op_log(op, format!("✓ {name} is installed"));
     }
     w.install_runners(&spec.id, &req.names, &docker_labels(&req.labels), true);
-    step(engine, op, format!("Adding {} to config.toml", req.names.join(", ")));
+    step(
+        engine,
+        op,
+        format!("Adding {} to config.toml", req.names.join(", ")),
+    );
     w.edit_inventory(|t| inventory_edit::add_runners(t, &spec.id, &req.names))?;
     engine.reload_inventory_now();
     refresh(engine, op, Some(spec)).await;
     Ok(())
 }
 
-async fn demo_action(engine: &Arc<Engine>, op: u64, runner: &Runner, action: RunnerAction) -> Result<(), String> {
+async fn demo_action(
+    engine: &Arc<Engine>,
+    op: u64,
+    runner: &Runner,
+    action: RunnerAction,
+) -> Result<(), String> {
     let w = engine.demo_world().cloned().ok_or("not in demo mode")?;
-    let machine = runner.machine_id.as_deref().and_then(|id| engine.machine(id));
+    let machine = runner
+        .machine_id
+        .as_deref()
+        .and_then(|id| engine.machine(id));
     if let Some((spec, _)) = &machine {
-        step(engine, op, format!("{} {} on {}", verb(action), runner.name, spec.name));
+        step(
+            engine,
+            op,
+            format!("{} {} on {}", verb(action), runner.name, spec.name),
+        );
         pause(400).await;
         w.reachable(&spec.id, spec.host.trim())?;
     }
@@ -1001,11 +1476,20 @@ async fn demo_action(engine: &Arc<Engine>, op: u64, runner: &Runner, action: Run
             engine.op_log(op, "✓ Restarted");
         }
         RunnerAction::Logs => {
-            let dir = runner.local.as_ref().map(|l| l.dir.clone()).unwrap_or_default();
-            engine.op_log(op, match &container {
-                Some(c) => format!("==> docker logs {c} (last 200 lines)"),
-                None => format!("==> {dir}/_diag/Runner_20261008-141502-utc.log (last 200 lines)"),
-            });
+            let dir = runner
+                .local
+                .as_ref()
+                .map(|l| l.dir.clone())
+                .unwrap_or_default();
+            engine.op_log(
+                op,
+                match &container {
+                    Some(c) => format!("==> docker logs {c} (last 200 lines)"),
+                    None => {
+                        format!("==> {dir}/_diag/Runner_20261008-141502-utc.log (last 200 lines)")
+                    }
+                },
+            );
             for line in w.diag_log(&runner.name) {
                 engine.op_log(op, line);
             }
@@ -1013,10 +1497,18 @@ async fn demo_action(engine: &Arc<Engine>, op: u64, runner: &Runner, action: Run
         }
         RunnerAction::Remove { delete_files } => {
             if runner.machine_id.is_none() {
-                step(engine, op, format!("Removing {} from GitHub (org:acme)", runner.name));
+                step(
+                    engine,
+                    op,
+                    format!("Removing {} from GitHub (org:acme)", runner.name),
+                );
                 pause(600).await;
             } else {
-                step(engine, op, "Requesting a removal token from GitHub for acme");
+                step(
+                    engine,
+                    op,
+                    "Requesting a removal token from GitHub for acme",
+                );
                 pause(400).await;
                 engine.op_log(op, format!("Stopping {service}…"));
                 pause(400).await;
@@ -1032,7 +1524,11 @@ async fn demo_action(engine: &Arc<Engine>, op: u64, runner: &Runner, action: Run
                         engine.op_log(op, format!("Deleted volume {c}"));
                     }
                 } else if delete_files {
-                    let dir = runner.local.as_ref().map(|l| l.dir.clone()).unwrap_or_default();
+                    let dir = runner
+                        .local
+                        .as_ref()
+                        .map(|l| l.dir.clone())
+                        .unwrap_or_default();
                     engine.op_log(op, format!("Deleted {dir}"));
                 }
             }
@@ -1060,19 +1556,34 @@ host github.com # comment
 Host !bad ok? fine
 Match host x
 ";
-        assert_eq!(parse_ssh_hosts(text), vec!["beelink", "beelink-dev", "fine", "umbrel"]);
+        assert_eq!(
+            parse_ssh_hosts(text),
+            vec!["beelink", "beelink-dev", "fine", "umbrel"]
+        );
     }
 
     #[test]
     fn parses_install_modes() {
-        assert_eq!(InstallMode::parse("", None, false).unwrap(), InstallMode::Auto);
-        assert_eq!(InstallMode::parse("Service", None, false).unwrap(), InstallMode::Service);
+        assert_eq!(
+            InstallMode::parse("", None, false).unwrap(),
+            InstallMode::Auto
+        );
+        assert_eq!(
+            InstallMode::parse("Service", None, false).unwrap(),
+            InstallMode::Service
+        );
         assert_eq!(
             InstallMode::parse("docker", Some(" ghcr.io/me/runner:1 ".into()), true).unwrap(),
-            InstallMode::Docker { image: Some("ghcr.io/me/runner:1".into()), docker_socket: true }
+            InstallMode::Docker {
+                image: Some("ghcr.io/me/runner:1".into()),
+                docker_socket: true
+            }
         );
         assert!(InstallMode::parse("vm", None, false).is_err());
-        assert!(InstallMode::parse("service", Some("x".into()), false).is_err(), "image only goes with docker");
+        assert!(
+            InstallMode::parse("service", Some("x".into()), false).is_err(),
+            "image only goes with docker"
+        );
         assert!(valid_image("ghcr.io/actions/actions-runner:2.329.0"));
         assert!(valid_image("me/runner@sha256:abc"));
         assert!(!valid_image("--privileged"));
@@ -1091,17 +1602,47 @@ Match host x
             ..Default::default()
         };
         let auto = |p: &ProbeResult| resolve_mode(&InstallMode::Auto, true, p).0;
-        assert_eq!(auto(&machine("darwin", None, Some("29"))), InstallMode::Service);
+        assert_eq!(
+            auto(&machine("darwin", None, Some("29"))),
+            InstallMode::Service
+        );
         assert_eq!(auto(&machine("windows", None, None)), InstallMode::Service);
-        assert_eq!(auto(&machine("linux", Some("passwordless"), Some("29"))), InstallMode::Service);
-        assert_eq!(auto(&machine("linux", Some("root"), None)), InstallMode::Service);
-        assert_eq!(auto(&machine("linux", Some("password"), Some("29"))), InstallMode::Docker { image: None, docker_socket: false });
-        let (mode, why) = resolve_mode(&InstallMode::Auto, true, &machine("linux", Some("password"), None));
+        assert_eq!(
+            auto(&machine("linux", Some("passwordless"), Some("29"))),
+            InstallMode::Service
+        );
+        assert_eq!(
+            auto(&machine("linux", Some("root"), None)),
+            InstallMode::Service
+        );
+        assert_eq!(
+            auto(&machine("linux", Some("password"), Some("29"))),
+            InstallMode::Docker {
+                image: None,
+                docker_socket: false
+            }
+        );
+        let (mode, why) = resolve_mode(
+            &InstallMode::Auto,
+            true,
+            &machine("linux", Some("password"), None),
+        );
         assert_eq!(mode, InstallMode::Background);
         assert!(why.unwrap().contains("reboot"));
         // The legacy switch still means "background", and explicit modes are kept.
-        assert_eq!(resolve_mode(&InstallMode::Auto, false, &machine("darwin", None, None)).0, InstallMode::Background);
-        assert_eq!(resolve_mode(&InstallMode::Service, true, &machine("linux", Some("password"), None)).0, InstallMode::Service);
+        assert_eq!(
+            resolve_mode(&InstallMode::Auto, false, &machine("darwin", None, None)).0,
+            InstallMode::Background
+        );
+        assert_eq!(
+            resolve_mode(
+                &InstallMode::Service,
+                true,
+                &machine("linux", Some("password"), None)
+            )
+            .0,
+            InstallMode::Service
+        );
     }
 
     #[test]
@@ -1119,7 +1660,11 @@ Match host x
             false,
         );
         assert!(script.starts_with("OR_IMAGE='ghcr.io/actions/actions-runner:2.329.0'\n"));
-        assert!(script.contains("OR_TOKEN='SECRET'\\''TOKEN'\n"), "{}", &script[..400]);
+        assert!(
+            script.contains("OR_TOKEN='SECRET'\\''TOKEN'\n"),
+            "{}",
+            &script[..400]
+        );
         // The token is only ever piped in on stdin.
         assert!(script.contains("printf '%s' \"$OR_TOKEN\" | docker run --rm -i"));
         assert!(!script.contains("--token \"$OR_TOKEN\""));
@@ -1159,16 +1704,35 @@ mod engine_tests {
     fn stub_runner(dir: &Path, name: &str) {
         std::fs::create_dir_all(dir.join("bin")).unwrap();
         std::fs::create_dir_all(dir.join("_diag")).unwrap();
-        std::fs::write(dir.join(".runner"), format!("{{\"agentName\":\"{name}\",\"gitHubUrl\":\"https://github.com/acme\"}}")).unwrap();
-        std::fs::write(dir.join("_diag/Runner_20261008-120000-utc.log"), "[INFO Listener] Listening for Jobs\n").unwrap();
+        std::fs::write(
+            dir.join(".runner"),
+            format!("{{\"agentName\":\"{name}\",\"gitHubUrl\":\"https://github.com/acme\"}}"),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("_diag/Runner_20261008-120000-utc.log"),
+            "[INFO Listener] Listening for Jobs\n",
+        )
+        .unwrap();
         write_exec(&dir.join("config.sh"), "#!/bin/sh\nexit 0\n");
-        write_exec(&dir.join("run.sh"), "#!/bin/sh\nDIR=$(cd \"$(dirname \"$0\")\" && pwd)\n\"$DIR/bin/Runner.Listener\" run\n");
-        write_exec(&dir.join("bin/Runner.Listener"), "#!/bin/sh\n[ \"$1\" = --version ] && { echo 2.329.0; exit 0; }\nsleep 120\n");
+        write_exec(
+            &dir.join("run.sh"),
+            "#!/bin/sh\nDIR=$(cd \"$(dirname \"$0\")\" && pwd)\n\"$DIR/bin/Runner.Listener\" run\n",
+        );
+        write_exec(
+            &dir.join("bin/Runner.Listener"),
+            "#!/bin/sh\n[ \"$1\" = --version ] && { echo 2.329.0; exit 0; }\nsleep 120\n",
+        );
     }
 
     async fn wait(engine: &Arc<Engine>, op: u64) -> Operation {
         for _ in 0..600 {
-            if let Some(o) = engine.current().operations.iter().find(|o| o.id == op && o.status != "running") {
+            if let Some(o) = engine
+                .current()
+                .operations
+                .iter()
+                .find(|o| o.id == op && o.status != "running")
+            {
                 return o.clone();
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -1177,7 +1741,13 @@ mod engine_tests {
     }
 
     fn state(engine: &Engine, id: &str) -> String {
-        engine.current().runners.iter().find(|r| r.id == id).map(|r| r.state.clone()).unwrap_or_default()
+        engine
+            .current()
+            .runners
+            .iter()
+            .find(|r| r.id == id)
+            .map(|r| r.state.clone())
+            .unwrap_or_default()
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1195,30 +1765,58 @@ mod engine_tests {
         let engine = Engine::new(Paths::resolve(Some(tmp.clone()), None), false);
         engine.run_check(None).await;
         let id = "here/or-test-01";
-        assert_eq!(state(&engine, id), "offline", "{:?}", engine.current().machines[0].diagnostics);
+        assert_eq!(
+            state(&engine, id),
+            "offline",
+            "{:?}",
+            engine.current().machines[0].diagnostics
+        );
 
         let op = engine.runner_action(id, RunnerAction::Logs).unwrap();
         let o = wait(&engine, op).await;
         assert_eq!(o.status, "succeeded", "{:?}", o.log);
-        assert!(o.log.iter().any(|l| l.contains("Listening for Jobs")), "{:?}", o.log);
+        assert!(
+            o.log.iter().any(|l| l.contains("Listening for Jobs")),
+            "{:?}",
+            o.log
+        );
 
-        let o = wait(&engine, engine.runner_action(id, RunnerAction::Start).unwrap()).await;
+        let o = wait(
+            &engine,
+            engine.runner_action(id, RunnerAction::Start).unwrap(),
+        )
+        .await;
         assert_eq!(o.status, "succeeded", "{:?}", o.log);
         assert_eq!(state(&engine, id), "idle");
 
-        let o = wait(&engine, engine.runner_action(id, RunnerAction::Stop).unwrap()).await;
+        let o = wait(
+            &engine,
+            engine.runner_action(id, RunnerAction::Stop).unwrap(),
+        )
+        .await;
         assert_eq!(o.status, "succeeded", "{:?}", o.log);
         assert!(o.log.iter().any(|l| l == "Stopped."), "{:?}", o.log);
         assert_eq!(state(&engine, id), "offline");
 
         // Machines can be added and removed without losing the file's comments.
-        let new_id = engine.add_machine(NewMachine { name: "Spare".into(), host: "spare.local".into() }).unwrap();
+        let new_id = engine
+            .add_machine(NewMachine {
+                name: "Spare".into(),
+                host: "spare.local".into(),
+            })
+            .unwrap();
         assert_eq!(new_id, "spare");
         assert!(engine.current().machines.iter().any(|m| m.id == "spare"));
         engine.remove_machine("spare").unwrap();
         let text = std::fs::read_to_string(tmp.join("config.toml")).unwrap();
-        assert!(text.starts_with("# test fleet") && !text.contains("Spare"), "{text}");
-        assert_eq!(engine.suggest_runner_names("here", 2), vec!["here-01", "here-02"]);
+        assert!(
+            text.starts_with("# test fleet") && !text.contains("Spare"),
+            "{text}"
+        );
+        assert_eq!(
+            engine.suggest_runner_names("here", 2),
+            vec!["here-01", "here-02"]
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -1239,25 +1837,62 @@ mod engine_tests {
         };
         let o = wait(&engine, engine.install_runners(req).unwrap()).await;
         assert_eq!(o.status, "succeeded", "{:?}", o.log);
-        assert!(o.log.iter().any(|l| l.starts_with("Install mode: Docker")), "{:?}", o.log);
+        assert!(
+            o.log.iter().any(|l| l.starts_with("Install mode: Docker")),
+            "{:?}",
+            o.log
+        );
         let snap = engine.current();
-        let r = snap.runners.iter().find(|r| r.id == "beacon/nuc-docker-01").expect("installed runner shows up");
+        let r = snap
+            .runners
+            .iter()
+            .find(|r| r.id == "beacon/nuc-docker-01")
+            .expect("installed runner shows up");
         let local = r.local.as_ref().unwrap();
         assert_eq!(local.container.as_deref(), Some("muxen-nuc-docker-01"));
         assert_eq!(local.dir, "docker://muxen-nuc-docker-01");
         assert!(r.labels.iter().any(|l| l == "docker"), "{:?}", r.labels);
-        assert_eq!(snap.machines.iter().find(|m| m.id == "beacon").unwrap().probe.as_ref().unwrap().docker.as_deref(), Some("29.1.3"));
+        assert_eq!(
+            snap.machines
+                .iter()
+                .find(|m| m.id == "beacon")
+                .unwrap()
+                .probe
+                .as_ref()
+                .unwrap()
+                .docker
+                .as_deref(),
+            Some("29.1.3")
+        );
 
-        let o = wait(&engine, engine.runner_action("beacon/nuc-docker-01", RunnerAction::Stop).unwrap()).await;
+        let o = wait(
+            &engine,
+            engine
+                .runner_action("beacon/nuc-docker-01", RunnerAction::Stop)
+                .unwrap(),
+        )
+        .await;
         assert_eq!(o.status, "succeeded");
-        assert!(o.log.iter().any(|l| l.contains("container muxen-nuc-docker-01")), "{:?}", o.log);
+        assert!(
+            o.log
+                .iter()
+                .any(|l| l.contains("container muxen-nuc-docker-01")),
+            "{:?}",
+            o.log
+        );
         assert_eq!(state(&engine, "beacon/nuc-docker-01"), "offline");
     }
 
     /// Lines an operation logged (after the coalesced publish catches up).
     async fn op_log(engine: &Engine, op: u64) -> Vec<String> {
         tokio::time::sleep(Duration::from_millis(300)).await;
-        engine.current().operations.iter().find(|o| o.id == op).map(|o| o.log.clone()).unwrap_or_default()
+        engine
+            .current()
+            .operations
+            .iter()
+            .find(|o| o.id == op)
+            .map(|o| o.log.clone())
+            .unwrap_or_default()
     }
 
     /// Real Docker on a real machine, without GitHub: registration is stubbed, and the one
@@ -1266,11 +1901,17 @@ mod engine_tests {
     #[tokio::test(flavor = "multi_thread")]
     #[ignore = "needs a machine with Docker: MUXEN_TEST_DOCKER_HOST=<ssh host>"]
     async fn docker_runner_lifecycle_on_real_host() {
-        let Ok(host) = std::env::var("MUXEN_TEST_DOCKER_HOST") else { return };
+        let Ok(host) = std::env::var("MUXEN_TEST_DOCKER_HOST") else {
+            return;
+        };
         let tmp = std::env::temp_dir().join(format!("muxen-docker-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
-        std::fs::write(tmp.join("config.toml"), format!("[[machine]]\nname = \"Box\"\nhost = \"{host}\"\n")).unwrap();
+        std::fs::write(
+            tmp.join("config.toml"),
+            format!("[[machine]]\nname = \"Box\"\nhost = \"{host}\"\n"),
+        )
+        .unwrap();
         let engine = Engine::new(Paths::resolve(Some(tmp.clone()), None), false);
         engine.run_check(None).await;
         let (spec, probe) = engine.machine("box").unwrap();
@@ -1285,7 +1926,16 @@ mod engine_tests {
             let spec = spec.clone();
             async move {
                 let op = engine.begin_op("test", "test".into(), Some("box".into()), None);
-                let ran = remote::run(&engine, op, &spec, Shell::Sh, script, &["FAKE0TOKEN".into()], INSTALL_TIMEOUT).await;
+                let ran = remote::run(
+                    &engine,
+                    op,
+                    &spec,
+                    Shell::Sh,
+                    script,
+                    &["FAKE0TOKEN".into()],
+                    INSTALL_TIMEOUT,
+                )
+                .await;
                 engine.op_finish(op, Ok(()));
                 (ran, op_log(&engine, op).await)
             }
@@ -1299,56 +1949,151 @@ mod engine_tests {
 
         // 1. A real registration attempt with a fake token fails cleanly: GitHub says no,
         //    and no volume or container is left behind.
-        let script = docker_install_script(image, "", "https://github.com/muxen-test-no-such-org-7f3a", "muxen-test-no-such-org-7f3a", "FAKE0TOKEN", &[name.clone()], "docker", "", false, false);
+        let script = docker_install_script(
+            image,
+            "",
+            "https://github.com/muxen-test-no-such-org-7f3a",
+            "muxen-test-no-such-org-7f3a",
+            "FAKE0TOKEN",
+            &[name.clone()],
+            "docker",
+            "",
+            false,
+            false,
+        );
         let (ran, log) = run_script(script).await;
         assert!(ran.is_err(), "{log:?}");
-        assert!(log.iter().any(|l| l.contains("404") || l.contains("Not Found")), "{log:?}");
-        assert!(log.iter().all(|l| !l.contains("FAKE0TOKEN")), "token leaked into the log: {log:?}");
+        assert!(
+            log.iter()
+                .any(|l| l.contains("404") || l.contains("Not Found")),
+            "{log:?}"
+        );
+        assert!(
+            log.iter().all(|l| !l.contains("FAKE0TOKEN")),
+            "token leaked into the log: {log:?}"
+        );
         let (_, leftovers) = run_script(format!("docker volume ls -q --filter name=muxen-{name}; docker ps -aq --filter name=muxen-{name}")).await;
         assert!(leftovers.is_empty(), "{leftovers:?}");
 
         // 2. Install with registration stubbed: a long-running container with a restart policy.
-        let script = docker_install_script(image, "", "https://github.com/muxen-test", "muxen-test", "FAKE0TOKEN", &[name.clone()], "docker", "", false, true);
+        let script = docker_install_script(
+            image,
+            "",
+            "https://github.com/muxen-test",
+            "muxen-test",
+            "FAKE0TOKEN",
+            &[name.clone()],
+            "docker",
+            "",
+            false,
+            true,
+        );
         let (ran, log) = run_script(script).await;
         assert!(ran.is_ok(), "{log:?}");
-        assert!(log.iter().any(|l| l == &format!("✓ {name} is installed")), "{log:?}");
+        assert!(
+            log.iter().any(|l| l == &format!("✓ {name} is installed")),
+            "{log:?}"
+        );
         let (_, inspect) = run_script(format!("docker inspect -f '{{{{.HostConfig.RestartPolicy.Name}}}} {{{{index .Config.Labels \"muxen.runner\"}}}}' muxen-{name}; docker inspect muxen-{name} | grep -c FAKE0TOKEN")).await;
-        assert_eq!(inspect, vec![format!("unless-stopped {name}"), "0".to_string()], "{inspect:?}");
+        assert_eq!(
+            inspect,
+            vec![format!("unless-stopped {name}"), "0".to_string()],
+            "{inspect:?}"
+        );
 
         // 3. Machine checks find it as a container runner.
         engine.run_check(Some(vec!["box".into()])).await;
         let snap = engine.current();
-        let r = snap.runners.iter().find(|r| r.id == id).unwrap_or_else(|| panic!("{id} not found in {:?}", snap.runners.iter().map(|r| &r.id).collect::<Vec<_>>()));
+        let r = snap.runners.iter().find(|r| r.id == id).unwrap_or_else(|| {
+            panic!(
+                "{id} not found in {:?}",
+                snap.runners.iter().map(|r| &r.id).collect::<Vec<_>>()
+            )
+        });
         let local = r.local.clone().unwrap();
-        assert_eq!(local.container.as_deref(), Some(format!("muxen-{name}").as_str()));
+        assert_eq!(
+            local.container.as_deref(),
+            Some(format!("muxen-{name}").as_str())
+        );
         assert_eq!(local.container_state.as_deref(), Some("running"));
         assert_eq!(local.url.as_deref(), Some("https://github.com/muxen-test"));
         assert_eq!(r.state, "idle", "{local:?}");
 
         // 4. Stop / start / restart / logs through the engine (none of these talk to GitHub).
-        let o = wait(&engine, engine.runner_action(&id, RunnerAction::Stop).unwrap()).await;
+        let o = wait(
+            &engine,
+            engine.runner_action(&id, RunnerAction::Stop).unwrap(),
+        )
+        .await;
         assert_eq!(o.status, "succeeded", "{:?}", o.log);
         assert_eq!(state(&engine, &id), "offline");
-        let o = wait(&engine, engine.runner_action(&id, RunnerAction::Start).unwrap()).await;
+        let o = wait(
+            &engine,
+            engine.runner_action(&id, RunnerAction::Start).unwrap(),
+        )
+        .await;
         assert_eq!(o.status, "succeeded", "{:?}", o.log);
         assert_eq!(state(&engine, &id), "idle");
-        let o = wait(&engine, engine.runner_action(&id, RunnerAction::Restart).unwrap()).await;
+        let o = wait(
+            &engine,
+            engine.runner_action(&id, RunnerAction::Restart).unwrap(),
+        )
+        .await;
         assert_eq!(o.status, "succeeded", "{:?}", o.log);
         assert_eq!(state(&engine, &id), "idle");
-        let o = wait(&engine, engine.runner_action(&id, RunnerAction::Logs).unwrap()).await;
+        let o = wait(
+            &engine,
+            engine.runner_action(&id, RunnerAction::Logs).unwrap(),
+        )
+        .await;
         assert_eq!(o.status, "succeeded", "{:?}", o.log);
-        assert!(o.log.iter().any(|l| l.contains(&format!("docker logs muxen-{name}"))), "{:?}", o.log);
+        assert!(
+            o.log
+                .iter()
+                .any(|l| l.contains(&format!("docker logs muxen-{name}"))),
+            "{:?}",
+            o.log
+        );
 
         // 5. Remove without a GitHub token (nothing registered), deleting the volume too.
-        let runner = engine.current().runners.iter().find(|r| r.id == id).cloned().unwrap();
+        let runner = engine
+            .current()
+            .runners
+            .iter()
+            .find(|r| r.id == id)
+            .cloned()
+            .unwrap();
         let (spec, probe) = engine.machine("box").unwrap();
-        let plan = Plan::OnMachine { spec, probe, dir: local.dir.clone(), container: local.container.clone(), scope: None, delete_files: true };
-        let op = engine.begin_op("remove", "test".into(), Some("box".into()), Some(id.clone()));
-        let removed = run_action(&engine, op, &runner, RunnerAction::Remove { delete_files: true }, plan).await;
+        let plan = Plan::OnMachine {
+            spec,
+            probe,
+            dir: local.dir.clone(),
+            container: local.container.clone(),
+            scope: None,
+            delete_files: true,
+        };
+        let op = engine.begin_op(
+            "remove",
+            "test".into(),
+            Some("box".into()),
+            Some(id.clone()),
+        );
+        let removed = run_action(
+            &engine,
+            op,
+            &runner,
+            RunnerAction::Remove { delete_files: true },
+            plan,
+        )
+        .await;
         engine.op_finish(op, Ok(()));
         let log = op_log(&engine, op).await;
         assert!(removed.is_ok(), "{log:?}");
-        assert!(log.iter().any(|l| l == &format!("Deleted volume muxen-{name}")), "{log:?}");
+        assert!(
+            log.iter()
+                .any(|l| l == &format!("Deleted volume muxen-{name}")),
+            "{log:?}"
+        );
         assert!(!engine.current().runners.iter().any(|r| r.id == id));
 
         let _ = std::fs::remove_dir_all(&tmp);
@@ -1373,19 +2118,55 @@ mod engine_tests {
         let o = wait(&engine, engine.install_runners(req).unwrap()).await;
         assert_eq!(o.status, "succeeded", "{:?}", o.log);
         let snap = engine.current();
-        let r = snap.runners.iter().find(|r| r.id == "beacon/beacon-02").expect("installed runner shows up");
+        let r = snap
+            .runners
+            .iter()
+            .find(|r| r.id == "beacon/beacon-02")
+            .expect("installed runner shows up");
         assert!(r.declared && r.labels.contains(&"gpu".to_string()), "{r:?}");
 
-        let o = wait(&engine, engine.runner_action("beacon/beacon-02", RunnerAction::Stop).unwrap()).await;
+        let o = wait(
+            &engine,
+            engine
+                .runner_action("beacon/beacon-02", RunnerAction::Stop)
+                .unwrap(),
+        )
+        .await;
         assert_eq!(o.status, "succeeded");
         assert_eq!(state(&engine, "beacon/beacon-02"), "offline");
 
-        let o = wait(&engine, engine.runner_action("beacon/beacon-02", RunnerAction::Remove { delete_files: true }).unwrap()).await;
+        let o = wait(
+            &engine,
+            engine
+                .runner_action(
+                    "beacon/beacon-02",
+                    RunnerAction::Remove { delete_files: true },
+                )
+                .unwrap(),
+        )
+        .await;
         assert_eq!(o.status, "succeeded", "{:?}", o.log);
-        assert!(!engine.current().runners.iter().any(|r| r.name == "beacon-02"));
+        assert!(
+            !engine
+                .current()
+                .runners
+                .iter()
+                .any(|r| r.name == "beacon-02")
+        );
 
         // The GitHub-only runner can be deregistered; the asleep laptop can't take installs.
-        let o = wait(&engine, engine.runner_action("github/spot-x64-7", RunnerAction::Remove { delete_files: false }).unwrap()).await;
+        let o = wait(
+            &engine,
+            engine
+                .runner_action(
+                    "github/spot-x64-7",
+                    RunnerAction::Remove {
+                        delete_files: false,
+                    },
+                )
+                .unwrap(),
+        )
+        .await;
         assert_eq!(o.status, "succeeded", "{:?}", o.log);
         let req = InstallRequest {
             machine_id: "harbor".into(),
@@ -1400,9 +2181,20 @@ mod engine_tests {
         assert_eq!(o.status, "failed");
         assert!(o.error.unwrap_or_default().contains("timed out"));
 
-        let id = engine.add_machine(NewMachine { name: "Beelink".into(), host: "beelink".into() }).unwrap();
+        let id = engine
+            .add_machine(NewMachine {
+                name: "Beelink".into(),
+                host: "beelink".into(),
+            })
+            .unwrap();
         engine.run_check(Some(vec![id.clone()])).await;
-        let m = engine.current().machines.iter().find(|m| m.id == id).cloned().unwrap();
+        let m = engine
+            .current()
+            .machines
+            .iter()
+            .find(|m| m.id == id)
+            .cloned()
+            .unwrap();
         assert_eq!(m.status, "online");
         assert_eq!(m.platform, "linux-x64");
     }

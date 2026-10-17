@@ -46,9 +46,17 @@ impl Engine {
     pub(crate) async fn refresh_tailnet(self: &Arc<Self>) -> TailnetChanges {
         let read = tailscale::status().await;
         let status = match (&read, tailscale::installed()) {
-            (Some(t), _) => Some(TailscaleStatus { state: t.state.clone(), running: t.running(), tailnet: t.name.clone() }),
+            (Some(t), _) => Some(TailscaleStatus {
+                state: t.state.clone(),
+                running: t.running(),
+                tailnet: t.name.clone(),
+            }),
             // Installed, but its service didn't answer.
-            (None, true) => Some(TailscaleStatus { state: "NotRunning".into(), running: false, tailnet: None }),
+            (None, true) => Some(TailscaleStatus {
+                state: "NotRunning".into(),
+                running: false,
+                tailnet: None,
+            }),
             (None, false) => None,
         };
         let machines: Vec<(MachineSpec, Option<String>)> = {
@@ -57,7 +65,12 @@ impl Engine {
                 .machines
                 .iter()
                 .filter(|m| m.is_checkable() && !m.is_local())
-                .map(|m| (m.clone(), st.probes.get(&m.id).and_then(|p| p.hostname.clone())))
+                .map(|m| {
+                    (
+                        m.clone(),
+                        st.probes.get(&m.id).and_then(|p| p.hostname.clone()),
+                    )
+                })
                 .collect()
         };
         // Each machine on the tailnet: by the addresses its agent reported,
@@ -65,7 +78,9 @@ impl Engine {
         let mut found: HashMap<String, TailnetDevice> = HashMap::new();
         if let Some(t) = read.as_ref().filter(|t| t.running()) {
             for (spec, hostname) in &machines {
-                let ips = direct::paired(&spec.id).map(|p| p.tailnet).unwrap_or_default();
+                let ips = direct::paired(&spec.id)
+                    .map(|p| p.tailnet)
+                    .unwrap_or_default();
                 let mut names = vec![spec.host.clone()];
                 names.extend(ssh_hostname(spec).await);
                 names.extend(hostname.clone());
@@ -75,7 +90,9 @@ impl Engine {
             }
         }
         for (spec, _) in &machines {
-            let v4 = found.get(&spec.id).and_then(|d| d.ips.iter().find(|ip| !ip.contains(':')).cloned());
+            let v4 = found
+                .get(&spec.id)
+                .and_then(|d| d.ips.iter().find(|ip| !ip.contains(':')).cloned());
             tailscale::set_ssh_tailnet(&spec.id, v4);
         }
 
@@ -137,7 +154,11 @@ impl Engine {
                 tracing::debug!("Tailscale sees a change: {:?}", changes.flipped);
                 self.check_soon(changes.flipped);
             }
-            let wait = if self.offline_machines().is_empty() { WATCH } else { WATCH_OFFLINE };
+            let wait = if self.offline_machines().is_empty() {
+                WATCH
+            } else {
+                WATCH_OFFLINE
+            };
             tokio::time::sleep(wait).await;
         }
     }
@@ -148,11 +169,15 @@ impl Engine {
         if self.demo.is_some() {
             return;
         }
-        let mut last = tokio::task::spawn_blocking(route_signature).await.unwrap_or_default();
+        let mut last = tokio::task::spawn_blocking(route_signature)
+            .await
+            .unwrap_or_default();
         let mut since_move = Instant::now();
         loop {
             tokio::time::sleep(NETWORK_EVERY).await;
-            let now = tokio::task::spawn_blocking(route_signature).await.unwrap_or_default();
+            let now = tokio::task::spawn_blocking(route_signature)
+                .await
+                .unwrap_or_default();
             if now != last {
                 tracing::info!("network changed ({last} → {now})");
                 last = now;
@@ -182,7 +207,10 @@ impl Engine {
             let me = self.clone();
             self.rt.spawn(async move {
                 let Some(l) = link::current(&id) else { return };
-                if l.request(json!({ "op": "ping" }), Duration::from_secs(3)).await.is_ok() {
+                if l.request(json!({ "op": "ping" }), Duration::from_secs(3))
+                    .await
+                    .is_ok()
+                {
                     me.move_home(&id).await;
                 }
             });
@@ -212,19 +240,36 @@ impl Engine {
             direct::retry_now(id);
         }
         // Reached at an address of its own (a forwarded port): no shorter way.
-        if self.machine(id).is_some_and(|(s, _)| s.direct_address.is_some()) {
+        if self
+            .machine(id)
+            .is_some_and(|(s, _)| s.direct_address.is_some())
+        {
             return;
         }
-        let Some(paired) = direct::paired(id).filter(|p| !p.lan.is_empty()) else { return };
-        if moves().lock().unwrap().get(id).is_some_and(|t| t.elapsed() < MOVE_HOME_PAUSE) {
+        let Some(paired) = direct::paired(id).filter(|p| !p.lan.is_empty()) else {
+            return;
+        };
+        if moves()
+            .lock()
+            .unwrap()
+            .get(id)
+            .is_some_and(|t| t.elapsed() < MOVE_HOME_PAUSE)
+        {
             return;
         }
         if !direct::lan_answers(&paired).await {
             // Tailscale itself goes the local way, so the machine is right
             // here: this app's socket may predate its Local Network access.
-            let here = self.current().machines.iter().find(|m| m.id == id).and_then(|m| m.tailnet.clone()).is_some_and(|d| {
-                tailscale::cached_direct_addr(&d.dns_name).is_some_and(|a| paired.lan.iter().any(|l| a.starts_with(&format!("{l}:"))))
-            });
+            let here = self
+                .current()
+                .machines
+                .iter()
+                .find(|m| m.id == id)
+                .and_then(|m| m.tailnet.clone())
+                .is_some_and(|d| {
+                    tailscale::cached_direct_addr(&d.dns_name)
+                        .is_some_and(|a| paired.lan.iter().any(|l| a.starts_with(&format!("{l}:"))))
+                });
             if !here {
                 return;
             }
@@ -233,11 +278,19 @@ impl Engine {
                 return;
             }
         }
-        let Some((spec, _)) = self.machine(id) else { return };
+        let Some((spec, _)) = self.machine(id) else {
+            return;
+        };
         if l.transport() != "ssh" {
-            moves().lock().unwrap().insert(id.to_string(), Instant::now());
+            moves()
+                .lock()
+                .unwrap()
+                .insert(id.to_string(), Instant::now());
         }
-        tracing::info!("{} answers on the local network; moving its connection there", spec.name);
+        tracing::info!(
+            "{} answers on the local network; moving its connection there",
+            spec.name
+        );
         link::reset(id);
         let _ = link::get(&spec).await;
     }
@@ -253,13 +306,23 @@ impl Engine {
     /// Machines the last check couldn't reach.
     fn offline_machines(&self) -> Vec<String> {
         let st = self.state.lock().unwrap();
-        st.inventory.machines.iter().filter(|m| m.is_checkable() && st.probes.get(&m.id).is_some_and(|p| !p.ok)).map(|m| m.id.clone()).collect()
+        st.inventory
+            .machines
+            .iter()
+            .filter(|m| m.is_checkable() && st.probes.get(&m.id).is_some_and(|p| !p.ok))
+            .map(|m| m.id.clone())
+            .collect()
     }
 
     /// Machines with a live connection right now.
     fn linked_machines(&self) -> Vec<String> {
         let st = self.state.lock().unwrap();
-        st.inventory.machines.iter().filter(|m| link::current(&m.id).is_some()).map(|m| m.id.clone()).collect()
+        st.inventory
+            .machines
+            .iter()
+            .filter(|m| link::current(&m.id).is_some())
+            .map(|m| m.id.clone())
+            .collect()
     }
 }
 
@@ -279,7 +342,10 @@ fn device(p: &tailscale::Peer) -> TailnetDevice {
 
 /// The same apart from when it was read.
 fn same(a: &TailnetDevice, b: &TailnetDevice) -> bool {
-    TailnetDevice { read_at: b.read_at, ..a.clone() } == *b
+    TailnetDevice {
+        read_at: b.read_at,
+        ..a.clone()
+    } == *b
 }
 
 /// Where ssh actually goes for the machine (its config's HostName), looked
@@ -311,7 +377,11 @@ fn route_signature() -> String {
             s.local_addr()
         })
     };
-    let v4 = from("0.0.0.0:0", "1.1.1.1:53").map(|a| a.ip().to_string()).unwrap_or_default();
-    let v6 = from("[::]:0", "[2606:4700:4700::1111]:53").map(|a| a.ip().to_string()).unwrap_or_default();
+    let v4 = from("0.0.0.0:0", "1.1.1.1:53")
+        .map(|a| a.ip().to_string())
+        .unwrap_or_default();
+    let v6 = from("[::]:0", "[2606:4700:4700::1111]:53")
+        .map(|a| a.ip().to_string())
+        .unwrap_or_default();
     format!("{v4} {v6}").trim().to_string()
 }

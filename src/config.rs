@@ -38,11 +38,24 @@ impl Paths {
     /// `~/.config/muxin` ($XDG_CONFIG_HOME on Linux), `%APPDATA%\muxin` on Windows.
     pub fn resolve(dir: Option<PathBuf>, inventory: Option<PathBuf>) -> Paths {
         let base = config_base();
-        let chosen = dir.or_else(|| std::env::var_os("MUXIN_HOME").map(PathBuf::from)).or_else(|| std::env::var_os("MUXEN_HOME").map(PathBuf::from));
+        let chosen = dir
+            .or_else(|| std::env::var_os("MUXIN_HOME").map(PathBuf::from))
+            .or_else(|| std::env::var_os("MUXEN_HOME").map(PathBuf::from));
         // Only the default folder takes over the old default folder's files; a
         // folder that was asked for keeps to itself.
-        let dir = chosen.clone().unwrap_or_else(|| base.as_ref().map(|b| b.join("muxin")).unwrap_or_else(|| PathBuf::from(".muxin")));
-        migrate(&dir, if chosen.is_some() { None } else { base.as_deref() });
+        let dir = chosen.clone().unwrap_or_else(|| {
+            base.as_ref()
+                .map(|b| b.join("muxin"))
+                .unwrap_or_else(|| PathBuf::from(".muxin"))
+        });
+        migrate(
+            &dir,
+            if chosen.is_some() {
+                None
+            } else {
+                base.as_deref()
+            },
+        );
         let config = dir.join("config.toml");
         Paths {
             inventory: inventory.unwrap_or_else(|| config.clone()),
@@ -61,7 +74,9 @@ fn config_base() -> Option<PathBuf> {
     if cfg!(windows) {
         dirs::config_dir()
     } else {
-        std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| dirs::home_dir().map(|h| h.join(".config")))
+        std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .or_else(|| dirs::home_dir().map(|h| h.join(".config")))
     }
 }
 
@@ -75,8 +90,18 @@ fn migrate(dir: &Path, base: Option<&Path>) {
         return;
     }
     const OLD_FILES: [&str; 3] = ["fleet.toml", "settings.json", "ui.json"];
-    let candidates = [Some(dir.to_path_buf()), base.map(|b| b.join("muxen")), base.map(|b| b.join("openrunner"))];
-    let Some(old) = candidates.into_iter().flatten().find(|d| OLD_FILES.iter().any(|f| d.join(f).exists())) else { return };
+    let candidates = [
+        Some(dir.to_path_buf()),
+        base.map(|b| b.join("muxen")),
+        base.map(|b| b.join("openrunner")),
+    ];
+    let Some(old) = candidates
+        .into_iter()
+        .flatten()
+        .find(|d| OLD_FILES.iter().any(|f| d.join(f).exists()))
+    else {
+        return;
+    };
     if std::fs::create_dir_all(dir).is_err() {
         return;
     }
@@ -84,23 +109,43 @@ fn migrate(dir: &Path, base: Option<&Path>) {
         copy_dir(&old, dir, &OLD_FILES);
     }
     let mut text = std::fs::read_to_string(old.join("fleet.toml")).unwrap_or_default();
-    for (file, key, camel) in [("settings.json", "settings", true), ("ui.json", "ui", false)] {
-        let Some(value) = std::fs::read_to_string(old.join(file)).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()) else { continue };
+    for (file, key, camel) in [
+        ("settings.json", "settings", true),
+        ("ui.json", "ui", false),
+    ] {
+        let Some(value) = std::fs::read_to_string(old.join(file))
+            .ok()
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        else {
+            continue;
+        };
         let value = json_for_toml(value, camel);
-        match toml::Value::try_from(&value).map_err(|e| e.to_string()).and_then(|v| set_section(&text, key, &v)) {
+        match toml::Value::try_from(&value)
+            .map_err(|e| e.to_string())
+            .and_then(|v| set_section(&text, key, &v))
+        {
             Ok(t) => text = t,
-            Err(e) => tracing::warn!("couldn't bring {} into config.toml: {e}", display_path(&old.join(file))),
+            Err(e) => tracing::warn!(
+                "couldn't bring {} into config.toml: {e}",
+                display_path(&old.join(file))
+            ),
         }
     }
     match write_atomic(&config, text.as_bytes()) {
-        Ok(()) => tracing::info!("moved Muxin's settings from {} into {}", display_path(&old), display_path(&config)),
+        Ok(()) => tracing::info!(
+            "moved Muxin's settings from {} into {}",
+            display_path(&old),
+            display_path(&config)
+        ),
         Err(e) => tracing::warn!("couldn't write {}: {e:#}", display_path(&config)),
     }
 }
 
 /// Copies a folder's contents (but `skip`) into another, recursively.
 fn copy_dir(from: &Path, to: &Path, skip: &[&str]) {
-    let Ok(entries) = std::fs::read_dir(from) else { return };
+    let Ok(entries) = std::fs::read_dir(from) else {
+        return;
+    };
     for e in entries.flatten() {
         let name = e.file_name();
         if skip.iter().any(|s| name == *s) {
@@ -124,10 +169,21 @@ fn json_for_toml(v: serde_json::Value, camel: bool) -> serde_json::Value {
         Value::Object(map) => Value::Object(
             map.into_iter()
                 .filter(|(_, v)| !v.is_null())
-                .map(|(k, v)| (if camel { snake_case(&k) } else { k }, json_for_toml(v, camel)))
+                .map(|(k, v)| {
+                    (
+                        if camel { snake_case(&k) } else { k },
+                        json_for_toml(v, camel),
+                    )
+                })
                 .collect(),
         ),
-        Value::Array(items) => Value::Array(items.into_iter().filter(|v| !v.is_null()).map(|v| json_for_toml(v, camel)).collect()),
+        Value::Array(items) => Value::Array(
+            items
+                .into_iter()
+                .filter(|v| !v.is_null())
+                .map(|v| json_for_toml(v, camel))
+                .collect(),
+        ),
         other => other,
     }
 }
@@ -153,7 +209,9 @@ const CONFIG_HEADER: &str = "# Muxin: settings, look and machines. The app write
 /// Reads one section of config.toml (`[settings]`, `[ui]`), defaults if it's
 /// missing or doesn't read.
 pub fn read_section<T: serde::de::DeserializeOwned + Default>(path: &Path, key: &str) -> T {
-    let Ok(text) = std::fs::read_to_string(path) else { return T::default() };
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return T::default();
+    };
     let table = match text.parse::<toml::Table>() {
         Ok(t) => t,
         Err(e) => {
@@ -164,7 +222,11 @@ pub fn read_section<T: serde::de::DeserializeOwned + Default>(path: &Path, key: 
     match table.get(key).cloned().map(|v| v.try_into::<T>()) {
         Some(Ok(v)) => v,
         Some(Err(e)) => {
-            tracing::warn!("ignoring [{key}] in {}: {}", display_path(path), e.to_string().trim());
+            tracing::warn!(
+                "ignoring [{key}] in {}: {}",
+                display_path(path),
+                e.to_string().trim()
+            );
             T::default()
         }
         None => T::default(),
@@ -179,9 +241,13 @@ pub fn write_section<T: Serialize>(path: &Path, key: &str, value: &T) -> Result<
 /// `text` with `[key]` replaced by `value`: where it was, or (new) at the top,
 /// above the machines.
 pub fn set_section<T: Serialize>(text: &str, key: &str, value: &T) -> Result<String, String> {
-    let mut doc: toml_edit::DocumentMut = text.parse().map_err(|e: toml_edit::TomlError| format!("config.toml doesn't read: {}", e.to_string().trim()))?;
+    let mut doc: toml_edit::DocumentMut = text.parse().map_err(|e: toml_edit::TomlError| {
+        format!("config.toml doesn't read: {}", e.to_string().trim())
+    })?;
     let rendered = toml::to_string(value).map_err(|e| e.to_string())?;
-    let fresh: toml_edit::DocumentMut = rendered.parse().map_err(|e: toml_edit::TomlError| e.to_string())?;
+    let fresh: toml_edit::DocumentMut = rendered
+        .parse()
+        .map_err(|e: toml_edit::TomlError| e.to_string())?;
     let mut table = fresh.as_table().clone();
     table.set_implicit(false);
     doc.insert(key, toml_edit::Item::Table(table));
@@ -209,12 +275,25 @@ pub fn set_section<T: Serialize>(text: &str, key: &str, value: &T) -> Result<Str
     let first = ["settings", "ui"].into_iter().find(|k| doc.contains_key(k));
     for k in ["settings", "ui"] {
         if let Some(t) = doc.get_mut(k).and_then(|i| i.as_table_mut()) {
-            t.decor_mut().set_prefix(if Some(k) == first { CONFIG_HEADER } else { "\n" });
+            t.decor_mut().set_prefix(if Some(k) == first {
+                CONFIG_HEADER
+            } else {
+                "\n"
+            });
         }
     }
     // A blank line between the sections and the first machine.
-    if let Some(first) = doc.get_mut("machine").and_then(|m| m.as_array_of_tables_mut()).and_then(|a| a.get_mut(0)) {
-        let p = first.decor().prefix().and_then(|p| p.as_str()).unwrap_or("").to_string();
+    if let Some(first) = doc
+        .get_mut("machine")
+        .and_then(|m| m.as_array_of_tables_mut())
+        .and_then(|a| a.get_mut(0))
+    {
+        let p = first
+            .decor()
+            .prefix()
+            .and_then(|p| p.as_str())
+            .unwrap_or("")
+            .to_string();
         if !p.starts_with('\n') {
             first.decor_mut().set_prefix(format!("\n{p}"));
         }
@@ -351,7 +430,10 @@ pub struct VmRef {
 
 /// Cloud machines destroyed lately, from cloud-history.json.
 pub fn read_cloud_history(path: &Path) -> Vec<DestroyedCloud> {
-    std::fs::read_to_string(path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
 }
 
 /// Adds one (replacing an earlier entry for the same droplet) and forgets
@@ -384,7 +466,9 @@ impl MachineSpec {
             // A loopback address with a port, user or ssh options of its own
             // is something else reached through a forwarded port (a VM's), not
             // this computer.
-            "localhost" | "127.0.0.1" | "::1" => self.port.is_none() && self.user.is_none() && self.ssh_options.is_empty(),
+            "localhost" | "127.0.0.1" | "::1" => {
+                self.port.is_none() && self.user.is_none() && self.ssh_options.is_empty()
+            }
             _ => false,
         }
     }
@@ -402,7 +486,10 @@ impl MachineSpec {
     /// of Muxin reaching it.
     pub fn refuse_if_disconnected(&self) -> Result<(), String> {
         if self.disconnected {
-            return Err(format!("{} is disconnected. Connect to it first.", self.name));
+            return Err(format!(
+                "{} is disconnected. Connect to it first.",
+                self.name
+            ));
         }
         Ok(())
     }
@@ -416,27 +503,38 @@ pub struct Inventory {
 
 impl Inventory {
     pub fn parse(text: &str) -> Result<Inventory> {
-        let file: InventoryFile = toml::from_str(text).map_err(|e| anyhow::anyhow!("{}", e.to_string().trim()))?;
-        let mut inv = Inventory { machines: Vec::new(), warnings: Vec::new() };
+        let file: InventoryFile =
+            toml::from_str(text).map_err(|e| anyhow::anyhow!("{}", e.to_string().trim()))?;
+        let mut inv = Inventory {
+            machines: Vec::new(),
+            warnings: Vec::new(),
+        };
         let mut ids = HashSet::new();
         let mut runner_owner: HashMap<String, String> = HashMap::new();
 
         for mut m in file.machines {
             m.name = m.name.trim().to_string();
             if m.name.is_empty() {
-                inv.warnings.push("A [[machine]] has an empty name and was skipped.".into());
+                inv.warnings
+                    .push("A [[machine]] has an empty name and was skipped.".into());
                 continue;
             }
             let id = assign_machine_id(&m.name, &m.id, &mut ids);
             if id != machine_id_base(&m.name, &m.id) {
-                inv.warnings.push(format!("Two machines are called \"{}\"; the second one is shown as \"{id}\".", m.name));
+                inv.warnings.push(format!(
+                    "Two machines are called \"{}\"; the second one is shown as \"{id}\".",
+                    m.name
+                ));
             }
             m.id = id;
             m.runners.retain(|r| !r.trim().is_empty());
             for r in &m.runners {
                 if let Some(other) = runner_owner.insert(r.to_ascii_lowercase(), m.name.clone()) {
                     if other != m.name {
-                        inv.warnings.push(format!("Runner \"{r}\" is listed under both {other} and {}.", m.name));
+                        inv.warnings.push(format!(
+                            "Runner \"{r}\" is listed under both {other} and {}.",
+                            m.name
+                        ));
                     }
                 }
             }
@@ -446,13 +544,18 @@ impl Inventory {
     }
 
     pub fn load(path: &Path) -> Result<Inventory> {
-        let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", display_path(path)))?;
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("reading {}", display_path(path)))?;
         Inventory::parse(&text)
     }
 }
 
 fn machine_id_base(name: &str, explicit_id: &str) -> String {
-    if explicit_id.trim().is_empty() { slug(name) } else { slug(explicit_id) }
+    if explicit_id.trim().is_empty() {
+        slug(name)
+    } else {
+        slug(explicit_id)
+    }
 }
 
 /// A machine's id: its `id` (or `name`) slugged, with "-2", "-3"... appended to
@@ -517,7 +620,11 @@ pub fn local_hostname() -> String {
         .or_else(|| std::process::Command::new("hostname").output().ok())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_default();
-    if raw.is_empty() { "This computer".into() } else { raw }
+    if raw.is_empty() {
+        "This computer".into()
+    } else {
+        raw
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -579,11 +686,23 @@ impl Default for CloudSettings {
 
 /// Common places people keep code, a few levels deep, plus repos sitting right in the home folder.
 pub fn default_code_folders() -> Vec<String> {
-    ["~/Developer", "~/code", "~/Code", "~/src", "~/projects", "~/Projects", "~/repos", "~/git", "~/dev", "~/work", "~/workspace"]
-        .iter()
-        .map(|d| format!("{d}:4"))
-        .chain(["~/muxen/workspaces:2".to_string(), "~:1".to_string()])
-        .collect()
+    [
+        "~/Developer",
+        "~/code",
+        "~/Code",
+        "~/src",
+        "~/projects",
+        "~/Projects",
+        "~/repos",
+        "~/git",
+        "~/dev",
+        "~/work",
+        "~/workspace",
+    ]
+    .iter()
+    .map(|d| format!("{d}:4"))
+    .chain(["~/muxen/workspaces:2".to_string(), "~:1".to_string()])
+    .collect()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -619,14 +738,23 @@ impl Default for Settings {
 
 impl Default for GitHubSettings {
     fn default() -> Self {
-        GitHubSettings { orgs: Vec::new(), repos: Vec::new(), scan_repos: 10, api_url: "https://api.github.com".into(), account: String::new(), account_machine: String::new() }
+        GitHubSettings {
+            orgs: Vec::new(),
+            repos: Vec::new(),
+            scan_repos: 10,
+            api_url: "https://api.github.com".into(),
+            account: String::new(),
+            account_machine: String::new(),
+        }
     }
 }
 
 impl Settings {
     /// `[settings]` in config.toml.
     pub fn load(path: &Path) -> Settings {
-        read_section::<Settings>(path, "settings").normalized().unwrap_or_default()
+        read_section::<Settings>(path, "settings")
+            .normalized()
+            .unwrap_or_default()
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
@@ -656,7 +784,8 @@ impl Settings {
                 continue;
             }
             match repo.split_once('/') {
-                Some((owner, name)) if valid_name(owner) && valid_name(name) && !name.contains('/') => {}
+                Some((owner, name))
+                    if valid_name(owner) && valid_name(name) && !name.contains('/') => {}
                 _ => return Err(format!("\"{raw}\" isn't a repository. Use owner/name.")),
             }
             if seen.insert(repo.to_ascii_lowercase()) {
@@ -669,14 +798,28 @@ impl Settings {
         self.favorite_repos = std::mem::take(&mut self.favorite_repos)
             .iter()
             .map(|r| strip_github_url(r))
-            .filter(|r| r.split_once('/').is_some_and(|(o, n)| valid_name(o) && valid_name(n) && !n.contains('/')))
+            .filter(|r| {
+                r.split_once('/')
+                    .is_some_and(|(o, n)| valid_name(o) && valid_name(n) && !n.contains('/'))
+            })
             .filter(|r| seen.insert(r.to_ascii_lowercase()))
             .collect();
         self.github.scan_repos = self.github.scan_repos.min(50);
-        self.github.account = self.github.account.trim().trim_start_matches('@').to_string();
+        self.github.account = self
+            .github
+            .account
+            .trim()
+            .trim_start_matches('@')
+            .to_string();
         let api = self.github.api_url.trim().trim_end_matches('/');
-        self.github.api_url = if api.is_empty() { "https://api.github.com".into() } else { api.into() };
-        if !self.github.api_url.starts_with("https://") && !self.github.api_url.starts_with("http://") {
+        self.github.api_url = if api.is_empty() {
+            "https://api.github.com".into()
+        } else {
+            api.into()
+        };
+        if !self.github.api_url.starts_with("https://")
+            && !self.github.api_url.starts_with("http://")
+        {
             return Err("The GitHub API URL must start with https://".into());
         }
         self.github_poll_seconds = self.github_poll_seconds.clamp(10, 3600);
@@ -697,7 +840,10 @@ pub fn strip_github_url(raw: &str) -> String {
 }
 
 fn valid_name(s: &str) -> bool {
-    !s.is_empty() && s.len() <= 100 && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    !s.is_empty()
+        && s.len() <= 100
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
 // ---------------------------------------------------------------------------
@@ -719,7 +865,10 @@ pub struct PersistedState {
 
 impl PersistedState {
     pub fn load(path: &Path) -> PersistedState {
-        std::fs::read_to_string(path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or_default()
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
@@ -748,8 +897,17 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let entry = |id: u64, at: &str| DestroyedCloud {
             name: format!("dev-{id}"),
-            cloud: CloudRef { provider: "digitalocean".into(), id, region: "nyc3".into(), size: "s-1vcpu-1gb".into(), price_hourly: 0.00893, created_at: "2026-10-09T18:53:17Z".into() },
-            destroyed_at: DateTime::parse_from_rfc3339(at).unwrap().with_timezone(&Utc),
+            cloud: CloudRef {
+                provider: "digitalocean".into(),
+                id,
+                region: "nyc3".into(),
+                size: "s-1vcpu-1gb".into(),
+                price_hourly: 0.00893,
+                created_at: "2026-10-09T18:53:17Z".into(),
+            },
+            destroyed_at: DateTime::parse_from_rfc3339(at)
+                .unwrap()
+                .with_timezone(&Utc),
         };
         assert!(read_cloud_history(&path).is_empty());
         add_cloud_history(&path, entry(1, "2025-01-01T00:00:00Z")).unwrap();
@@ -766,17 +924,36 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("muxin-migrate-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("fleet.toml"), "# my machines\n\n[[machine]]\nname = \"Box\" # the NUC\nhost = \"box\"\n").unwrap();
+        std::fs::write(
+            dir.join("fleet.toml"),
+            "# my machines\n\n[[machine]]\nname = \"Box\" # the NUC\nhost = \"box\"\n",
+        )
+        .unwrap();
         std::fs::write(dir.join("settings.json"), r#"{"github":{"orgs":["acme"],"repos":[],"scanRepos":7,"apiUrl":"https://api.github.com","account":"","accountMachine":""},"githubPollSeconds":30,"checkIntervalMinutes":5,"shareClipboard":false}"#).unwrap();
         std::fs::write(dir.join("ui.json"), r#"{"mode":"dark","icon_style":"tiles","shortcuts":{"jobs":"ctrl-j"},"desktops":[],"path":null}"#).unwrap();
         migrate(&dir, None);
 
         let config = dir.join("config.toml");
         let text = std::fs::read_to_string(&config).unwrap();
-        assert!(text.find("[settings]").unwrap() < text.find("[[machine]]").unwrap(), "settings come first:\n{text}");
-        assert!(text.contains("# the NUC"), "comments on machines are kept:\n{text}");
+        assert!(
+            text.find("[settings]").unwrap() < text.find("[[machine]]").unwrap(),
+            "settings come first:\n{text}"
+        );
+        assert!(
+            text.contains("# the NUC"),
+            "comments on machines are kept:\n{text}"
+        );
         let s = Settings::load(&config);
-        assert_eq!((s.github.orgs.clone(), s.github.scan_repos, s.github_poll_seconds, s.check_interval_minutes, s.share_clipboard), (vec!["acme".to_string()], 7, 30, 5, false));
+        assert_eq!(
+            (
+                s.github.orgs.clone(),
+                s.github.scan_repos,
+                s.github_poll_seconds,
+                s.check_interval_minutes,
+                s.share_clipboard
+            ),
+            (vec!["acme".to_string()], 7, 30, 5, false)
+        );
         let ui: toml::Table = read_section(&config, "ui");
         assert_eq!(ui.get("icon_style").and_then(|v| v.as_str()), Some("tiles"));
         assert_eq!(Inventory::load(&config).unwrap().machines[0].name, "Box");

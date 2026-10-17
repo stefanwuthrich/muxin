@@ -24,21 +24,42 @@ pub struct NetworkHost {
 
 /// Apple devices that aren't computers (by their advertised model).
 fn not_a_computer(model: &str) -> bool {
-    ["AudioAccessory", "AppleTV", "iPhone", "iPad", "Watch", "RealityDevice", "iPod"].iter().any(|p| model.starts_with(p))
+    [
+        "AudioAccessory",
+        "AppleTV",
+        "iPhone",
+        "iPad",
+        "Watch",
+        "RealityDevice",
+        "iPod",
+    ]
+    .iter()
+    .any(|p| model.starts_with(p))
 }
 
 /// Listens on the local network for `listen`, then lists what answered.
 pub fn browse(listen: Duration) -> Vec<NetworkHost> {
-    let Ok(daemon) = mdns_sd::ServiceDaemon::new() else { return Vec::new() };
-    let types = ["_ssh._tcp.local.", "_sftp-ssh._tcp.local.", "_companion-link._tcp.local."];
-    let receivers: Vec<(&str, _)> = types.iter().filter_map(|t| daemon.browse(t).ok().map(|rx| (*t, rx))).collect();
+    let Ok(daemon) = mdns_sd::ServiceDaemon::new() else {
+        return Vec::new();
+    };
+    let types = [
+        "_ssh._tcp.local.",
+        "_sftp-ssh._tcp.local.",
+        "_companion-link._tcp.local.",
+    ];
+    let receivers: Vec<(&str, _)> = types
+        .iter()
+        .filter_map(|t| daemon.browse(t).ok().map(|rx| (*t, rx)))
+        .collect();
     // By Bonjour host name, lowercased.
     let mut found: BTreeMap<String, NetworkHost> = BTreeMap::new();
     let deadline = Instant::now() + listen;
     while Instant::now() < deadline {
         for (ty, rx) in &receivers {
             while let Ok(event) = rx.try_recv() {
-                let mdns_sd::ServiceEvent::ServiceResolved(s) = event else { continue };
+                let mdns_sd::ServiceEvent::ServiceResolved(s) = event else {
+                    continue;
+                };
                 let host = s.get_hostname().trim_end_matches('.').to_string();
                 if host.is_empty() {
                     continue;
@@ -49,13 +70,15 @@ pub fn browse(listen: Duration) -> Vec<NetworkHost> {
                     continue;
                 }
                 let instance = s.get_fullname().split('.').next().unwrap_or("").to_string();
-                let entry = found.entry(host.to_ascii_lowercase()).or_insert_with(|| NetworkHost {
-                    name: host.trim_end_matches(".local").to_string(),
-                    host: host.clone(),
-                    addresses: Vec::new(),
-                    ssh: false,
-                    mac: false,
-                });
+                let entry = found
+                    .entry(host.to_ascii_lowercase())
+                    .or_insert_with(|| NetworkHost {
+                        name: host.trim_end_matches(".local").to_string(),
+                        host: host.clone(),
+                        addresses: Vec::new(),
+                        ssh: false,
+                        mac: false,
+                    });
                 // The name people gave it reads better than the host name.
                 if apple && !instance.is_empty() {
                     entry.name = instance;
@@ -74,7 +97,13 @@ pub fn browse(listen: Duration) -> Vec<NetworkHost> {
     }
     let _ = daemon.shutdown();
     let mut hosts: Vec<NetworkHost> = found.into_values().collect();
-    hosts.sort_by(|a, b| b.ssh.cmp(&a.ssh).then(a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase())));
+    hosts.sort_by(|a, b| {
+        b.ssh.cmp(&a.ssh).then(
+            a.name
+                .to_ascii_lowercase()
+                .cmp(&b.name.to_ascii_lowercase()),
+        )
+    });
     hosts
 }
 

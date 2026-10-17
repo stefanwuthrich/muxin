@@ -86,7 +86,13 @@ impl ComposeProject {
     }
 
     pub fn log_source(&self) -> super::logs::LogSource {
-        super::logs::LogSource { kind: "compose".into(), target: self.name.clone(), name: self.name.clone(), detail: self.first_file().into(), ..Default::default() }
+        super::logs::LogSource {
+            kind: "compose".into(),
+            target: self.name.clone(),
+            name: self.name.clone(),
+            detail: self.first_file().into(),
+            ..Default::default()
+        }
     }
 }
 
@@ -203,7 +209,11 @@ pub struct ComposeContainer {
 impl ComposeService {
     /// running, partly running ("1 of 2"), exited, ... or "not created".
     pub fn state(&self) -> String {
-        let running = self.containers.iter().filter(|c| c.state == "running").count();
+        let running = self
+            .containers
+            .iter()
+            .filter(|c| c.state == "running")
+            .count();
         match (self.containers.len(), running) {
             (0, _) => "not created".into(),
             (n, r) if r == n => "running".into(),
@@ -218,7 +228,10 @@ impl ComposeService {
 
     /// healthy, unhealthy or starting (the worst of its containers).
     pub fn health(&self) -> &str {
-        ["unhealthy", "starting", "healthy"].into_iter().find(|h| self.containers.iter().any(|c| c.health == *h)).unwrap_or("")
+        ["unhealthy", "starting", "healthy"]
+            .into_iter()
+            .find(|h| self.containers.iter().any(|c| c.health == *h))
+            .unwrap_or("")
     }
 }
 
@@ -284,54 +297,122 @@ impl Service {
             "brew" => "system",
             _ => "service",
         };
-        super::logs::LogSource { kind: kind.into(), target: self.target.clone(), name: self.name.clone(), detail: self.detail.clone(), user: self.user, ..Default::default() }
+        super::logs::LogSource {
+            kind: kind.into(),
+            target: self.target.clone(),
+            name: self.name.clone(),
+            detail: self.detail.clone(),
+            user: self.user,
+            ..Default::default()
+        }
     }
 
     /// Whether stopping it could cut Muxin off from the machine.
     pub fn keeps_muxen_connected(&self) -> bool {
         let n = self.name.to_lowercase();
-        ["ssh", "sshd", "tailscaled", "networkmanager", "systemd-networkd", "networking", "systemd-resolved", "muxen-agent", "dbus", "wpa_supplicant"].contains(&n.as_str())
+        [
+            "ssh",
+            "sshd",
+            "tailscaled",
+            "networkmanager",
+            "systemd-networkd",
+            "networking",
+            "systemd-resolved",
+            "muxen-agent",
+            "dbus",
+            "wpa_supplicant",
+        ]
+        .contains(&n.as_str())
     }
 }
 
 impl Engine {
     /// A starting compose.yaml in a folder on the machine (~/compose/<name>
     /// unless given); its path.
-    pub async fn compose_new(self: &Arc<Self>, machine_id: &str, name: &str, folder: Option<&str>) -> Result<String, String> {
-        let (spec, probe) = self.machine(machine_id).ok_or_else(|| format!("No machine called {machine_id}."))?;
+    pub async fn compose_new(
+        self: &Arc<Self>,
+        machine_id: &str,
+        name: &str,
+        folder: Option<&str>,
+    ) -> Result<String, String> {
+        let (spec, probe) = self
+            .machine(machine_id)
+            .ok_or_else(|| format!("No machine called {machine_id}."))?;
         super::sessions::agent::ensure(&spec, probe.as_ref()).await?;
-        let reply = super::sessions::agent::ctl(&spec, &json!({ "op": "compose_new", "name": name, "folder": folder.unwrap_or("") })).await?;
-        reply["file"].as_str().map(str::to_string).ok_or_else(|| "The machine didn't say where it put the file.".into())
+        let reply = super::sessions::agent::ctl(
+            &spec,
+            &json!({ "op": "compose_new", "name": name, "folder": folder.unwrap_or("") }),
+        )
+        .await?;
+        reply["file"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| "The machine didn't say where it put the file.".into())
     }
 
     /// A Compose project's parts and its containers' state.
-    pub async fn compose_describe(self: &Arc<Self>, machine_id: &str, project: &ComposeProject) -> Result<ComposeGraph, String> {
-        let (spec, probe) = self.machine(machine_id).ok_or_else(|| format!("No machine called {machine_id}."))?;
+    pub async fn compose_describe(
+        self: &Arc<Self>,
+        machine_id: &str,
+        project: &ComposeProject,
+    ) -> Result<ComposeGraph, String> {
+        let (spec, probe) = self
+            .machine(machine_id)
+            .ok_or_else(|| format!("No machine called {machine_id}."))?;
         if self.demo_world().is_some() {
             return Ok(demo_compose());
         }
         super::sessions::agent::ensure(&spec, probe.as_ref()).await?;
-        let reply = super::sessions::agent::ctl(&spec, &json!({ "op": "compose_describe", "project": project.name, "files": project.files })).await?;
-        serde_json::from_value(reply).map_err(|_| format!("{} described {} in a way Muxin can't read.", spec.name, project.name))
+        let reply = super::sessions::agent::ctl(
+            &spec,
+            &json!({ "op": "compose_describe", "project": project.name, "files": project.files }),
+        )
+        .await?;
+        serde_json::from_value(reply).map_err(|_| {
+            format!(
+                "{} described {} in a way Muxin can't read.",
+                spec.name, project.name
+            )
+        })
     }
 
     /// A machine's services and containers; with what they use when `stats`
     /// (a second or two slower: it's measured).
-    pub async fn services(self: &Arc<Self>, machine_id: &str, stats: bool) -> Result<ServiceList, String> {
-        let (spec, probe) = self.machine(machine_id).ok_or_else(|| format!("No machine called {machine_id}."))?;
+    pub async fn services(
+        self: &Arc<Self>,
+        machine_id: &str,
+        stats: bool,
+    ) -> Result<ServiceList, String> {
+        let (spec, probe) = self
+            .machine(machine_id)
+            .ok_or_else(|| format!("No machine called {machine_id}."))?;
         if self.demo_world().is_some() {
             return Ok(demo());
         }
         super::sessions::agent::ensure(&spec, probe.as_ref()).await?;
-        let reply = super::sessions::agent::ctl(&spec, &json!({ "op": "services", "stats": stats })).await?;
-        serde_json::from_value(reply).map_err(|_| format!("{} listed its services in a way Muxin can't read.", spec.name))
+        let reply =
+            super::sessions::agent::ctl(&spec, &json!({ "op": "services", "stats": stats }))
+                .await?;
+        serde_json::from_value(reply).map_err(|_| {
+            format!(
+                "{} listed its services in a way Muxin can't read.",
+                spec.name
+            )
+        })
     }
 
     /// Starts, stops or restarts one (`enable`, `disable`: whether a systemd
     /// service starts at boot). The system's services take the user's
     /// password (the app asks for it once, then keeps it in memory).
-    pub async fn service_action(self: &Arc<Self>, machine_id: &str, service: &Service, action: &str) -> Result<(), AddDisplayError> {
-        let (spec, probe) = self.machine(machine_id).ok_or_else(|| format!("No machine called {machine_id}."))?;
+    pub async fn service_action(
+        self: &Arc<Self>,
+        machine_id: &str,
+        service: &Service,
+        action: &str,
+    ) -> Result<(), AddDisplayError> {
+        let (spec, probe) = self
+            .machine(machine_id)
+            .ok_or_else(|| format!("No machine called {machine_id}."))?;
         if self.demo_world().is_some() {
             return Err("The demo doesn't change services.".into());
         }
@@ -361,38 +442,141 @@ fn demo() -> ServiceList {
         at_boot: at_boot.into(),
         ..Default::default()
     };
-    let ctr = |name: &str, image: &str, state: &str, status: &str| Service { kind: "docker".into(), target: name.into(), name: name.into(), detail: image.into(), state: state.into(), status: status.into(), ..Default::default() };
+    let ctr = |name: &str, image: &str, state: &str, status: &str| Service {
+        kind: "docker".into(),
+        target: name.into(),
+        name: name.into(),
+        detail: image.into(),
+        state: state.into(),
+        status: status.into(),
+        ..Default::default()
+    };
     ServiceList {
         services: vec![
             svc("api", "Beacon API", "failed", "enabled"),
-            svc("nginx", "A high performance web server", "running", "enabled"),
+            svc(
+                "nginx",
+                "A high performance web server",
+                "running",
+                "enabled",
+            ),
             svc("postgresql", "PostgreSQL RDBMS", "running", "enabled"),
-            svc("actions.runner.beacon-01", "GitHub Actions Runner", "running", "enabled"),
-            svc("redis-server", "Advanced key-value store", "dead", "disabled"),
+            svc(
+                "actions.runner.beacon-01",
+                "GitHub Actions Runner",
+                "running",
+                "enabled",
+            ),
+            svc(
+                "redis-server",
+                "Advanced key-value store",
+                "dead",
+                "disabled",
+            ),
         ],
-        containers: vec![ctr("postgres", "postgres:17", "running", "Up 3 days"), ctr("minio", "minio/minio", "exited", "Exited (0) 2 weeks ago")],
+        containers: vec![
+            ctr("postgres", "postgres:17", "running", "Up 3 days"),
+            ctr("minio", "minio/minio", "exited", "Exited (0) 2 weeks ago"),
+        ],
         ..Default::default()
     }
 }
 
 /// The demo's shop: a web front, an API, a worker, Postgres and Redis.
 fn demo_compose() -> ComposeGraph {
-    let up = |name: &str, health: &str| vec![ComposeContainer { name: format!("shop-{name}-1"), state: "running".into(), health: health.into(), status: "Up 3 days".into() }];
-    let dep = |name: &str, condition: &str| ComposeDependency { name: name.into(), condition: condition.into() };
-    let vol = |kind: &str, source: &str, target: &str| ComposeMount { kind: kind.into(), source: source.into(), target: target.into(), read_only: kind == "bind" };
-    let svc = |name: &str, image: &str| ComposeService { name: name.into(), image: image.into(), networks: vec!["back".into()], restart: "unless-stopped".into(), containers: up(name, ""), ..Default::default() };
+    let up = |name: &str, health: &str| {
+        vec![ComposeContainer {
+            name: format!("shop-{name}-1"),
+            state: "running".into(),
+            health: health.into(),
+            status: "Up 3 days".into(),
+        }]
+    };
+    let dep = |name: &str, condition: &str| ComposeDependency {
+        name: name.into(),
+        condition: condition.into(),
+    };
+    let vol = |kind: &str, source: &str, target: &str| ComposeMount {
+        kind: kind.into(),
+        source: source.into(),
+        target: target.into(),
+        read_only: kind == "bind",
+    };
+    let svc = |name: &str, image: &str| ComposeService {
+        name: name.into(),
+        image: image.into(),
+        networks: vec!["back".into()],
+        restart: "unless-stopped".into(),
+        containers: up(name, ""),
+        ..Default::default()
+    };
     ComposeGraph {
         name: "shop".into(),
         folder: "/srv/shop".into(),
         files: vec!["/srv/shop/compose.yaml".into()],
         services: vec![
-            ComposeService { ports: vec![ComposePort { published: "8080".into(), target: "80".into(), protocol: "tcp".into(), host_ip: String::new() }], depends_on: vec![dep("api", "service_started")], networks: vec!["front".into()], volumes: vec![vol("bind", "./nginx.conf", "/etc/nginx/conf.d/default.conf")], ..svc("web", "nginx:alpine") },
-            ComposeService { depends_on: vec![dep("db", "service_healthy"), dep("cache", "service_started")], networks: vec!["front".into(), "back".into()], env: 2, ..svc("api", "traefik/whoami") },
-            ComposeService { depends_on: vec![dep("cache", "service_healthy")], ..svc("worker", "redis:8-alpine") },
-            ComposeService { volumes: vec![vol("volume", "db-data", "/var/lib/postgresql/data")], healthcheck: true, env: 3, containers: up("db", "healthy"), ..svc("db", "postgres:17-alpine") },
-            ComposeService { volumes: vec![vol("volume", "cache-data", "/data")], healthcheck: true, containers: up("cache", "healthy"), ..svc("cache", "redis:8-alpine") },
+            ComposeService {
+                ports: vec![ComposePort {
+                    published: "8080".into(),
+                    target: "80".into(),
+                    protocol: "tcp".into(),
+                    host_ip: String::new(),
+                }],
+                depends_on: vec![dep("api", "service_started")],
+                networks: vec!["front".into()],
+                volumes: vec![vol(
+                    "bind",
+                    "./nginx.conf",
+                    "/etc/nginx/conf.d/default.conf",
+                )],
+                ..svc("web", "nginx:alpine")
+            },
+            ComposeService {
+                depends_on: vec![
+                    dep("db", "service_healthy"),
+                    dep("cache", "service_started"),
+                ],
+                networks: vec!["front".into(), "back".into()],
+                env: 2,
+                ..svc("api", "traefik/whoami")
+            },
+            ComposeService {
+                depends_on: vec![dep("cache", "service_healthy")],
+                ..svc("worker", "redis:8-alpine")
+            },
+            ComposeService {
+                volumes: vec![vol("volume", "db-data", "/var/lib/postgresql/data")],
+                healthcheck: true,
+                env: 3,
+                containers: up("db", "healthy"),
+                ..svc("db", "postgres:17-alpine")
+            },
+            ComposeService {
+                volumes: vec![vol("volume", "cache-data", "/data")],
+                healthcheck: true,
+                containers: up("cache", "healthy"),
+                ..svc("cache", "redis:8-alpine")
+            },
         ],
-        networks: vec![ComposeNamed { name: "front".into(), external: false }, ComposeNamed { name: "back".into(), external: false }],
-        volumes: vec![ComposeNamed { name: "db-data".into(), external: false }, ComposeNamed { name: "cache-data".into(), external: false }],
+        networks: vec![
+            ComposeNamed {
+                name: "front".into(),
+                external: false,
+            },
+            ComposeNamed {
+                name: "back".into(),
+                external: false,
+            },
+        ],
+        volumes: vec![
+            ComposeNamed {
+                name: "db-data".into(),
+                external: false,
+            },
+            ComposeNamed {
+                name: "cache-data".into(),
+                external: false,
+            },
+        ],
     }
 }

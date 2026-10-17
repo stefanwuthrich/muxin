@@ -75,24 +75,38 @@ pub struct ProcessList {
 impl Engine {
     /// A machine's processes (busiest first) and GPUs.
     pub async fn processes(self: &Arc<Self>, machine_id: &str) -> Result<ProcessList, String> {
-        let (spec, probe) = self.machine(machine_id).ok_or_else(|| format!("No machine called {machine_id}."))?;
+        let (spec, probe) = self
+            .machine(machine_id)
+            .ok_or_else(|| format!("No machine called {machine_id}."))?;
         if self.demo_world().is_some() {
             return Ok(demo());
         }
         super::sessions::agent::ensure(&spec, probe.as_ref()).await?;
         let reply = super::sessions::agent::ctl(&spec, &json!({ "op": "processes" })).await?;
-        serde_json::from_value(reply).map_err(|_| format!("{} listed its processes in a way Muxin can't read.", spec.name))
+        serde_json::from_value(reply).map_err(|_| {
+            format!(
+                "{} listed its processes in a way Muxin can't read.",
+                spec.name
+            )
+        })
     }
 
     /// Just a machine's GPUs (for its page).
     pub async fn gpus(self: &Arc<Self>, machine_id: &str) -> Result<Vec<Gpu>, String> {
-        let (spec, probe) = self.machine(machine_id).ok_or_else(|| format!("No machine called {machine_id}."))?;
+        let (spec, probe) = self
+            .machine(machine_id)
+            .ok_or_else(|| format!("No machine called {machine_id}."))?;
         if self.demo_world().is_some() {
-            return Ok(if machine_id == "beacon" { demo().gpus } else { Vec::new() });
+            return Ok(if machine_id == "beacon" {
+                demo().gpus
+            } else {
+                Vec::new()
+            });
         }
         super::sessions::agent::ensure(&spec, probe.as_ref()).await?;
         let reply = super::sessions::agent::ctl(&spec, &json!({ "op": "gpus" })).await?;
-        serde_json::from_value(reply["gpus"].clone()).map_err(|_| format!("{} listed its GPUs in a way Muxin can't read.", spec.name))
+        serde_json::from_value(reply["gpus"].clone())
+            .map_err(|_| format!("{} listed its GPUs in a way Muxin can't read.", spec.name))
     }
 }
 
@@ -111,13 +125,42 @@ fn demo() -> ProcessList {
     };
     ProcessList {
         processes: vec![
-            p(4121, "python3", "python3 train.py --epochs 40", 312.0, 8200, Some(14_300)),
-            p(2210, "node", "node /srv/api/dist/server.js", 18.5, 420, None),
+            p(
+                4121,
+                "python3",
+                "python3 train.py --epochs 40",
+                312.0,
+                8200,
+                Some(14_300),
+            ),
+            p(
+                2210,
+                "node",
+                "node /srv/api/dist/server.js",
+                18.5,
+                420,
+                None,
+            ),
             p(1201, "nginx", "nginx: worker process", 1.2, 24, None),
-            p(912, "postgres", "postgres: 17/main: checkpointer", 0.4, 180, None),
+            p(
+                912,
+                "postgres",
+                "postgres: 17/main: checkpointer",
+                0.4,
+                180,
+                None,
+            ),
         ],
         total: 214,
         cores: 16,
-        gpus: vec![Gpu { vendor: "nvidia".into(), name: "NVIDIA GeForce RTX 4090".into(), busy: Some(87.), memory_used: Some(14_800 << 20), memory_total: Some(24_564 << 20), temperature: Some(71.), power: Some(312.) }],
+        gpus: vec![Gpu {
+            vendor: "nvidia".into(),
+            name: "NVIDIA GeForce RTX 4090".into(),
+            busy: Some(87.),
+            memory_used: Some(14_800 << 20),
+            memory_total: Some(24_564 << 20),
+            temperature: Some(71.),
+            power: Some(312.),
+        }],
     }
 }

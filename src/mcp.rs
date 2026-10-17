@@ -70,7 +70,11 @@ pub struct Session {
 impl Session {
     /// The MCP client's name from `initialize` (e.g. "claude-code"), else "mcp".
     pub fn owner(&self) -> String {
-        self.client.lock().unwrap().clone().unwrap_or_else(|| "mcp".into())
+        self.client
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| "mcp".into())
     }
 }
 
@@ -110,15 +114,27 @@ where
         let msg: Value = match serde_json::from_str(text) {
             Ok(v) => v,
             Err(e) => {
-                let _ = tx.send(error_response(Value::Null, -32700, &format!("Parse error: {e}")));
+                let _ = tx.send(error_response(
+                    Value::Null,
+                    -32700,
+                    &format!("Parse error: {e}"),
+                ));
                 continue;
             }
         };
         let Some(obj) = msg.as_object() else {
-            let _ = tx.send(error_response(Value::Null, -32600, "Expected a JSON-RPC object"));
+            let _ = tx.send(error_response(
+                Value::Null,
+                -32600,
+                "Expected a JSON-RPC object",
+            ));
             continue;
         };
-        let method = obj.get("method").and_then(Value::as_str).unwrap_or_default().to_string();
+        let method = obj
+            .get("method")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
         let params = obj.get("params").cloned().unwrap_or(Value::Null);
         let Some(id) = obj.get("id").cloned() else {
             // Notifications (initialized, cancelled, ...) need no reply.
@@ -148,15 +164,31 @@ fn error_response(id: Value, code: i64, message: &str) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
 }
 
-async fn handle(engine: &Arc<Engine>, session: &Session, method: &str, params: Value) -> Result<Value, (i64, String)> {
+async fn handle(
+    engine: &Arc<Engine>,
+    session: &Session,
+    method: &str,
+    params: Value,
+) -> Result<Value, (i64, String)> {
     match method {
         "initialize" => {
-            let client = params.pointer("/clientInfo/name").and_then(Value::as_str).map(str::trim).filter(|n| !n.is_empty());
+            let client = params
+                .pointer("/clientInfo/name")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|n| !n.is_empty());
             if let Some(name) = client {
                 *session.client.lock().unwrap() = Some(name.chars().take(64).collect());
             }
-            let requested = params.get("protocolVersion").and_then(Value::as_str).unwrap_or_default();
-            let version = PROTOCOL_VERSIONS.iter().find(|v| **v == requested).copied().unwrap_or(PROTOCOL_VERSIONS[0]);
+            let requested = params
+                .get("protocolVersion")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let version = PROTOCOL_VERSIONS
+                .iter()
+                .find(|v| **v == requested)
+                .copied()
+                .unwrap_or(PROTOCOL_VERSIONS[0]);
             Ok(json!({
                 "protocolVersion": version,
                 "capabilities": { "tools": { "listChanged": false } },
@@ -167,11 +199,18 @@ async fn handle(engine: &Arc<Engine>, session: &Session, method: &str, params: V
         "ping" => Ok(json!({})),
         "tools/list" => Ok(json!({ "tools": tools() })),
         "tools/call" => {
-            let name = params.get("name").and_then(Value::as_str).ok_or((-32602, "tools/call needs a tool name".to_string()))?;
+            let name = params
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or((-32602, "tools/call needs a tool name".to_string()))?;
             if !tools().iter().any(|t| t["name"] == name) {
                 return Err((-32602, format!("Unknown tool: {name}")));
             }
-            let args = params.get("arguments").cloned().filter(|a| !a.is_null()).unwrap_or_else(|| json!({}));
+            let args = params
+                .get("arguments")
+                .cloned()
+                .filter(|a| !a.is_null())
+                .unwrap_or_else(|| json!({}));
             Ok(call_tool(engine, session, name, args).await)
         }
         "resources/list" => Ok(json!({ "resources": [] })),
@@ -223,11 +262,20 @@ fn readable_text(tool: &str, v: &Value) -> Option<String> {
     match tool {
         "workspace_exec" => {
             let mut out = if let Some(pid) = v.get("background_pid").and_then(Value::as_u64) {
-                format!("started in the background (pid {pid}), log: {}\n", str_of("log_path"))
+                format!(
+                    "started in the background (pid {pid}), log: {}\n",
+                    str_of("log_path")
+                )
             } else if v.get("timed_out").and_then(Value::as_bool) == Some(true) {
                 format!("timed out after {} ms\n", v["duration_ms"])
             } else {
-                format!("exit code: {} ({} ms)\n", v.get("exit_code").map(|c| c.to_string()).unwrap_or_else(|| "null".into()), v["duration_ms"])
+                format!(
+                    "exit code: {} ({} ms)\n",
+                    v.get("exit_code")
+                        .map(|c| c.to_string())
+                        .unwrap_or_else(|| "null".into()),
+                    v["duration_ms"]
+                )
             };
             if v.get("truncated").and_then(Value::as_bool) == Some(true) {
                 out.push_str("(output truncated: the middle was dropped)\n");
@@ -235,7 +283,10 @@ fn readable_text(tool: &str, v: &Value) -> Option<String> {
             for stream in ["stdout", "stderr"] {
                 let text = str_of(stream);
                 if !text.is_empty() {
-                    out.push_str(&format!("\n{stream}:\n```\n{}\n```\n", text.trim_end_matches('\n')));
+                    out.push_str(&format!(
+                        "\n{stream}:\n```\n{}\n```\n",
+                        text.trim_end_matches('\n')
+                    ));
                 }
             }
             if let Some(next) = v.get("next").and_then(Value::as_str) {
@@ -244,22 +295,43 @@ fn readable_text(tool: &str, v: &Value) -> Option<String> {
             Some(out)
         }
         "workspace_read_file" => {
-            let mut out = format!("{} ({} bytes{})\n", str_of("path"), v["size"], if v["truncated"] == true { ", truncated" } else { "" });
+            let mut out = format!(
+                "{} ({} bytes{})\n",
+                str_of("path"),
+                v["size"],
+                if v["truncated"] == true {
+                    ", truncated"
+                } else {
+                    ""
+                }
+            );
             if v["binary"] == true {
                 out.push_str("(binary file; content not shown)\n");
             } else {
-                out.push_str(&format!("```\n{}\n```\n", str_of("content").trim_end_matches('\n')));
+                out.push_str(&format!(
+                    "```\n{}\n```\n",
+                    str_of("content").trim_end_matches('\n')
+                ));
             }
             Some(out)
         }
         "workspace_changes" => Some(str_of("changes").to_string()),
         "session_read" => {
             let state = match (str_of("status"), v.get("busy").and_then(Value::as_bool)) {
-                ("exited", _) => format!("exited (code {})", v.get("exit_code").map(|c| c.to_string()).unwrap_or_else(|| "?".into())),
+                ("exited", _) => format!(
+                    "exited (code {})",
+                    v.get("exit_code")
+                        .map(|c| c.to_string())
+                        .unwrap_or_else(|| "?".into())
+                ),
                 (_, Some(true)) => "running, working".into(),
                 _ => "running, idle".into(),
             };
-            Some(format!("{} — {state}\n```\n{}\n```\n", str_of("session_id"), str_of("text")))
+            Some(format!(
+                "{} — {state}\n```\n{}\n```\n",
+                str_of("session_id"),
+                str_of("text")
+            ))
         }
         _ => None,
     }
@@ -282,7 +354,12 @@ fn ok<T: Serialize>(value: T) -> Result<Value, ApiError> {
     serde_json::to_value(value).map_err(|e| ApiError::invalid(e.to_string()))
 }
 
-async fn dispatch(engine: &Arc<Engine>, session: &Session, name: &str, a: Value) -> Result<Value, ApiError> {
+async fn dispatch(
+    engine: &Arc<Engine>,
+    session: &Session,
+    name: &str,
+    a: Value,
+) -> Result<Value, ApiError> {
     match name {
         "status" | "fleet_status" => ok(api::status(engine, args(a)?, Surface::Mcp).await?),
         "get_machine" => ok(api::machine(engine, args(a)?).await?),
@@ -292,8 +369,12 @@ async fn dispatch(engine: &Arc<Engine>, session: &Session, name: &str, a: Value)
         "add_machine" => ok(api::add_machine(engine, args(a)?, Surface::Mcp).await?),
         "remove_machine" => ok(json!({ "removed": api::remove_machine(engine, args(a)?).await? })),
         "rename_machine" => ok(json!({ "renamed": api::rename_machine(engine, args(a)?).await? })),
-        "connect_machine" => ok(json!({ "machine": api::connect_machine(engine, args(a)?).await? })),
-        "install_runners" => ok(api::install_runners(engine, args(a)?, Surface::Mcp, |_| {}).await?),
+        "connect_machine" => {
+            ok(json!({ "machine": api::connect_machine(engine, args(a)?).await? }))
+        }
+        "install_runners" => {
+            ok(api::install_runners(engine, args(a)?, Surface::Mcp, |_| {}).await?)
+        }
         "runner_action" => ok(api::runner_action(engine, args(a)?, Surface::Mcp, |_| {}).await?),
         "cancel_run" => ok(api::cancel_run(engine, args(a)?, Surface::Mcp, |_| {}).await?),
         "cloud_options" => ok(api::cloud_options(engine).await),
@@ -319,13 +400,23 @@ async fn dispatch(engine: &Arc<Engine>, session: &Session, name: &str, a: Value)
         "get_settings" => ok(api::settings(engine)),
         "update_settings" => ok(api::update_settings(engine, args(a)?)?),
         "list_ssh_hosts" => ok(api::ssh_hosts(engine).await),
-        "workspace_create" => ok(api::workspace_create(engine, args(a)?, &session.owner(), Surface::Mcp).await?),
+        "workspace_create" => {
+            ok(api::workspace_create(engine, args(a)?, &session.owner(), Surface::Mcp).await?)
+        }
         "workspace_list" => ok(api::workspaces_list(engine).await),
         "workspace_get" => ok(api::workspace_get(engine, args(a)?, Surface::Mcp)?),
-        "workspace_exec" => ok(api::workspace_exec(engine, args(a)?, &session.owner(), Surface::Mcp).await?),
-        "workspace_read_file" => ok(api::workspace_read_file(engine, args(a)?, Surface::Mcp).await?),
-        "workspace_write_file" => ok(api::workspace_write_file(engine, args(a)?, Surface::Mcp).await?),
-        "workspace_list_files" => ok(api::workspace_list_files(engine, args(a)?, Surface::Mcp).await?),
+        "workspace_exec" => {
+            ok(api::workspace_exec(engine, args(a)?, &session.owner(), Surface::Mcp).await?)
+        }
+        "workspace_read_file" => {
+            ok(api::workspace_read_file(engine, args(a)?, Surface::Mcp).await?)
+        }
+        "workspace_write_file" => {
+            ok(api::workspace_write_file(engine, args(a)?, Surface::Mcp).await?)
+        }
+        "workspace_list_files" => {
+            ok(api::workspace_list_files(engine, args(a)?, Surface::Mcp).await?)
+        }
         "workspace_changes" => ok(api::workspace_changes(engine, args(a)?, Surface::Mcp).await?),
         "workspace_sync" => ok(api::workspace_sync(engine, args(a)?, Surface::Mcp).await?),
         "workspace_destroy" => ok(api::workspace_destroy(engine, args(a)?, Surface::Mcp).await?),
@@ -349,10 +440,18 @@ async fn dispatch(engine: &Arc<Engine>, session: &Session, name: &str, a: Value)
         "github_item" => ok(api::github_item(engine, args(a)?).await?),
         "local_checkouts" => ok(json!({ "checkouts": api::checkouts(engine, args(a)?).await? })),
         "git_sync" => ok(api::checkout_git(engine, args(a)?).await?),
-        "git_status" => ok(api::git_status(engine, &args::<api::GitStatusRequest>(a)?.machine_id).await?),
-        "machine_connection" => ok(api::machine_connection(engine, &args::<api::GitStatusRequest>(a)?.machine_id).await?),
+        "git_status" => {
+            ok(api::git_status(engine, &args::<api::GitStatusRequest>(a)?.machine_id).await?)
+        }
+        "machine_connection" => ok(api::machine_connection(
+            engine,
+            &args::<api::GitStatusRequest>(a)?.machine_id,
+        )
+        .await?),
         "desktop_input" => ok(api::desktop_input(engine, args(a)?).await?),
-        "desktop_displays" => ok(json!({ "displays": api::desktop_displays(engine, args(a)?).await? })),
+        "desktop_displays" => {
+            ok(json!({ "displays": api::desktop_displays(engine, args(a)?).await? }))
+        }
         "desktop_add_display" => ok(api::desktop_add_display(engine, args(a)?).await?),
         "desktop_remove_display" => ok(api::desktop_remove_display(engine, args(a)?).await?),
         "desktop_set_display" => ok(api::desktop_set_display(engine, args(a)?).await?),
@@ -376,7 +475,13 @@ async fn dispatch(engine: &Arc<Engine>, session: &Session, name: &str, a: Value)
     }
 }
 
-fn annotations(title: &str, read_only: bool, destructive: bool, idempotent: bool, open_world: bool) -> Value {
+fn annotations(
+    title: &str,
+    read_only: bool,
+    destructive: bool,
+    idempotent: bool,
+    open_world: bool,
+) -> Value {
     json!({
         "title": title,
         "readOnlyHint": read_only,
@@ -392,7 +497,8 @@ fn schema(properties: Value, required: &[&str]) -> Value {
 
 const MACHINE_ID: &str = "Machine id (a slug like \"mac-studio\"; the display name also works).";
 const DISPLAY_ID: &str = "One of the machine's displays, by its id from desktop_displays. Default: the whole desktop (Linux) or the main display (a Mac).";
-const WORKSPACE_ID: &str = "Workspace id from workspace_create or workspace_list, e.g. \"ws-7f3a2c\".";
+const WORKSPACE_ID: &str =
+    "Workspace id from workspace_create or workspace_list, e.g. \"ws-7f3a2c\".";
 const WS_PATH: &str = "Path relative to the workspace folder, e.g. \"src/main.rs\". Absolute paths and \"..\" escapes are rejected.";
 const SESSION_ID: &str = "Session id from session_list or session_start: \"<machine-id>/<name>\", e.g. \"beelink/claude-3f9a\". A bare name works when unique.";
 const RUNNER_ID: &str = "Runner id: \"<machine-id>/<runner-name>\", or \"github/<name>\" for a runner no machine lists. A bare runner name works when unique.";
@@ -1208,7 +1314,10 @@ mod tests {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     fn demo() -> Arc<Engine> {
-        Engine::new(Paths::resolve(Some(std::env::temp_dir().join("muxen-mcp-test")), None), true)
+        Engine::new(
+            Paths::resolve(Some(std::env::temp_dir().join("muxen-mcp-test")), None),
+            true,
+        )
     }
 
     #[test]
@@ -1221,11 +1330,19 @@ mod tests {
         assert_eq!(names.len(), tools.len(), "duplicate tool names");
         for t in &tools {
             let name = t["name"].as_str().unwrap();
-            assert!(name.chars().all(|c| c.is_ascii_lowercase() || c == '_'), "{name}");
+            assert!(
+                name.chars().all(|c| c.is_ascii_lowercase() || c == '_'),
+                "{name}"
+            );
             assert!(t["description"].as_str().unwrap().len() > 40, "{name}");
             assert_eq!(t["inputSchema"]["type"], "object", "{name}");
             for req in t["inputSchema"]["required"].as_array().unwrap() {
-                assert!(t["inputSchema"]["properties"].get(req.as_str().unwrap()).is_some(), "{name}: {req}");
+                assert!(
+                    t["inputSchema"]["properties"]
+                        .get(req.as_str().unwrap())
+                        .is_some(),
+                    "{name}: {req}"
+                );
             }
             assert!(t["annotations"]["readOnlyHint"].is_boolean());
             assert_eq!(t["inputSchema"]["additionalProperties"], false, "{name}");
@@ -1235,18 +1352,54 @@ mod tests {
     #[test]
     fn workspace_tools_are_annotated_for_what_they_do() {
         let tools = tools();
-        let get = |n: &str| tools.iter().find(|t| t["name"] == n).unwrap_or_else(|| panic!("missing {n}")).clone();
-        for read_only in ["workspace_list", "workspace_get", "workspace_read_file", "workspace_list_files", "workspace_changes"] {
-            assert_eq!(get(read_only)["annotations"]["readOnlyHint"], true, "{read_only}");
+        let get = |n: &str| {
+            tools
+                .iter()
+                .find(|t| t["name"] == n)
+                .unwrap_or_else(|| panic!("missing {n}"))
+                .clone()
+        };
+        for read_only in [
+            "workspace_list",
+            "workspace_get",
+            "workspace_read_file",
+            "workspace_list_files",
+            "workspace_changes",
+        ] {
+            assert_eq!(
+                get(read_only)["annotations"]["readOnlyHint"],
+                true,
+                "{read_only}"
+            );
         }
-        for changes in ["workspace_create", "workspace_exec", "workspace_write_file", "workspace_sync", "workspace_destroy", "workspace_allow"] {
-            assert_eq!(get(changes)["annotations"]["readOnlyHint"], false, "{changes}");
+        for changes in [
+            "workspace_create",
+            "workspace_exec",
+            "workspace_write_file",
+            "workspace_sync",
+            "workspace_destroy",
+            "workspace_allow",
+        ] {
+            assert_eq!(
+                get(changes)["annotations"]["readOnlyHint"],
+                false,
+                "{changes}"
+            );
         }
-        assert_eq!(get("workspace_destroy")["annotations"]["destructiveHint"], true);
+        assert_eq!(
+            get("workspace_destroy")["annotations"]["destructiveHint"],
+            true
+        );
         let exec = get("workspace_exec");
-        assert_eq!(exec["inputSchema"]["required"], json!(["workspace_id", "command"]));
+        assert_eq!(
+            exec["inputSchema"]["required"],
+            json!(["workspace_id", "command"])
+        );
         assert_eq!(exec["inputSchema"]["properties"]["env"]["type"], "object");
-        assert_eq!(get("workspace_sync")["inputSchema"]["properties"]["direction"]["enum"], json!(["push", "pull"]));
+        assert_eq!(
+            get("workspace_sync")["inputSchema"]["properties"]["direction"]["enum"],
+            json!(["push", "pull"])
+        );
         assert!(INSTRUCTIONS.contains("workspace_create"));
     }
 
@@ -1258,8 +1411,15 @@ mod tests {
         )
         .unwrap();
         assert!(text.starts_with("exit code: 1 (1200 ms)"), "{text}");
-        assert!(text.contains("stdout:\n```\nok\n```") && text.contains("stderr:\n```\nboom\n```"), "{text}");
-        let bg = readable_text("workspace_exec", &json!({ "background_pid": 42, "log_path": ".muxen/logs/1.log", "duration_ms": 5 })).unwrap();
+        assert!(
+            text.contains("stdout:\n```\nok\n```") && text.contains("stderr:\n```\nboom\n```"),
+            "{text}"
+        );
+        let bg = readable_text(
+            "workspace_exec",
+            &json!({ "background_pid": 42, "log_path": ".muxen/logs/1.log", "duration_ms": 5 }),
+        )
+        .unwrap();
         assert!(bg.contains("pid 42") && bg.contains(".muxen/logs/1.log"));
         assert!(readable_text("status", &json!({})).is_none());
     }
@@ -1280,15 +1440,48 @@ mod tests {
         let engine = demo();
         engine.run_check(None).await;
         let session = Session::default();
-        handle(&engine, &session, "initialize", json!({"clientInfo":{"name":"codex"}})).await.unwrap();
-        let created = call_tool(&engine, &session, "workspace_create", json!({"platform":"linux","repo":"acme/api"})).await;
+        handle(
+            &engine,
+            &session,
+            "initialize",
+            json!({"clientInfo":{"name":"codex"}}),
+        )
+        .await
+        .unwrap();
+        let created = call_tool(
+            &engine,
+            &session,
+            "workspace_create",
+            json!({"platform":"linux","repo":"acme/api"}),
+        )
+        .await;
         assert_eq!(created["isError"], false, "{created}");
-        let id = created["structuredContent"]["workspace"]["id"].as_str().unwrap().to_string();
+        let id = created["structuredContent"]["workspace"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
         assert_eq!(created["structuredContent"]["workspace"]["owner"], "codex");
-        let ran = call_tool(&engine, &session, "workspace_exec", json!({"workspace_id": id, "command": "pwd"})).await;
+        let ran = call_tool(
+            &engine,
+            &session,
+            "workspace_exec",
+            json!({"workspace_id": id, "command": "pwd"}),
+        )
+        .await;
         assert_eq!(ran["isError"], false, "{ran}");
-        assert!(ran["content"][0]["text"].as_str().unwrap().starts_with("exit code: 0"));
-        let destroyed = call_tool(&engine, &session, "workspace_destroy", json!({"workspace_id": id})).await;
+        assert!(
+            ran["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .starts_with("exit code: 0")
+        );
+        let destroyed = call_tool(
+            &engine,
+            &session,
+            "workspace_destroy",
+            json!({"workspace_id": id}),
+        )
+        .await;
         assert_eq!(destroyed["isError"], false, "{destroyed}");
     }
 
@@ -1301,7 +1494,9 @@ mod tests {
         let (client_read, mut client_write) = tokio::io::split(client);
         let mut lines = BufReader::new(client_read).lines();
         let mut recv = async || -> Value {
-            let line = tokio::time::timeout(std::time::Duration::from_secs(30), lines.next_line()).await.expect("reply in time");
+            let line = tokio::time::timeout(std::time::Duration::from_secs(30), lines.next_line())
+                .await
+                .expect("reply in time");
             serde_json::from_str(&line.unwrap().unwrap()).unwrap()
         };
 
@@ -1315,40 +1510,71 @@ mod tests {
         assert_eq!(init["id"], 1);
         assert_eq!(init["result"]["protocolVersion"], "2025-03-26");
         assert_eq!(init["result"]["serverInfo"]["name"], "muxin");
-        assert!(init["result"]["instructions"].as_str().unwrap().contains("Start with status"));
+        assert!(
+            init["result"]["instructions"]
+                .as_str()
+                .unwrap()
+                .contains("Start with status")
+        );
 
         send(json!({"jsonrpc":"2.0","method":"notifications/initialized"})).await;
         send(json!({"jsonrpc":"2.0","id":2,"method":"tools/list"})).await;
         let list: Value = recv().await;
-        assert_eq!(list["result"]["tools"].as_array().unwrap().len(), tools().len());
+        assert_eq!(
+            list["result"]["tools"].as_array().unwrap().len(),
+            tools().len()
+        );
 
         send(json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"status","arguments":{}}})).await;
         let status: Value = recv().await;
         assert_eq!(status["result"]["isError"], false);
-        assert_eq!(status["result"]["structuredContent"]["counts"]["machines"], 9);
-        assert!(status["result"]["content"][0]["text"].as_str().unwrap().contains("\"summary\""));
+        assert_eq!(
+            status["result"]["structuredContent"]["counts"]["machines"],
+            9
+        );
+        assert!(
+            status["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("\"summary\"")
+        );
 
         // Tool failures are results with isError, carrying a code an agent can branch on.
         send(json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"get_machine","arguments":{"machine_id":"nope"}}})).await;
         let missing: Value = recv().await;
         assert_eq!(missing["result"]["isError"], true);
-        assert_eq!(missing["result"]["structuredContent"]["error"]["code"], "not_found");
+        assert_eq!(
+            missing["result"]["structuredContent"]["error"]["code"],
+            "not_found"
+        );
 
         send(json!({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"runner_action","arguments":{"runner_id":"x","action":"explode"}}})).await;
         let bad: Value = recv().await;
-        assert_eq!(bad["result"]["structuredContent"]["error"]["code"], "invalid");
+        assert_eq!(
+            bad["result"]["structuredContent"]["error"]["code"],
+            "invalid"
+        );
 
         // Workspace arguments are validated before anything runs.
         send(json!({"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"workspace_read_file","arguments":{"workspace_id":"ws-x","path":"../../etc/passwd"}}})).await;
         let escape: Value = recv().await;
         assert_eq!(escape["result"]["isError"], true);
-        assert_eq!(escape["result"]["structuredContent"]["error"]["code"], "invalid");
+        assert_eq!(
+            escape["result"]["structuredContent"]["error"]["code"],
+            "invalid"
+        );
         send(json!({"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"workspace_exec","arguments":{"workspace_id":"ws-x"}}})).await;
         let missing_arg: Value = recv().await;
-        assert_eq!(missing_arg["result"]["structuredContent"]["error"]["code"], "invalid");
+        assert_eq!(
+            missing_arg["result"]["structuredContent"]["error"]["code"],
+            "invalid"
+        );
         send(json!({"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"workspace_get","arguments":{"workspace_id":"ws-nope"}}})).await;
         let unknown_ws: Value = recv().await;
-        assert_eq!(unknown_ws["result"]["structuredContent"]["error"]["code"], "not_found");
+        assert_eq!(
+            unknown_ws["result"]["structuredContent"]["error"]["code"],
+            "not_found"
+        );
 
         send(json!({"jsonrpc":"2.0","id":6,"method":"nope/nothing"})).await;
         let unknown: Value = recv().await;
@@ -1363,6 +1589,10 @@ mod tests {
         drop(recv);
         drop(client_write);
         drop(lines);
-        tokio::time::timeout(std::time::Duration::from_secs(10), task).await.expect("server exits on EOF").unwrap().unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(10), task)
+            .await
+            .expect("server exits on EOF")
+            .unwrap()
+            .unwrap();
     }
 }

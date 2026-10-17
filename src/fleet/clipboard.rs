@@ -1,8 +1,9 @@
 //! The shared clipboard: text copied on this computer can be pasted on the
 //! machines (Linux desktops, Macs), and text copied on one of them lands here
 //! and on the others. Each machine's agent runs `muxen-agent clip` on a link
-//! channel (see agent/src/clipboard.rs); the window watches this computer's
-//! clipboard and calls `local_changed`.
+//! channel (see agent/src/clipboard.rs). The window watches this computer's
+//! clipboard and calls `local_changed`; on Linux that watch owns the desktop
+//! clipboard directly (`src/os_clip.rs`), not through GPUI.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -29,7 +30,11 @@ struct Shared {
 
 fn shared() -> &'static Shared {
     static SHARED: OnceLock<Shared> = OnceLock::new();
-    SHARED.get_or_init(|| Shared { last: Mutex::new(String::new()), peers: Mutex::new(HashMap::new()), incoming: broadcast::channel(16).0 })
+    SHARED.get_or_init(|| Shared {
+        last: Mutex::new(String::new()),
+        peers: Mutex::new(HashMap::new()),
+        incoming: broadcast::channel(16).0,
+    })
 }
 
 /// Text copied on a machine, to put on this computer's clipboard.
@@ -79,16 +84,32 @@ fn remote_changed(from: &str, text: String) {
 /// Shares the clipboard with a machine for as long as its link lasts.
 pub async fn share(link: Arc<Link>) {
     // Agents before 0.2.4 can't.
-    let v: Vec<u32> = link.version().split('.').map(|p| p.parse().unwrap_or(0)).collect();
-    if v.as_slice() < [0, 2, 4].as_slice() || shared().peers.lock().unwrap().contains_key(&link.machine) {
+    let v: Vec<u32> = link
+        .version()
+        .split('.')
+        .map(|p| p.parse().unwrap_or(0))
+        .collect();
+    if v.as_slice() < [0, 2, 4].as_slice()
+        || shared().peers.lock().unwrap().contains_key(&link.machine)
+    {
         return;
     }
     let (channel, mut rx) = link.open_channel();
-    match link.request(json!({ "op": "clipboard", "channel": channel }), Duration::from_secs(15)).await {
+    match link
+        .request(
+            json!({ "op": "clipboard", "channel": channel }),
+            Duration::from_secs(15),
+        )
+        .await
+    {
         Ok(r) if r["ok"].as_bool() == Some(true) => {}
         Ok(r) => {
             // A machine without a desktop has no clipboard: that's fine.
-            tracing::debug!("no shared clipboard with {}: {}", link.machine, r["error"].as_str().unwrap_or("?"));
+            tracing::debug!(
+                "no shared clipboard with {}: {}",
+                link.machine,
+                r["error"].as_str().unwrap_or("?")
+            );
             link.close_channel(channel);
             return;
         }
@@ -99,7 +120,11 @@ pub async fn share(link: Arc<Link>) {
         }
     }
     tracing::debug!("sharing the clipboard with {}", link.machine);
-    shared().peers.lock().unwrap().insert(link.machine.clone(), (link.clone(), channel));
+    shared()
+        .peers
+        .lock()
+        .unwrap()
+        .insert(link.machine.clone(), (link.clone(), channel));
     while let Some((kind, text)) = rx.recv().await {
         if kind == CLIP {
             remote_changed(&link.machine, String::from_utf8_lossy(&text).into_owned());

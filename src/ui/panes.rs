@@ -8,7 +8,11 @@
 #[derive(Clone, Debug, PartialEq)]
 pub enum Panes {
     One(String),
-    Split { down: bool, a: Box<Panes>, b: Box<Panes> },
+    Split {
+        down: bool,
+        a: Box<Panes>,
+        b: Box<Panes>,
+    },
 }
 
 impl Panes {
@@ -36,7 +40,11 @@ impl Panes {
         match self {
             Panes::One(x) if x == at => {
                 let old = std::mem::replace(self, Panes::One(String::new()));
-                *self = Panes::Split { down, a: Box::new(old), b: Box::new(Panes::One(new)) };
+                *self = Panes::Split {
+                    down,
+                    a: Box::new(old),
+                    b: Box::new(Panes::One(new)),
+                };
                 true
             }
             Panes::One(_) => false,
@@ -50,7 +58,11 @@ impl Panes {
             Panes::One(x) if x == id => None,
             one @ Panes::One(_) => Some(one),
             Panes::Split { down, a, b } => match (a.without(id), b.without(id)) {
-                (Some(a), Some(b)) => Some(Panes::Split { down, a: Box::new(a), b: Box::new(b) }),
+                (Some(a), Some(b)) => Some(Panes::Split {
+                    down,
+                    a: Box::new(a),
+                    b: Box::new(b),
+                }),
                 (Some(only), None) | (None, Some(only)) => Some(only),
                 (None, None) => None,
             },
@@ -71,7 +83,12 @@ impl Panes {
     pub fn encode(&self) -> String {
         match self {
             Panes::One(x) => x.clone(),
-            Panes::Split { down, a, b } => format!("{}({},{})", if *down { "d" } else { "r" }, a.encode(), b.encode()),
+            Panes::Split { down, a, b } => format!(
+                "{}({},{})",
+                if *down { "d" } else { "r" },
+                a.encode(),
+                b.encode()
+            ),
         }
     }
 
@@ -86,7 +103,14 @@ fn parse(text: &str) -> Option<(Panes, &str)> {
         let down = text.starts_with('d');
         let (a, rest) = parse(inner)?;
         let (b, rest) = parse(rest.strip_prefix(',')?)?;
-        return Some((Panes::Split { down, a: Box::new(a), b: Box::new(b) }, rest.strip_prefix(')')?));
+        return Some((
+            Panes::Split {
+                down,
+                a: Box::new(a),
+                b: Box::new(b),
+            },
+            rest.strip_prefix(')')?,
+        ));
     }
     let end = text.find([',', ')']).unwrap_or(text.len());
     let id = &text[..end];
@@ -117,8 +141,15 @@ mod tests {
 
     #[test]
     fn reads_what_it_writes() {
-        for text in ["beelink/shell-ab12", "r(beelink/a,beelink/b)", "d(r(m/a,m/b),m/c-1)"] {
-            assert_eq!(Panes::decode(text).map(|p| p.encode()).as_deref(), Some(text));
+        for text in [
+            "beelink/shell-ab12",
+            "r(beelink/a,beelink/b)",
+            "d(r(m/a,m/b),m/c-1)",
+        ] {
+            assert_eq!(
+                Panes::decode(text).map(|p| p.encode()).as_deref(),
+                Some(text)
+            );
         }
         assert_eq!(Panes::decode("r(m/a,"), None);
         assert_eq!(Panes::decode("r(m/a,m/b))"), None);

@@ -19,7 +19,12 @@ pub struct Choice {
 /// The keys that pick `key` in a prompt whose cursor is on `selected`:
 /// its number, or arrows to it and Enter.
 pub fn keys_for(key: &str, selected: Option<&str>, confirm: bool) -> (String, bool) {
-    match (key.strip_prefix('#').and_then(|k| k.parse::<i64>().ok()), selected.and_then(|s| s.strip_prefix('#')).and_then(|s| s.parse::<i64>().ok())) {
+    match (
+        key.strip_prefix('#').and_then(|k| k.parse::<i64>().ok()),
+        selected
+            .and_then(|s| s.strip_prefix('#'))
+            .and_then(|s| s.parse::<i64>().ok()),
+    ) {
         (Some(to), from) => {
             let from = from.unwrap_or(0);
             let arrow = if to >= from { "\x1b[B" } else { "\x1b[A" };
@@ -39,12 +44,17 @@ fn asks_for_enter(lines: &[&str]) -> bool {
 
 /// A line's indent and text, past a box's side.
 fn lead(line: &str) -> (usize, &str) {
-    let rest = line.trim_start_matches([' ']).trim_start_matches(['│', '┃', '║']);
+    let rest = line
+        .trim_start_matches([' '])
+        .trim_start_matches(['│', '┃', '║']);
     let skipped = line.len() - rest.len();
     let text = rest.trim_start_matches(' ');
     let spaces = rest.len() - text.len();
     // Count the box side as one column, the spaces as theirs.
-    (line[..skipped].chars().count() + spaces, text.trim_end_matches(|c: char| c.is_whitespace() || matches!(c, '│' | '┃' | '║')))
+    (
+        line[..skipped].chars().count() + spaces,
+        text.trim_end_matches(|c: char| c.is_whitespace() || matches!(c, '│' | '┃' | '║')),
+    )
 }
 
 /// A menu without numbers ("❯ Yes, I trust this folder" over its siblings):
@@ -73,8 +83,15 @@ fn menu(lines: &[&str]) -> Option<(usize, usize, Vec<Choice>, String)> {
     }
     let choices: Vec<Choice> = (first..=last)
         .map(|i| {
-            let label = if i == at { sel.trim_start_matches(['❯', '›']).trim() } else { lead(lines[i]).1 };
-            Choice { key: format!("#{}", i - first), label: label.to_string() }
+            let label = if i == at {
+                sel.trim_start_matches(['❯', '›']).trim()
+            } else {
+                lead(lines[i]).1
+            };
+            Choice {
+                key: format!("#{}", i - first),
+                label: label.to_string(),
+            }
         })
         .collect();
     Some((first, last, choices, format!("#{}", at - first)))
@@ -145,7 +162,13 @@ impl Question {
 
 /// Box drawing and the cursor marks prompts draw with.
 fn clean(line: &str) -> String {
-    let trimmed = line.trim_matches(|c: char| c.is_whitespace() || matches!(c, '│' | '┃' | '║' | '╭' | '╮' | '╰' | '╯' | '┌' | '┐' | '└' | '┘'));
+    let trimmed = line.trim_matches(|c: char| {
+        c.is_whitespace()
+            || matches!(
+                c,
+                '│' | '┃' | '║' | '╭' | '╮' | '╰' | '╯' | '┌' | '┐' | '└' | '┘'
+            )
+    });
     trimmed.trim_end().to_string()
 }
 
@@ -153,20 +176,31 @@ fn clean(line: &str) -> String {
 fn is_rule(line: &str) -> bool {
     let t = line.trim();
     let across = |c: char| matches!(c, '─' | '━' | '═' | '-' | '╌' | '┄' | '▔' | '▁');
-    t.chars().any(across) && t.chars().all(|c| across(c) || matches!(c, '╭' | '╮' | '╰' | '╯' | '│' | '┃' | ' ' | '┌' | '┐' | '└' | '┘'))
+    t.chars().any(across)
+        && t.chars().all(|c| {
+            across(c)
+                || matches!(
+                    c,
+                    '╭' | '╮' | '╰' | '╯' | '│' | '┃' | ' ' | '┌' | '┐' | '└' | '┘'
+                )
+        })
 }
 
 /// An agent's status line, not something it said: "✻ Baked for 3s",
 /// "⏵⏵ auto mode on", "esc to interrupt".
 fn is_status(line: &str) -> bool {
-    line.starts_with(['✻', '✽', '✶', '✳', '✢', '✺', '⏵', '·', '*']) || line.contains("esc to interrupt") || line.contains("for shortcuts")
+    line.starts_with(['✻', '✽', '✶', '✳', '✢', '✺', '⏵', '·', '*'])
+        || line.contains("esc to interrupt")
+        || line.contains("for shortcuts")
 }
 
 /// "❯ 1. Yes" → (selected, "1", "Yes").
 fn option(line: &str) -> Option<(bool, String, String)> {
     let t = clean(line);
     let (selected, rest) = match t.chars().next()? {
-        '❯' | '›' | '>' | '▶' | '→' | '●' => (true, t[t.chars().next()?.len_utf8()..].trim_start()),
+        '❯' | '›' | '>' | '▶' | '→' | '●' => {
+            (true, t[t.chars().next()?.len_utf8()..].trim_start())
+        }
         _ => (false, t.as_str()),
     };
     let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
@@ -174,7 +208,11 @@ fn option(line: &str) -> Option<(bool, String, String)> {
         return None;
     }
     let after = &rest[digits.len()..];
-    let label = after.strip_prefix(". ").or_else(|| after.strip_prefix(") ")).or_else(|| after.strip_prefix(".")).map(str::trim)?;
+    let label = after
+        .strip_prefix(". ")
+        .or_else(|| after.strip_prefix(") "))
+        .or_else(|| after.strip_prefix("."))
+        .map(str::trim)?;
     (!label.is_empty()).then(|| (selected, digits, label.to_string()))
 }
 
@@ -200,7 +238,9 @@ pub fn read(screen: &str) -> Question {
         let mut first = last;
         'up: loop {
             for k in 1..=3 {
-                let Some(j) = first.checked_sub(k) else { break 'up };
+                let Some(j) = first.checked_sub(k) else {
+                    break 'up;
+                };
                 if option(lines[j]).is_some() {
                     first = j;
                     continue 'up;
@@ -220,7 +260,14 @@ pub fn read(screen: &str) -> Question {
         // The options, a wrapped label's next lines joined to it, then any
         // lines wrapped from the last one.
         let mut tail = last + 1;
-        while tail < lines.len() && tail <= last + 2 && !clean(lines[tail]).is_empty() && !is_rule(lines[tail]) && option(lines[tail]).is_none() && !clean(lines[tail]).contains(" to select") && !clean(lines[tail]).contains(" to confirm") {
+        while tail < lines.len()
+            && tail <= last + 2
+            && !clean(lines[tail]).is_empty()
+            && !is_rule(lines[tail])
+            && option(lines[tail]).is_none()
+            && !clean(lines[tail]).contains(" to select")
+            && !clean(lines[tail]).contains(" to confirm")
+        {
             tail += 1;
         }
         for line in &lines[first..tail] {
@@ -236,14 +283,22 @@ pub fn read(screen: &str) -> Question {
                         let more = clean(line);
                         if !more.is_empty() && !is_rule(line) {
                             // A description under it ("The color red"), or the rest of a long label.
-                            prev.label.push_str(if more.starts_with(char::is_uppercase) { " · " } else { " " });
+                            prev.label
+                                .push_str(if more.starts_with(char::is_uppercase) {
+                                    " · "
+                                } else {
+                                    " "
+                                });
                             prev.label.push_str(&more);
                         }
                     }
                 }
             }
         }
-        let numbered = options.iter().enumerate().all(|(n, c)| c.key == (n + 1).to_string());
+        let numbered = options
+            .iter()
+            .enumerate()
+            .all(|(n, c)| c.key == (n + 1).to_string());
         // An input box under the list: it's the agent's message (steps it
         // wrote), not a prompt waiting for a pick.
         let input_below = lines[last + 1..].iter().any(|l| {
@@ -252,7 +307,13 @@ pub fn read(screen: &str) -> Question {
         });
         if options.len() >= 2 && numbered && !input_below {
             let text = question_above(&lines[..first]);
-            return Question { text, options, selected, confirm: asks_for_enter(lines), read_at };
+            return Question {
+                text,
+                options,
+                selected,
+                confirm: asks_for_enter(lines),
+                read_at,
+            };
         }
     }
 
@@ -263,7 +324,13 @@ pub fn read(screen: &str) -> Question {
             (t.starts_with('>') || t.starts_with('❯') || t.starts_with('›')) && option(l).is_none()
         });
         if !input_below {
-            return Question { text: question_above(&lines[..first]), options, selected: Some(selected), confirm: false, read_at };
+            return Question {
+                text: question_above(&lines[..first]),
+                options,
+                selected: Some(selected),
+                confirm: false,
+                read_at,
+            };
         }
     }
 
@@ -290,7 +357,11 @@ pub fn read(screen: &str) -> Question {
         if text.is_empty() && is_status(&t) {
             continue;
         }
-        text.push(t.trim_start_matches(['⏺', '●', '•']).trim_start().to_string());
+        text.push(
+            t.trim_start_matches(['⏺', '●', '•'])
+                .trim_start()
+                .to_string(),
+        );
         if text.len() >= 8 {
             break;
         }
@@ -299,7 +370,13 @@ pub fn read(screen: &str) -> Question {
     while text.first().is_some_and(String::is_empty) {
         text.remove(0);
     }
-    Question { text, options: Vec::new(), selected: None, confirm: false, read_at }
+    Question {
+        text,
+        options: Vec::new(),
+        selected: None,
+        confirm: false,
+        read_at,
+    }
 }
 
 #[cfg(test)]
@@ -316,12 +393,21 @@ mod tests {
         let q = read(screen);
         assert!(q.is_choice());
         assert_eq!(keys(&q), ["1", "2", "3"]);
-        assert_eq!(q.options[1].label, "Yes, and don't ask again for npm test commands in /home/adib/api");
-        assert_eq!(q.options[2].label, "No, and tell Claude what to do differently (esc)");
+        assert_eq!(
+            q.options[1].label,
+            "Yes, and don't ask again for npm test commands in /home/adib/api"
+        );
+        assert_eq!(
+            q.options[2].label,
+            "No, and tell Claude what to do differently (esc)"
+        );
         assert_eq!(q.selected.as_deref(), Some("1"));
         assert_eq!(q.text.first().map(String::as_str), Some("Bash command"));
         assert!(q.text.contains(&"npm test".to_string()));
-        assert_eq!(q.text.last().map(String::as_str), Some("Do you want to proceed?"));
+        assert_eq!(
+            q.text.last().map(String::as_str),
+            Some("Do you want to proceed?")
+        );
     }
 
     #[test]
@@ -329,14 +415,21 @@ mod tests {
         let claude = " Edit file\n src/app.ts\n\n Do you want to make this edit to app.ts?\n ❯ 1. Yes\n   2. Yes, allow all edits during this session (shift+tab)\n   3. No, and tell Claude what to do differently (esc)\n";
         let q = read(claude);
         assert_eq!(keys(&q), ["1", "2", "3"]);
-        assert_eq!(q.text.last().map(String::as_str), Some("Do you want to make this edit to app.ts?"));
+        assert_eq!(
+            q.text.last().map(String::as_str),
+            Some("Do you want to make this edit to app.ts?")
+        );
         let codex = "› Run the tests\n\n• Read 3 files\n\nWould you like to run the following command?\n\n  $ cargo test\n\n› 1. Yes, proceed (y)\n  2. Yes, and don't ask again for this command (a)\n  3. No, and tell Codex what to do differently (esc)\n\n  Press enter to confirm or esc to cancel\n";
         let q = read(codex);
         assert_eq!(keys(&q), ["1", "2", "3"]);
         assert_eq!(q.options[0].label, "Yes, proceed (y)");
         assert_eq!(q.selected.as_deref(), Some("1"));
         assert!(q.text.contains(&"$ cargo test".to_string()));
-        assert!(!q.text.iter().any(|l| l.contains("Run the tests")), "{:?}", q.text);
+        assert!(
+            !q.text.iter().any(|l| l.contains("Run the tests")),
+            "{:?}",
+            q.text
+        );
     }
 
     #[test]
@@ -349,7 +442,10 @@ mod tests {
         assert_eq!(q.options[4].label, "Chat about this");
         assert_eq!(q.selected.as_deref(), Some("1"));
         assert_eq!(q.text.first().map(String::as_str), Some("☐ Color"));
-        assert_eq!(q.text.last().map(String::as_str), Some("Which color do you like?"));
+        assert_eq!(
+            q.text.last().map(String::as_str),
+            Some("Which color do you like?")
+        );
     }
 
     #[test]
@@ -358,12 +454,24 @@ mod tests {
         let screen = "────────────────────\n Accessing workspace:\n\n /tmp\n\n Quick safety check: Is this a project you created or one you trust?\n\n Claude Code'll be able to read, edit, and execute files here.\n\n Security guide\n\n ❯ No, exit\n   Yes, I trust this folder\n\n Enter to confirm · Esc to cancel\n";
         let q = read(screen);
         assert!(q.is_choice());
-        assert_eq!(q.options.iter().map(|c| c.label.as_str()).collect::<Vec<_>>(), ["No, exit", "Yes, I trust this folder"]);
+        assert_eq!(
+            q.options
+                .iter()
+                .map(|c| c.label.as_str())
+                .collect::<Vec<_>>(),
+            ["No, exit", "Yes, I trust this folder"]
+        );
         assert_eq!(keys(&q), ["#0", "#1"]);
         assert_eq!(q.selected.as_deref(), Some("#0"));
         assert_eq!(q.text.last().map(String::as_str), Some("Security guide"));
-        assert_eq!(keys_for("#1", q.selected.as_deref(), false), ("\x1b[B".to_string(), true));
-        assert_eq!(keys_for("#0", Some("#2"), false), ("\x1b[A\x1b[A".to_string(), true));
+        assert_eq!(
+            keys_for("#1", q.selected.as_deref(), false),
+            ("\x1b[B".to_string(), true)
+        );
+        assert_eq!(
+            keys_for("#0", Some("#2"), false),
+            ("\x1b[A\x1b[A".to_string(), true)
+        );
         assert_eq!(keys_for("2", Some("1"), false), ("2".to_string(), false));
         // A menu that waits for Enter after the number (Codex).
         assert_eq!(keys_for("1", Some("1"), true), ("1".to_string(), true));
@@ -374,8 +482,14 @@ mod tests {
         let screen = "⏺ I fixed the failing test: the coupon is now applied\n  before tax, and the totals match. Want me to open a pull request?\n\n╭────────────────────────────────────╮\n│ >                                  │\n╰────────────────────────────────────╯\n  ? for shortcuts\n";
         let q = read(screen);
         assert!(!q.is_choice());
-        assert_eq!(q.text.first().map(String::as_str), Some("I fixed the failing test: the coupon is now applied"));
-        assert_eq!(q.text.last().map(String::as_str), Some("before tax, and the totals match. Want me to open a pull request?"));
+        assert_eq!(
+            q.text.first().map(String::as_str),
+            Some("I fixed the failing test: the coupon is now applied")
+        );
+        assert_eq!(
+            q.text.last().map(String::as_str),
+            Some("before tax, and the totals match. Want me to open a pull request?")
+        );
         // Claude Code 2.1, as read off a real screen: its reply, not the status line.
         let real = "❯ Run the shell command uname -r and tell me the kernel version.\n\n● Bash(uname -r)\n  ⎿  7.0.0-38-generic\n  ⎿  Allowed by auto mode classifier\n\n● 7.0.0-38-generic\n\n✻ Baked for 3s · done 1:07 PM\n\n──────────────────────────────\n❯\n──────────────────────────────\n  ⏵⏵ auto mode on (shift+tab to cycle)\n";
         let q = read(real);
@@ -396,14 +510,20 @@ mod tests {
         let steps = "⏺ Done. Next steps:\n  1. Run the migrations\n  2. Deploy to staging\n\n╭──────╮\n│ >    │\n╰──────╯\n";
         let q = read(steps);
         assert!(!q.is_choice());
-        assert_eq!(q.text.last().map(String::as_str), Some("2. Deploy to staging"));
+        assert_eq!(
+            q.text.last().map(String::as_str),
+            Some("2. Deploy to staging")
+        );
     }
 
     #[test]
     fn codex_menus_wait_for_enter() {
         let screen = "> You are in /home/adib/muxen/workspaces/ws-cqp5kr\n\n  Do you trust the contents of this directory?\n\n› 1. Yes, continue\n  2. No, quit\n\n  Press enter to continue\n";
         let q = read(screen);
-        assert_eq!(q.options.iter().map(|o| o.key.as_str()).collect::<Vec<_>>(), ["1", "2"]);
+        assert_eq!(
+            q.options.iter().map(|o| o.key.as_str()).collect::<Vec<_>>(),
+            ["1", "2"]
+        );
         assert!(q.confirm);
         let claude = "Do you want to proceed?\n❯ 1. Yes\n  2. No\n";
         assert!(!read(claude).confirm);

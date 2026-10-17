@@ -266,7 +266,11 @@ impl Palette {
             text_accent: accent2,
             accent,
             accent2,
-            accent_text: if luminance(accent) > 0.55 { color(self.canvas).blend(black().opacity(0.4)) } else { gpui::white() },
+            accent_text: if luminance(accent) > 0.55 {
+                color(self.canvas).blend(black().opacity(0.4))
+            } else {
+                gpui::white()
+            },
             success: color(self.success),
             warning: color(self.warning),
             error: color(self.error),

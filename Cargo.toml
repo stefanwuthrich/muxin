@@ -51,6 +51,16 @@ raw-window-handle = { version = "0.6", optional = true }
 # Already in the tree (through reqwest/native roots): the Keychain, for cloud sign-ins.
 security-framework = "3"
 
+# The shared clipboard on Linux (see src/os_clip.rs): the X selection, and Wayland
+# data-control where the compositor offers it. Optional so a headless build
+# doesn't link them.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = { version = "0.2", optional = true }
+x11rb = { version = "0.13", features = ["xfixes"], optional = true }
+wayland-client = { version = "0.31", optional = true }
+wayland-protocols = { version = "0.32", features = ["client", "staging"], optional = true }
+wayland-protocols-wlr = { version = "0.3", features = ["client"], optional = true }
+
 # The icon and name in the Windows executable (build.rs).
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
@@ -68,7 +78,7 @@ members = [".", "agent"]
 default = ["gui"]
 # The native window. Build with `--no-default-features` for a headless CLI + MCP
 # server that needs no GUI libraries (Linux servers, CI, agent boxes).
-gui = ["dep:gpui", "dep:unicode-segmentation", "dep:cocoa", "dep:objc", "dep:raw-window-handle", "dep:alacritty_terminal", "dep:image", "dep:smallvec"]
+gui = ["dep:gpui", "dep:unicode-segmentation", "dep:cocoa", "dep:objc", "dep:raw-window-handle", "dep:alacritty_terminal", "dep:image", "dep:smallvec", "dep:libc", "dep:x11rb", "dep:wayland-client", "dep:wayland-protocols", "dep:wayland-protocols-wlr"]
 
 [profile.release]
 lto = "thin"

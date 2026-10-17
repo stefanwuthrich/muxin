@@ -54,12 +54,22 @@ pub struct GitStatus {
 impl GitStatus {
     /// On the base branch itself ("main" when the base is "origin/main"), or no branch.
     pub fn on_base(&self) -> bool {
-        self.branch.is_empty() || self.branch == "(detached)" || self.base.as_deref().and_then(|b| b.split_once('/')).is_some_and(|(_, b)| b == self.branch)
+        self.branch.is_empty()
+            || self.branch == "(detached)"
+            || self
+                .base
+                .as_deref()
+                .and_then(|b| b.split_once('/'))
+                .is_some_and(|(_, b)| b == self.branch)
     }
 
     /// In a few words, for the CLI: "fix-login +12 −3, 2 uncommitted, #14 open".
     pub fn short(&self) -> String {
-        let mut out = if self.branch.is_empty() { "no branch".to_string() } else { self.branch.clone() };
+        let mut out = if self.branch.is_empty() {
+            "no branch".to_string()
+        } else {
+            self.branch.clone()
+        };
         if self.added > 0 || self.removed > 0 {
             out += &format!(" +{} −{}", self.added, self.removed);
         }
@@ -96,7 +106,10 @@ pub fn parse(v: &Value) -> Option<(String, GitStatus)> {
         commits: n("commits"),
         worktree: v["worktree"].as_bool().unwrap_or(false),
         // Only a remote on GitHub (a folder's path would read as "owner/name").
-        repo: v["remote"].as_str().filter(|r| r.contains("github.com")).and_then(repo_name),
+        repo: v["remote"]
+            .as_str()
+            .filter(|r| r.contains("github.com"))
+            .and_then(repo_name),
         pull: None,
     };
     Some((path, status))
@@ -111,11 +124,21 @@ fn looking() -> &'static Mutex<HashSet<String>> {
 impl Engine {
     /// After a look at a machine's sessions: looks at what their work changed
     /// when one went quiet or started, or the last look was a while ago.
-    pub(crate) fn maybe_look_at_git(self: &Arc<Self>, machine_id: &str, before: Option<&MachineSessions>, now: &MachineSessions) {
+    pub(crate) fn maybe_look_at_git(
+        self: &Arc<Self>,
+        machine_id: &str,
+        before: Option<&MachineSessions>,
+        now: &MachineSessions,
+    ) {
         let was = |id: &str| before.and_then(|b| b.sessions.iter().find(|s| s.id == id));
-        let quieted = now.sessions.iter().any(|s| !s.busy && was(&s.id).is_some_and(|p| p.busy));
+        let quieted = now
+            .sessions
+            .iter()
+            .any(|s| !s.busy && was(&s.id).is_some_and(|p| p.busy));
         let started = now.sessions.iter().any(|s| was(&s.id).is_none());
-        let stale = self.git_looked_at(machine_id).is_none_or(|t| t.elapsed() > LOOK_EVERY);
+        let stale = self
+            .git_looked_at(machine_id)
+            .is_none_or(|t| t.elapsed() > LOOK_EVERY);
         if !(quieted || started || stale) || now.sessions.is_empty() {
             return;
         }
@@ -134,12 +157,25 @@ impl Engine {
     /// Reads git in the folders of a machine's sessions (and its workspaces),
     /// finds each branch's pull request, and publishes it all.
     pub async fn look_at_git(self: &Arc<Self>, machine_id: &str) -> Result<(), String> {
-        let (spec, probe) = self.machine(machine_id).ok_or_else(|| format!("No machine called {machine_id}."))?;
+        let (spec, probe) = self
+            .machine(machine_id)
+            .ok_or_else(|| format!("No machine called {machine_id}."))?;
         let mut folders: Vec<String> = Vec::new();
-        let sessions = self.sessions_of(&spec.id).map(|f| f.sessions).unwrap_or_default();
+        let sessions = self
+            .sessions_of(&spec.id)
+            .map(|f| f.sessions)
+            .unwrap_or_default();
         let snapshot = self.current();
-        let workspaces = snapshot.workspaces.iter().filter(|w| w.machine_id == spec.id && w.status == "ready");
-        for f in sessions.iter().filter(|s| s.status == "running").map(|s| s.cwd.clone()).chain(workspaces.map(|w| w.path.clone())) {
+        let workspaces = snapshot
+            .workspaces
+            .iter()
+            .filter(|w| w.machine_id == spec.id && w.status == "ready");
+        for f in sessions
+            .iter()
+            .filter(|s| s.status == "running")
+            .map(|s| s.cwd.clone())
+            .chain(workspaces.map(|w| w.path.clone()))
+        {
             if !f.is_empty() && !folders.contains(&f) {
                 folders.push(f);
             }
@@ -154,8 +190,15 @@ impl Engine {
             None => {
                 agent::ensure(&spec, probe.as_ref()).await?;
                 // When it fails (an agent from before git_info), don't ask again at once.
-                let reply = agent::ctl(&spec, &json!({ "op": "git_info", "paths": folders })).await.inspect_err(|_| self.set_git_looked(&spec.id))?;
-                reply["folders"].as_array().into_iter().flatten().filter_map(parse).collect()
+                let reply = agent::ctl(&spec, &json!({ "op": "git_info", "paths": folders }))
+                    .await
+                    .inspect_err(|_| self.set_git_looked(&spec.id))?;
+                reply["folders"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(parse)
+                    .collect()
             }
         };
         let mut out = Vec::with_capacity(found.len());
@@ -179,7 +222,10 @@ impl Engine {
         if let Some(cached) = self.cached_pull(&key, PULL_EVERY) {
             return cached;
         }
-        let found = self.github().branch_pull(&self.settings().github, repo, branch).await;
+        let found = self
+            .github()
+            .branch_pull(&self.settings().github, repo, branch)
+            .await;
         let pull = match found {
             Ok(p) => p,
             Err(e) => {
@@ -205,7 +251,18 @@ mod tests {
         });
         let (path, s) = parse(&v).unwrap();
         assert_eq!(path, "~/code/api");
-        assert_eq!((s.branch.as_str(), s.repo.as_deref(), s.uncommitted, s.files, s.added, s.removed, s.commits), ("fix-login", Some("acme/api"), 3, 4, 120, 40, 2));
+        assert_eq!(
+            (
+                s.branch.as_str(),
+                s.repo.as_deref(),
+                s.uncommitted,
+                s.files,
+                s.added,
+                s.removed,
+                s.commits
+            ),
+            ("fix-login", Some("acme/api"), 3, 4, 120, 40, 2)
+        );
         assert!(s.worktree && !s.on_base());
         assert!(parse(&json!({ "path": "~", "git": false })).is_none());
         let local = json!({ "path": "/x", "git": true, "remote": "/srv/git/acme/api.git" });
@@ -214,16 +271,33 @@ mod tests {
 
     #[test]
     fn knows_the_base_branch() {
-        let s = |branch: &str| GitStatus { branch: branch.into(), base: Some("origin/main".into()), ..Default::default() };
+        let s = |branch: &str| GitStatus {
+            branch: branch.into(),
+            base: Some("origin/main".into()),
+            ..Default::default()
+        };
         assert!(s("main").on_base() && s("(detached)").on_base() && s("").on_base());
         assert!(!s("fix").on_base());
     }
 
     #[test]
     fn says_it_in_a_few_words() {
-        let mut s = GitStatus { branch: "fix".into(), added: 12, removed: 3, uncommitted: 2, ahead: 1, ..Default::default() };
+        let mut s = GitStatus {
+            branch: "fix".into(),
+            added: 12,
+            removed: 3,
+            uncommitted: 2,
+            ahead: 1,
+            ..Default::default()
+        };
         assert_eq!(s.short(), "fix +12 −3, 2 uncommitted, 1 unpushed");
-        s.pull = Some(BranchPull { number: 14, title: "Fix".into(), state: "merged".into(), url: String::new(), checks: Default::default() });
+        s.pull = Some(BranchPull {
+            number: 14,
+            title: "Fix".into(),
+            state: "merged".into(),
+            url: String::new(),
+            checks: Default::default(),
+        });
         assert!(s.short().ends_with(", #14 merged"));
         assert_eq!(GitStatus::default().short(), "no branch");
     }

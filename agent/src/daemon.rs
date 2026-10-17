@@ -100,14 +100,23 @@ impl Inner {
         }
         self.cols = cols;
         self.rows = rows;
-        self.term.resize(Dims { cols: cols as usize, rows: rows as usize });
+        self.term.resize(Dims {
+            cols: cols as usize,
+            rows: rows as usize,
+        });
         if let Some(m) = &self.master {
-            let _ = m.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 });
+            let _ = m.resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            });
         }
     }
 
     fn broadcast(&mut self, kind: u8, payload: &[u8]) {
-        self.clients.retain_mut(|(_, c)| proto::write_frame(c, kind, payload).is_ok());
+        self.clients
+            .retain_mut(|(_, c)| proto::write_frame(c, kind, payload).is_ok());
     }
 }
 
@@ -121,12 +130,18 @@ struct State {
 
 impl State {
     fn find(&self, name: &str) -> Option<Arc<Session>> {
-        self.sessions.lock().unwrap().iter().find(|s| s.name == name).cloned()
+        self.sessions
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|s| s.name == name)
+            .cloned()
     }
 
     fn event(&self, kind: &str, session: &str, detail: String) {
         let mut events = self.events.lock().unwrap();
-        events.push_back(json!({ "at": now(), "kind": kind, "session": session, "detail": detail }));
+        events
+            .push_back(json!({ "at": now(), "kind": kind, "session": session, "detail": detail }));
         while events.len() > MAX_EVENTS {
             events.pop_front();
         }
@@ -156,19 +171,24 @@ pub fn serve() -> i32 {
 
     // Exit once nothing has been running or connected for a while.
     let idle = state.clone();
-    thread::spawn(move || loop {
-        thread::sleep(Duration::from_secs(10));
-        let busy = !idle.sessions.lock().unwrap().is_empty() || idle.connections.load(Ordering::Relaxed) > 0;
-        if busy {
-            *idle.last_activity.lock().unwrap() = Instant::now();
-        } else if idle.last_activity.lock().unwrap().elapsed() > IDLE_EXIT {
-            sys::unlisten();
-            std::process::exit(0);
+    thread::spawn(move || {
+        loop {
+            thread::sleep(Duration::from_secs(10));
+            let busy = !idle.sessions.lock().unwrap().is_empty()
+                || idle.connections.load(Ordering::Relaxed) > 0;
+            if busy {
+                *idle.last_activity.lock().unwrap() = Instant::now();
+            } else if idle.last_activity.lock().unwrap().elapsed() > IDLE_EXIT {
+                sys::unlisten();
+                std::process::exit(0);
+            }
         }
     });
 
     loop {
-        let Ok(mut stream) = listener.accept() else { continue };
+        let Ok(mut stream) = listener.accept() else {
+            continue;
+        };
         let (state, listener) = (state.clone(), listener.clone());
         thread::spawn(move || {
             if !listener.admit(&mut stream) {
@@ -183,7 +203,9 @@ pub fn serve() -> i32 {
 }
 
 fn handle(state: &Arc<State>, mut stream: Stream) {
-    let Ok(req) = proto::read_line(&mut stream) else { return };
+    let Ok(req) = proto::read_line(&mut stream) else {
+        return;
+    };
     let op = req["op"].as_str().unwrap_or("");
     if op == "attach" {
         attach(state, stream, &req);
@@ -229,8 +251,23 @@ fn session_json(s: &Session) -> Value {
 }
 
 fn list(state: &State) -> Value {
-    let sessions: Vec<Value> = state.sessions.lock().unwrap().iter().map(|s| session_json(s)).collect();
-    let events: Vec<Value> = state.events.lock().unwrap().iter().rev().take(60).rev().cloned().collect();
+    let sessions: Vec<Value> = state
+        .sessions
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|s| session_json(s))
+        .collect();
+    let events: Vec<Value> = state
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .rev()
+        .take(60)
+        .rev()
+        .cloned()
+        .collect();
     json!({ "sessions": sessions, "events": events, "now": now() })
 }
 
@@ -249,7 +286,10 @@ fn start(state: &Arc<State>, req: &Value) -> Result<Value, String> {
     let cols = req["cols"].as_u64().unwrap_or(120).clamp(10, 1000) as u16;
     let rows = req["rows"].as_u64().unwrap_or(40).clamp(4, 500) as u16;
     let listener = Listener::default();
-    let config = Config { scrolling_history: SCROLLBACK, ..Config::default() };
+    let config = Config {
+        scrolling_history: SCROLLBACK,
+        ..Config::default()
+    };
     let session = Arc::new(Session {
         name,
         agent: str_of(req, "agent").to_string(),
@@ -258,7 +298,14 @@ fn start(state: &Arc<State>, req: &Value) -> Result<Value, String> {
         run: str_of(req, "run").to_string(),
         created: now(),
         inner: Mutex::new(Inner {
-            term: Term::new(config, &Dims { cols: cols as usize, rows: rows as usize }, listener.clone()),
+            term: Term::new(
+                config,
+                &Dims {
+                    cols: cols as usize,
+                    rows: rows as usize,
+                },
+                listener.clone(),
+            ),
             parser: Processor::new(),
             listener,
             writer: None,
@@ -283,7 +330,12 @@ fn launch(state: &Arc<State>, s: &Arc<Session>) -> anyhow::Result<()> {
         let i = s.inner.lock().unwrap();
         (i.cols, i.rows)
     };
-    let pair = native_pty_system().openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })?;
+    let pair = native_pty_system().openpty(PtySize {
+        rows,
+        cols,
+        pixel_width: 0,
+        pixel_height: 0,
+    })?;
     // The user's own shell as an interactive login shell, so the agent sees
     // the same PATH and setup as in their terminal (PowerShell on Windows,
     // with its profile).
@@ -418,7 +470,9 @@ fn kill(i: &mut Inner) {
 
 fn stop(state: &State, req: &Value) -> Result<Value, String> {
     let name = str_of(req, "name");
-    let s = state.find(name).ok_or_else(|| format!("no session called {name}"))?;
+    let s = state
+        .find(name)
+        .ok_or_else(|| format!("no session called {name}"))?;
     {
         let mut i = s.inner.lock().unwrap();
         i.generation += 1;
@@ -432,7 +486,9 @@ fn stop(state: &State, req: &Value) -> Result<Value, String> {
 
 fn restart(state: &Arc<State>, req: &Value) -> Result<Value, String> {
     let name = str_of(req, "name");
-    let s = state.find(name).ok_or_else(|| format!("no session called {name}"))?;
+    let s = state
+        .find(name)
+        .ok_or_else(|| format!("no session called {name}"))?;
     {
         let mut i = s.inner.lock().unwrap();
         i.generation += 1;
@@ -448,12 +504,17 @@ fn restart(state: &Arc<State>, req: &Value) -> Result<Value, String> {
 
 fn send(state: &State, req: &Value) -> Result<Value, String> {
     let name = str_of(req, "name");
-    let s = state.find(name).ok_or_else(|| format!("no session called {name}"))?;
+    let s = state
+        .find(name)
+        .ok_or_else(|| format!("no session called {name}"))?;
     let text = str_of(req, "text");
     let enter = req["enter"].as_bool().unwrap_or(true);
     {
         let mut i = s.inner.lock().unwrap();
-        let w = i.writer.as_mut().ok_or_else(|| format!("{name} has exited"))?;
+        let w = i
+            .writer
+            .as_mut()
+            .ok_or_else(|| format!("{name} has exited"))?;
         w.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
     }
     if enter {
@@ -464,7 +525,10 @@ fn send(state: &State, req: &Value) -> Result<Value, String> {
             std::thread::sleep(std::time::Duration::from_millis(150));
         }
         let mut i = s.inner.lock().unwrap();
-        let w = i.writer.as_mut().ok_or_else(|| format!("{name} has exited"))?;
+        let w = i
+            .writer
+            .as_mut()
+            .ok_or_else(|| format!("{name} has exited"))?;
         w.write_all(b"\r").map_err(|e| e.to_string())?;
     }
     Ok(json!({}))
@@ -472,7 +536,9 @@ fn send(state: &State, req: &Value) -> Result<Value, String> {
 
 fn read(state: &State, req: &Value) -> Result<Value, String> {
     let name = str_of(req, "name");
-    let s = state.find(name).ok_or_else(|| format!("no session called {name}"))?;
+    let s = state
+        .find(name)
+        .ok_or_else(|| format!("no session called {name}"))?;
     let lines = req["lines"].as_u64().unwrap_or(200) as usize;
     let i = s.inner.lock().unwrap();
     Ok(json!({ "text": screen::text(&i.term, lines) }))
@@ -483,7 +549,10 @@ fn read(state: &State, req: &Value) -> Result<Value, String> {
 fn attach(state: &State, mut stream: Stream, req: &Value) {
     let name = str_of(req, "name");
     let Some(s) = state.find(name) else {
-        let _ = proto::write_line(&mut stream, &json!({ "ok": false, "error": format!("no session called {name}") }));
+        let _ = proto::write_line(
+            &mut stream,
+            &json!({ "ok": false, "error": format!("no session called {name}") }),
+        );
         return;
     };
     let id = state.next_client.fetch_add(1, Ordering::Relaxed);

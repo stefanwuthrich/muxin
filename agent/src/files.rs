@@ -40,7 +40,9 @@ pub fn list(req: &Value) -> Value {
         Err(e) if e.kind() == std::io::ErrorKind::NotADirectory || path.is_file() => {
             return json!({ "ok": false, "error": format!("{} is a file, not a folder.", path.display()) });
         }
-        Err(e) => return json!({ "ok": false, "error": format!("Can't open {}: {e}", path.display()) }),
+        Err(e) => {
+            return json!({ "ok": false, "error": format!("Can't open {}: {e}", path.display()) });
+        }
     };
     let mut entries: Vec<Value> = Vec::new();
     let mut more = false;
@@ -50,7 +52,9 @@ pub fn list(req: &Value) -> Value {
             break;
         }
         let name = entry.file_name().to_string_lossy().to_string();
-        let Ok(meta) = entry.path().symlink_metadata() else { continue };
+        let Ok(meta) = entry.path().symlink_metadata() else {
+            continue;
+        };
         let kind = if meta.file_type().is_symlink() {
             "link"
         } else if meta.is_dir() {
@@ -60,7 +64,11 @@ pub fn list(req: &Value) -> Value {
         };
         // A link to a folder can be opened like one.
         let opens = kind == "dir" || (kind == "link" && entry.path().is_dir());
-        let modified = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs());
+        let modified = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs());
         entries.push(json!({
             "name": name,
             "kind": kind,
@@ -70,8 +78,17 @@ pub fn list(req: &Value) -> Value {
         }));
     }
     entries.sort_by(|a, b| {
-        let (fa, fb) = (a["folder"].as_bool().unwrap_or(false), b["folder"].as_bool().unwrap_or(false));
-        fb.cmp(&fa).then_with(|| a["name"].as_str().unwrap_or("").to_lowercase().cmp(&b["name"].as_str().unwrap_or("").to_lowercase()))
+        let (fa, fb) = (
+            a["folder"].as_bool().unwrap_or(false),
+            b["folder"].as_bool().unwrap_or(false),
+        );
+        fb.cmp(&fa).then_with(|| {
+            a["name"]
+                .as_str()
+                .unwrap_or("")
+                .to_lowercase()
+                .cmp(&b["name"].as_str().unwrap_or("").to_lowercase())
+        })
     });
     let home = std::env::var("HOME").unwrap_or_default();
     json!({ "ok": true, "path": path.display().to_string(), "home": home, "entries": entries, "more": more })
@@ -87,7 +104,9 @@ fn measure(dir: &Path, names: &[String]) -> (Option<u64>, u64) {
         if started.elapsed() > Duration::from_secs(3) {
             return (None, files);
         }
-        let Ok(meta) = p.symlink_metadata() else { continue };
+        let Ok(meta) = p.symlink_metadata() else {
+            continue;
+        };
         if meta.is_dir() {
             if let Ok(read) = std::fs::read_dir(&p) {
                 stack.extend(read.flatten().map(|e| e.path()));
@@ -133,7 +152,11 @@ impl Credit {
     fn wait(&self, sent: u64, window: u64) -> bool {
         let mut s = self.state.lock().unwrap();
         while !s.1 && sent.saturating_sub(s.0) > window {
-            s = self.changed.wait_timeout(s, Duration::from_secs(1)).unwrap().0;
+            s = self
+                .changed
+                .wait_timeout(s, Duration::from_secs(1))
+                .unwrap()
+                .0;
         }
         !s.1
     }
@@ -148,11 +171,27 @@ pub type Send = Arc<dyn Fn(u32, u8, &[u8]) -> std::io::Result<()> + std::marker:
 pub fn pack(req: &Value, send: Send) -> Result<(Value, Arc<Credit>), String> {
     let channel = req["channel"].as_u64().unwrap_or(0) as u32;
     let dir = expand_home(req["dir"].as_str().unwrap_or("~"));
-    let names: Vec<String> = req["names"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
-    if names.is_empty() || names.iter().any(|n| n.is_empty() || n.contains('/') || n.contains('\\') || n == "." || n == "..") {
-        return Err("Name the files and folders to copy (inside the folder, without slashes).".into());
+    let names: Vec<String> = req["names"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    if names.is_empty()
+        || names
+            .iter()
+            .any(|n| n.is_empty() || n.contains('/') || n.contains('\\') || n == "." || n == "..")
+    {
+        return Err(
+            "Name the files and folders to copy (inside the folder, without slashes).".into(),
+        );
     }
-    if let Some(missing) = names.iter().find(|n| dir.join(n).symlink_metadata().is_err()) {
+    if let Some(missing) = names
+        .iter()
+        .find(|n| dir.join(n).symlink_metadata().is_err())
+    {
         return Err(format!("{} isn't in {}.", missing, dir.display()));
     }
     let window = req["window"].as_u64().unwrap_or(WINDOW).max(CHUNK as u64);
@@ -165,8 +204,12 @@ pub fn pack(req: &Value, send: Send) -> Result<(Value, Arc<Credit>), String> {
     }
     // "./name": a name starting with "-" stays a name.
     cmd.args(names.iter().map(|n| format!("./{n}")));
-    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = cmd.spawn().map_err(|e| format!("Couldn't start tar: {e}"))?;
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("Couldn't start tar: {e}"))?;
     let pid = child.id();
     let (mut stdout, stderr) = (child.stdout.take().unwrap(), child.stderr.take().unwrap());
     let credit = Arc::new(Credit::default());
@@ -200,7 +243,11 @@ pub fn pack(req: &Value, send: Send) -> Result<(Value, Arc<Credit>), String> {
         let result = finish(&mut child, failed, &errors);
         // Gone: nothing to stop any more (its process id may be reused).
         held.pid.lock().unwrap().take();
-        let _ = send(channel, END, &serde_json::to_vec(&result).unwrap_or_default());
+        let _ = send(
+            channel,
+            END,
+            &serde_json::to_vec(&result).unwrap_or_default(),
+        );
     });
     Ok((json!({ "ok": true, "size": size, "files": files }), credit))
 }
@@ -217,7 +264,9 @@ pub struct Unpack {
 impl Unpack {
     /// More of the stream.
     pub fn write(&mut self, data: &[u8]) -> std::io::Result<()> {
-        let Some(stdin) = self.stdin.as_mut() else { return Ok(()) };
+        let Some(stdin) = self.stdin.as_mut() else {
+            return Ok(());
+        };
         stdin.write_all(data)?;
         (self.send)(self.channel, ACK, &(data.len() as u64).to_be_bytes())
     }
@@ -259,9 +308,22 @@ pub fn unpack(req: &Value, send: Send) -> Result<(Value, Unpack), String> {
     thread::spawn(move || {
         let result = finish(&mut child, None, &errors);
         finished.store(true, Ordering::Relaxed);
-        let _ = reply(channel, END, &serde_json::to_vec(&result).unwrap_or_default());
+        let _ = reply(
+            channel,
+            END,
+            &serde_json::to_vec(&result).unwrap_or_default(),
+        );
     });
-    Ok((json!({ "ok": true, "path": dir.display().to_string() }), Unpack { stdin, pid, done, channel, send }))
+    Ok((
+        json!({ "ok": true, "path": dir.display().to_string() }),
+        Unpack {
+            stdin,
+            pid,
+            done,
+            channel,
+            send,
+        },
+    ))
 }
 
 /// What a tar process printed on stderr (the last of it).
@@ -284,11 +346,17 @@ fn finish(child: &mut Child, failed: Option<String>, errors: &Arc<Mutex<String>>
     // Let stderr's reader catch up.
     thread::sleep(Duration::from_millis(50));
     let stderr = errors.lock().unwrap().clone();
-    let tail: String = stderr.lines().filter(|l| !l.contains("Ignoring unknown extended header")).collect::<Vec<_>>().join("\n");
+    let tail: String = stderr
+        .lines()
+        .filter(|l| !l.contains("Ignoring unknown extended header"))
+        .collect::<Vec<_>>()
+        .join("\n");
     match (failed, status) {
         (Some(e), _) => json!({ "ok": false, "error": e }),
         (None, Ok(s)) if s.success() => json!({ "ok": true }),
-        (None, Ok(s)) => json!({ "ok": false, "error": if tail.trim().is_empty() { format!("tar exited with {s}") } else { tail.trim().to_string() } }),
+        (None, Ok(s)) => {
+            json!({ "ok": false, "error": if tail.trim().is_empty() { format!("tar exited with {s}") } else { tail.trim().to_string() } })
+        }
         (None, Err(e)) => json!({ "ok": false, "error": e.to_string() }),
     }
 }
@@ -321,7 +389,11 @@ mod tests {
         assert_eq!(reply["files"], 2);
         assert_eq!(reply["size"], 300_005);
         let acks: Send = Arc::new(|_, _, _| Ok(()));
-        let (_, mut into) = unpack(&json!({ "channel": 6, "dir": dst.display().to_string() }), acks).unwrap();
+        let (_, mut into) = unpack(
+            &json!({ "channel": 6, "dir": dst.display().to_string() }),
+            acks,
+        )
+        .unwrap();
         let started = Instant::now();
         loop {
             let batch: Vec<(u8, Vec<u8>)> = std::mem::take(&mut *frames.lock().unwrap());
@@ -345,8 +417,14 @@ mod tests {
         }
         into.end();
         thread::sleep(Duration::from_millis(300));
-        assert_eq!(std::fs::read(dst.join("folder/inner/a.txt")).unwrap(), b"hello");
-        assert_eq!(std::fs::metadata(dst.join("-dash.bin")).unwrap().len(), 300_000);
+        assert_eq!(
+            std::fs::read(dst.join("folder/inner/a.txt")).unwrap(),
+            b"hello"
+        );
+        assert_eq!(
+            std::fs::metadata(dst.join("-dash.bin")).unwrap().len(),
+            300_000
+        );
         let listed = list(&json!({ "path": dst.display().to_string() }));
         assert_eq!(listed["entries"][0]["name"], "folder", "folders first");
         let _ = std::fs::remove_dir_all(&base);

@@ -60,7 +60,11 @@ async fn look(engine: &Arc<Engine>, cx: &mut AsyncApp) {
         cx.default_global::<Updates>().checking = true;
         cx.refresh_windows();
     });
-    let result = engine.runtime().spawn(crate::update::check()).await.unwrap_or_else(|e| Err(e.to_string()));
+    let result = engine
+        .runtime()
+        .spawn(crate::update::check())
+        .await
+        .unwrap_or_else(|e| Err(e.to_string()));
     let _ = cx.update(|cx| {
         let u = cx.default_global::<Updates>();
         u.checking = false;

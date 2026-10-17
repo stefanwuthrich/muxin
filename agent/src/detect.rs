@@ -12,11 +12,19 @@ use std::time::{Duration, Instant};
 /// Windows PowerShell.
 #[cfg(windows)]
 pub fn user_shell() -> String {
-    let dirs: Vec<String> = std::env::var("PATH").map(|p| p.split(';').map(String::from).collect()).unwrap_or_default();
-    let installed = dirs.iter().chain([r"C:\Program Files\PowerShell\7".to_string()].iter()).map(|d| std::path::Path::new(d).join("pwsh.exe")).find(|p| p.is_file());
+    let dirs: Vec<String> = std::env::var("PATH")
+        .map(|p| p.split(';').map(String::from).collect())
+        .unwrap_or_default();
+    let installed = dirs
+        .iter()
+        .chain([r"C:\Program Files\PowerShell\7".to_string()].iter())
+        .map(|d| std::path::Path::new(d).join("pwsh.exe"))
+        .find(|p| p.is_file());
     match installed {
         Some(p) => p.display().to_string(),
-        None => std::env::var("SystemRoot").map(|r| format!(r"{r}\System32\WindowsPowerShell\v1.0\powershell.exe")).unwrap_or_else(|_| "powershell.exe".into()),
+        None => std::env::var("SystemRoot")
+            .map(|r| format!(r"{r}\System32\WindowsPowerShell\v1.0\powershell.exe"))
+            .unwrap_or_else(|_| "powershell.exe".into()),
     }
 }
 
@@ -42,13 +50,22 @@ pub fn user_shell() -> String {
 /// The PATH folders (Windows keeps the user's in the environment, no rc files).
 #[cfg(windows)]
 pub fn path_dirs() -> Vec<String> {
-    std::env::var("PATH").map(|p| p.split(';').filter(|d| !d.is_empty()).map(String::from).collect()).unwrap_or_default()
+    std::env::var("PATH")
+        .map(|p| {
+            p.split(';')
+                .filter(|d| !d.is_empty())
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The PATH an interactive login shell sets up, then this process's own.
 #[cfg(unix)]
 pub fn path_dirs() -> Vec<String> {
-    let mut dirs: Vec<String> = interactive_path().map(|p| p.split(':').map(String::from).collect()).unwrap_or_default();
+    let mut dirs: Vec<String> = interactive_path()
+        .map(|p| p.split(':').map(String::from).collect())
+        .unwrap_or_default();
     if let Ok(p) = std::env::var("PATH") {
         dirs.extend(p.split(':').map(String::from));
     }
@@ -80,11 +97,14 @@ fn runnable(f: &std::path::Path) -> bool {
 #[cfg(windows)]
 fn runnable(f: &std::path::Path) -> bool {
     let exts = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
-    exts.split(';').filter(|e| !e.is_empty()).chain([".ps1"]).any(|e| {
-        let mut name = f.as_os_str().to_owned();
-        name.push(e.to_ascii_lowercase());
-        std::path::Path::new(&name).is_file()
-    })
+    exts.split(';')
+        .filter(|e| !e.is_empty())
+        .chain([".ps1"])
+        .any(|e| {
+            let mut name = f.as_os_str().to_owned();
+            name.push(e.to_ascii_lowercase());
+            std::path::Path::new(&name).is_file()
+        })
 }
 
 /// Asks an interactive login shell for its PATH, giving up after a few seconds.
@@ -101,7 +121,9 @@ fn interactive_path() -> Option<String> {
     loop {
         match child.try_wait() {
             Ok(Some(_)) => break,
-            Ok(None) if started.elapsed() < Duration::from_secs(6) => std::thread::sleep(Duration::from_millis(25)),
+            Ok(None) if started.elapsed() < Duration::from_secs(6) => {
+                std::thread::sleep(Duration::from_millis(25))
+            }
             _ => {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -111,5 +133,7 @@ fn interactive_path() -> Option<String> {
     }
     let mut out = String::new();
     child.stdout.take()?.read_to_string(&mut out).ok()?;
-    out.lines().rev().find_map(|l| l.strip_prefix("__OR_PATH=").map(str::to_string))
+    out.lines()
+        .rev()
+        .find_map(|l| l.strip_prefix("__OR_PATH=").map(str::to_string))
 }

@@ -6,8 +6,18 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") {
         return;
     }
-    cc::Build::new().file("src/mac_screen.m").flag("-fobjc-arc").flag("-mmacosx-version-min=12.3").compile("muxen_screen");
-    for framework in ["AppKit", "CoreGraphics", "CoreMedia", "CoreVideo", "Foundation"] {
+    cc::Build::new()
+        .file("src/mac_screen.m")
+        .flag("-fobjc-arc")
+        .flag("-mmacosx-version-min=12.3")
+        .compile("muxen_screen");
+    for framework in [
+        "AppKit",
+        "CoreGraphics",
+        "CoreMedia",
+        "CoreVideo",
+        "Foundation",
+    ] {
         println!("cargo:rustc-link-lib=framework={framework}");
     }
     // Weak: the agent still runs (without a desktop) on macOS before 12.3.

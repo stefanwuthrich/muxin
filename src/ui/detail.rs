@@ -5,8 +5,8 @@ use gpui::{AnyElement, Context, FontWeight, SharedString, div, prelude::*, px};
 use super::format;
 use super::kit::{self, Button, ButtonStyle, card, chip, icon, kv, meter, pill, section_title};
 use super::overview::page;
-use super::theme::{ActiveTheme, mono_font, Theme};
-use super::root::{Route, Root};
+use super::root::{Root, Route};
+use super::theme::{ActiveTheme, Theme, mono_font};
 use crate::fleet::model::{Diagnostic, Machine, Operation, Runner, Snapshot, Unreachable};
 use crate::ops::RunnerAction;
 
@@ -18,11 +18,28 @@ impl Root {
             return gone(&theme, "This machine is no longer in config.toml.").into_any_element();
         };
         let p = m.probe.as_ref().filter(|p| p.ok);
-        let busy = s.operations.iter().any(|o| o.status == "running" && o.machine_id.as_deref() == Some(&m.id) && o.kind != "logs");
+        let busy = s.operations.iter().any(|o| {
+            o.status == "running" && o.machine_id.as_deref() == Some(&m.id) && o.kind != "logs"
+        });
 
         // A VM Muxin made is its container on its host, not the 127.0.0.1 ssh goes to.
-        let place = m.vm.as_ref().map(|v| format!("{} on {}", v.container, m.parent.as_ref().map(|p| p.name.clone()).unwrap_or_else(|| v.host.clone())));
-        let mut meta = vec![place.unwrap_or_else(|| if m.host.is_empty() { "no host".to_string() } else { m.host.clone() })];
+        let place = m.vm.as_ref().map(|v| {
+            format!(
+                "{} on {}",
+                v.container,
+                m.parent
+                    .as_ref()
+                    .map(|p| p.name.clone())
+                    .unwrap_or_else(|| v.host.clone())
+            )
+        });
+        let mut meta = vec![place.unwrap_or_else(|| {
+            if m.host.is_empty() {
+                "no host".to_string()
+            } else {
+                m.host.clone()
+            }
+        })];
         if !m.platform.is_empty() {
             meta.push(m.platform.clone());
         }
@@ -39,7 +56,11 @@ impl Root {
             self.machine_git.remove(&m.id);
         }
         let checked = match &m.probe {
-            Some(p) => format!("Updated {} (took {:.1}s)", format::ago(Some(p.checked_at)), p.duration_ms as f64 / 1000.0),
+            Some(p) => format!(
+                "Updated {} (took {:.1}s)",
+                format::ago(Some(p.checked_at)),
+                p.duration_ms as f64 / 1000.0
+            ),
             None => "Not updated yet".into(),
         };
 
@@ -70,35 +91,76 @@ impl Root {
                                     .flex()
                                     .items_center()
                                     .gap(px(10.))
-                                    .child(div().text_size(px(22.)).font_weight(FontWeight::SEMIBOLD).child(m.name.clone()))
+                                    .child(
+                                        div()
+                                            .text_size(px(22.))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child(m.name.clone()),
+                                    )
                                     .child(pill(status_label(&m), theme.machine_status(&m)))
                                     .child({
-                                        let (mid, favorite) = (m.id.clone(), Root::is_favorite(cx, &m.id));
-                                        Button::icon_only("m-favorite", if favorite { "star-filled" } else { "star" })
-                                            .tooltip(if favorite { "Remove from favorites" } else { "Add to favorites" })
-                                            .on_click(cx.listener(move |this, _, _, cx| this.set_favorite_machine(&mid, !favorite, cx)))
+                                        let (mid, favorite) =
+                                            (m.id.clone(), Root::is_favorite(cx, &m.id));
+                                        Button::icon_only(
+                                            "m-favorite",
+                                            if favorite { "star-filled" } else { "star" },
+                                        )
+                                        .tooltip(if favorite {
+                                            "Remove from favorites"
+                                        } else {
+                                            "Add to favorites"
+                                        })
+                                        .on_click(
+                                            cx.listener(move |this, _, _, cx| {
+                                                this.set_favorite_machine(&mid, !favorite, cx)
+                                            }),
+                                        )
                                     }),
                             )
-                            .child(div().font_family(mono_font()).text_size(px(12.)).text_color(theme.text_muted).child(meta.join("  ·  ")))
-                            .child(div().text_size(px(12.)).text_color(theme.text_placeholder).child(checked)),
+                            .child(
+                                div()
+                                    .font_family(mono_font())
+                                    .text_size(px(12.))
+                                    .text_color(theme.text_muted)
+                                    .child(meta.join("  ·  ")),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .text_color(theme.text_placeholder)
+                                    .child(checked),
+                            ),
                     ),
             )
             .child({
-
                 let mut buttons: Vec<AnyElement> = Vec::new();
                 // Disconnected on purpose: connecting is what there is to do.
                 if disconnected {
                     let mid = m.id.clone();
-                    buttons.push(Button::new("m-connect", "Connect").icon("plug").style(ButtonStyle::Primary).on_click(cx.listener(move |this, _, _, cx| this.set_machine_connected(&mid, true, cx))).into_any_element());
+                    buttons.push(
+                        Button::new("m-connect", "Connect")
+                            .icon("plug")
+                            .style(ButtonStyle::Primary)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.set_machine_connected(&mid, true, cx)
+                            }))
+                            .into_any_element(),
+                    );
                 }
                 // What you come to a machine for first: a session, its desktop.
                 let mid = m.id.clone();
                 buttons.push(
                     Button::new("m-session", "New session")
                         .icon("square-terminal")
-                        .style(if disconnected { ButtonStyle::Outlined } else { ButtonStyle::Primary })
+                        .style(if disconnected {
+                            ButtonStyle::Outlined
+                        } else {
+                            ButtonStyle::Primary
+                        })
                         .disabled(m.host.is_empty() || offline)
-                        .on_click(cx.listener(move |this, _, window, cx| this.show_new_session(Some(mid.clone()), window, cx)))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.show_new_session(Some(mid.clone()), window, cx)
+                        }))
                         .into_any_element(),
                 );
                 if super::format::has_desktop(&m) && !m.local {
@@ -107,7 +169,9 @@ impl Root {
                         Button::new("m-desktop", "Show desktop")
                             .icon("monitor")
                             .disabled(m.host.is_empty() || offline)
-                            .on_click(cx.listener(move |this, _, window, cx| this.show_display(mid.clone(), None, window, cx)))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.show_display(mid.clone(), None, window, cx)
+                            }))
                             .into_any_element(),
                     );
                 }
@@ -117,7 +181,9 @@ impl Root {
                         Button::new("m-logs", "Logs")
                             .icon("scroll-text")
                             .disabled(m.host.is_empty() || offline)
-                            .on_click(cx.listener(move |this, _, window, cx| this.navigate(Route::Logs(mid.clone()), window, cx)))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.navigate(Route::Logs(mid.clone()), window, cx)
+                            }))
                             .into_any_element(),
                     );
                     let mid = m.id.clone();
@@ -125,7 +191,9 @@ impl Root {
                         Button::new("m-services", "Services")
                             .icon("layers")
                             .disabled(m.host.is_empty() || offline)
-                            .on_click(cx.listener(move |this, _, window, cx| this.navigate(Route::Services(mid.clone()), window, cx)))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.navigate(Route::Services(mid.clone()), window, cx)
+                            }))
                             .into_any_element(),
                     );
                 }
@@ -134,7 +202,9 @@ impl Root {
                     Button::new("m-install", "Install runner")
                         .icon("plus")
                         .disabled(m.host.is_empty() || busy || offline)
-                        .on_click(cx.listener(move |this, _, window, cx| this.show_install_dialog(&mid, window, cx)))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.show_install_dialog(&mid, window, cx)
+                        }))
                         .into_any_element(),
                 );
                 {
@@ -143,7 +213,9 @@ impl Root {
                         Button::new("m-copy", "Copy files")
                             .icon("folder")
                             .disabled(m.host.is_empty() || offline)
-                            .on_click(cx.listener(move |this, _, window, cx| this.show_copy_files(Some(mid.clone()), None, window, cx)))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.show_copy_files(Some(mid.clone()), None, window, cx)
+                            }))
                             .into_any_element(),
                     );
                 }
@@ -151,11 +223,15 @@ impl Root {
                     let mid = m.id.clone();
                     buttons.push(
                         Button::new("m-check", "Refresh")
-                            .tooltip("Read its status, CPU, memory, disk, runners and sessions again")
+                            .tooltip(
+                                "Read its status, CPU, memory, disk, runners and sessions again",
+                            )
                             .icon("refresh-cw")
                             .loading(m.checking)
                             .disabled(m.host.is_empty())
-                            .on_click(cx.listener(move |this, _, _, _| this.engine.trigger_check(Some(mid.clone()))))
+                            .on_click(cx.listener(move |this, _, _, _| {
+                                this.engine.trigger_check(Some(mid.clone()))
+                            }))
                             .into_any_element(),
                     );
                 }
@@ -163,8 +239,14 @@ impl Root {
                     let machine = m.clone();
                     Button::icon_only("m-remove", "trash-2")
                         .style(ButtonStyle::Danger)
-                        .tooltip(if machine.cloud.is_some() { "Destroy" } else { "Remove from Muxin" })
-                        .on_click(cx.listener(move |this, _, window, cx| this.confirm_remove_machine(&machine, window, cx)))
+                        .tooltip(if machine.cloud.is_some() {
+                            "Destroy"
+                        } else {
+                            "Remove from Muxin"
+                        })
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.confirm_remove_machine(&machine, window, cx)
+                        }))
                 };
                 // Remove stays beside the button before it, never on a line of its own.
                 let last = buttons.pop();
@@ -174,7 +256,15 @@ impl Root {
                     .min_w(px(0.))
                     .gap(px(6.))
                     .children(buttons)
-                    .child(div().flex_none().flex().items_center().gap(px(6.)).children(last).child(remove))
+                    .child(
+                        div()
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .children(last)
+                            .child(remove),
+                    )
             });
 
         let mut body = page("machine-page", &self.page_scroll).child(header);
@@ -193,7 +283,13 @@ impl Root {
 
         // A powered-off cloud machine says so on its cloud card; a stopped VM,
         // or one whose host is off, on the card above.
-        if let Some(u) = m.unreachable.as_ref().filter(|u| offline && !matches!(u.kind.as_str(), "powered-off" | "stopped" | "host-down" | "installing")) {
+        if let Some(u) = m.unreachable.as_ref().filter(|u| {
+            offline
+                && !matches!(
+                    u.kind.as_str(),
+                    "powered-off" | "stopped" | "host-down" | "installing"
+                )
+        }) {
             body = body.child(self.unreachable_card(&theme, &m, u, cx));
         }
 
@@ -216,7 +312,9 @@ impl Root {
                         &theme,
                         "Memory",
                         mem.map(|f| format!("{:.0}%", f * 100.0)),
-                        p.mem_used.zip(p.mem_total).map(|(u, t)| format!("{} of {}", format::bytes(u), format::bytes(t))),
+                        p.mem_used
+                            .zip(p.mem_total)
+                            .map(|(u, t)| format!("{} of {}", format::bytes(u), format::bytes(t))),
                         mem,
                         theme.accent,
                     ))
@@ -224,25 +322,67 @@ impl Root {
                         &theme,
                         "Disk free",
                         p.disk_free.map(format::bytes),
-                        p.disk_total.map(|t| format!("of {} · {}", format::bytes(t), p.disk_path.clone().unwrap_or_default())),
+                        p.disk_total.map(|t| {
+                            format!(
+                                "of {} · {}",
+                                format::bytes(t),
+                                p.disk_path.clone().unwrap_or_default()
+                            )
+                        }),
                         disk,
-                        if format::disk_low(&m) { theme.error } else { theme.accent },
+                        if format::disk_low(&m) {
+                            theme.error
+                        } else {
+                            theme.accent
+                        },
                     ))
-                    .children(self.machine_gpus.get(&m.id).and_then(|g| g.first()).map(|g| {
-                        let mem = match (g.memory_used, g.memory_total) {
-                            (Some(u), Some(t)) => format!(" · {} of {}", super::services::memory(Some(u)), super::services::memory(Some(t))),
-                            (Some(u), None) => format!(" · {} in use", super::services::memory(Some(u))),
-                            _ => String::new(),
-                        };
-                        // "RTX 4090 · 14 GB of 24 GB": the vendor's words are long for a card.
-                        let name = g.name.trim_start_matches("NVIDIA ").trim_start_matches("GeForce ").trim_start_matches("AMD ").to_string();
-                        metric_card(&theme, "GPU", g.busy.map(|b| format!("{b:.0}%")), Some(format!("{name}{mem}")), g.busy.map(|b| b as f32 / 100.), theme.accent)
-                    }))
+                    .children(
+                        self.machine_gpus
+                            .get(&m.id)
+                            .and_then(|g| g.first())
+                            .map(|g| {
+                                let mem = match (g.memory_used, g.memory_total) {
+                                    (Some(u), Some(t)) => format!(
+                                        " · {} of {}",
+                                        super::services::memory(Some(u)),
+                                        super::services::memory(Some(t))
+                                    ),
+                                    (Some(u), None) => {
+                                        format!(" · {} in use", super::services::memory(Some(u)))
+                                    }
+                                    _ => String::new(),
+                                };
+                                // "RTX 4090 · 14 GB of 24 GB": the vendor's words are long for a card.
+                                let name = g
+                                    .name
+                                    .trim_start_matches("NVIDIA ")
+                                    .trim_start_matches("GeForce ")
+                                    .trim_start_matches("AMD ")
+                                    .to_string();
+                                metric_card(
+                                    &theme,
+                                    "GPU",
+                                    g.busy.map(|b| format!("{b:.0}%")),
+                                    Some(format!("{name}{mem}")),
+                                    g.busy.map(|b| b as f32 / 100.),
+                                    theme.accent,
+                                )
+                            }),
+                    )
                     .child(metric_card(
                         &theme,
                         "Uptime",
                         p.uptime_sec.map(format::uptime),
-                        (!p.load.is_empty()).then(|| format!("load {}", p.load.iter().map(|l| format!("{l:.2}")).collect::<Vec<_>>().join(" "))),
+                        (!p.load.is_empty()).then(|| {
+                            format!(
+                                "load {}",
+                                p.load
+                                    .iter()
+                                    .map(|l| format!("{l:.2}"))
+                                    .collect::<Vec<_>>()
+                                    .join(" ")
+                            )
+                        }),
                         None,
                         theme.accent,
                     )),
@@ -269,9 +409,17 @@ impl Root {
             }
         }
 
-        let runners: Vec<&Runner> = m.runner_ids.iter().filter_map(|id| s.runners.iter().find(|r| &r.id == id)).collect();
+        let runners: Vec<&Runner> = m
+            .runner_ids
+            .iter()
+            .filter_map(|id| s.runners.iter().find(|r| &r.id == id))
+            .collect();
         if m.kind == "runner" || !runners.is_empty() {
-            let rows: Vec<AnyElement> = runners.iter().enumerate().map(|(i, r)| self.machine_runner_row(&theme, &s, r, i, busy, cx)).collect();
+            let rows: Vec<AnyElement> = runners
+                .iter()
+                .enumerate()
+                .map(|(i, r)| self.machine_runner_row(&theme, &s, r, i, busy, cx))
+                .collect();
             body = body.child(
                 div()
                     .flex()
@@ -302,12 +450,22 @@ impl Root {
         }
 
         // Being unreachable has its own card above.
-        let diags: Vec<Diagnostic> = m.diagnostics.iter().filter(|d| d.code != "unreachable").cloned().collect();
+        let diags: Vec<Diagnostic> = m
+            .diagnostics
+            .iter()
+            .filter(|d| d.code != "unreachable")
+            .cloned()
+            .collect();
         body = body.child(diagnostics_section(&theme, &diags, &s));
         if !m.host.is_empty() {
             body = body.child(self.machine_workspaces(&theme, &s, &m, cx));
         }
-        body = body.child(self.operations_section(&theme, &s, |o| o.machine_id.as_deref() == Some(id), cx));
+        body = body.child(self.operations_section(
+            &theme,
+            &s,
+            |o| o.machine_id.as_deref() == Some(id),
+            cx,
+        ));
         if let Some(notes) = &m.notes {
             body = body.child(
                 div()
@@ -315,20 +473,40 @@ impl Root {
                     .flex_col()
                     .gap(px(10.))
                     .child(section_title(&theme, "Notes", None))
-                    .child(card(&theme).p(px(14.)).child(div().w_full().text_size(px(12.5)).text_color(theme.text_muted).child(notes.clone()))),
+                    .child(
+                        card(&theme).p(px(14.)).child(
+                            div()
+                                .w_full()
+                                .text_size(px(12.5))
+                                .text_color(theme.text_muted)
+                                .child(notes.clone()),
+                        ),
+                    ),
             );
         }
         body.into_any_element()
     }
 
     /// Where a cloud machine runs, what it costs, and its power.
-    fn cloud_card(&self, theme: &Theme, s: &Snapshot, m: &Machine, c: &crate::fleet::model::CloudInfo, busy: bool, cx: &mut Context<Self>) -> impl IntoElement {
+    fn cloud_card(
+        &self,
+        theme: &Theme,
+        s: &Snapshot,
+        m: &Machine,
+        c: &crate::fleet::model::CloudInfo,
+        busy: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let off = m.status == "offline";
-        let powering = s.operations.iter().find(|o| o.status == "running" && o.machine_id.as_deref() == Some(&m.id)).and_then(|o| match o.kind.as_str() {
-            "cloud-power-on" => Some(true),
-            "cloud-power-off" => Some(false),
-            _ => None,
-        });
+        let powering = s
+            .operations
+            .iter()
+            .find(|o| o.status == "running" && o.machine_id.as_deref() == Some(&m.id))
+            .and_then(|o| match o.kind.as_str() {
+                "cloud-power-on" => Some(true),
+                "cloud-power-off" => Some(false),
+                _ => None,
+            });
         let power_label = match powering {
             Some(true) => "Powering on…",
             Some(false) => "Shutting down…",
@@ -337,17 +515,32 @@ impl Root {
         };
         use crate::cloud::usage;
         let now = chrono::Utc::now();
-        let idle = c.idle_since.map(|t| (now - t).num_minutes()).filter(|min| *min >= 30).map(|min| format!(" · idle {}", crate::util::short_duration(min as u64 * 60)));
+        let idle = c
+            .idle_since
+            .map(|t| (now - t).num_minutes())
+            .filter(|min| *min >= 30)
+            .map(|min| format!(" · idle {}", crate::util::short_duration(min as u64 * 60)));
         let state = match powering {
             Some(true) => ("Powering on…".to_string(), theme.text_muted),
             Some(false) => ("Shutting down…".to_string(), theme.text_muted),
             None if off => ("Powered off · still billed".to_string(), theme.warning),
-            None => (format!("Running{}", idle.unwrap_or_default()), theme.text_placeholder),
+            None => (
+                format!("Running{}", idle.unwrap_or_default()),
+                theme.text_placeholder,
+            ),
         };
-        let place = crate::cloud::region_city(&c.region).map(str::to_string).unwrap_or_else(|| c.region.to_uppercase());
-        let title = format!("DigitalOcean · {place} · {}", crate::cloud::size_label(&c.size));
+        let place = crate::cloud::region_city(&c.region)
+            .map(str::to_string)
+            .unwrap_or_else(|| c.region.to_uppercase());
+        let title = format!(
+            "DigitalOcean · {place} · {}",
+            crate::cloud::size_label(&c.size)
+        );
         let created = c.created_at.unwrap_or(now);
-        let month_end = usage::month_start(now).checked_add_months(chrono::Months::new(1)).map(|t| (t - chrono::Duration::days(1)).format("%b %-d").to_string()).unwrap_or_default();
+        let month_end = usage::month_start(now)
+            .checked_add_months(chrono::Months::new(1))
+            .map(|t| (t - chrono::Duration::days(1)).format("%b %-d").to_string())
+            .unwrap_or_default();
         let if_kept = usage::month_if_kept(c.price_hourly, created, now);
         let age = crate::util::short_duration((now - created).num_seconds().max(0) as u64);
         let stat = |label: &'static str, value: String, sub: String| {
@@ -357,14 +550,37 @@ impl Root {
                 .flex_1()
                 .min_w(px(0.))
                 .gap(px(2.))
-                .child(div().text_size(px(11.)).text_color(theme.text_placeholder).child(label))
-                .child(div().font_family(mono_font()).text_size(px(15.)).child(value))
-                .child(div().truncate().text_size(px(11.5)).text_color(theme.text_muted).child(sub))
+                .child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(theme.text_placeholder)
+                        .child(label),
+                )
+                .child(
+                    div()
+                        .font_family(mono_font())
+                        .text_size(px(15.))
+                        .child(value),
+                )
+                .child(
+                    div()
+                        .truncate()
+                        .text_size(px(11.5))
+                        .text_color(theme.text_muted)
+                        .child(sub),
+                )
         };
         let note = if off {
             ("triangle-alert", theme.warning, "Powering off doesn't stop the charges: DigitalOcean bills a droplet until it's destroyed.".to_string())
         } else {
-            ("info", theme.text_placeholder, format!("Billed by the second while it exists, on or off, up to ${:.2} a month. Destroy it to stop the charges.", c.price_monthly))
+            (
+                "info",
+                theme.text_placeholder,
+                format!(
+                    "Billed by the second while it exists, on or off, up to ${:.2} a month. Destroy it to stop the charges.",
+                    c.price_monthly
+                ),
+            )
         };
         let (mid, machine) = (m.id.clone(), m.clone());
         card(theme)
@@ -389,8 +605,22 @@ impl Root {
                             .child(div().truncate().text_size(px(13.)).child(title))
                             .child(div().text_size(px(11.5)).text_color(state.1).child(state.0)),
                     )
-                    .child(Button::new("m-cloud-power", power_label).icon("power").disabled(busy).on_click(cx.listener(move |this, _, _, cx| this.cloud_power(&mid, off, cx))))
-                    .child(Button::new("m-cloud-destroy", "Destroy…").style(ButtonStyle::Danger).disabled(busy).on_click(cx.listener(move |this, _, window, cx| this.confirm_remove_machine(&machine, window, cx)))),
+                    .child(
+                        Button::new("m-cloud-power", power_label)
+                            .icon("power")
+                            .disabled(busy)
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| this.cloud_power(&mid, off, cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new("m-cloud-destroy", "Destroy…")
+                            .style(ButtonStyle::Danger)
+                            .disabled(busy)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.confirm_remove_machine(&machine, window, cx)
+                            })),
+                    ),
             )
             .child(
                 div()
@@ -400,9 +630,21 @@ impl Root {
                     .py(px(12.))
                     .border_t_1()
                     .border_color(theme.border_variant)
-                    .child(stat("Rate", format!("${:.3}/h", c.price_hourly), format!("up to ${:.2} a month", c.price_monthly)))
-                    .child(stat("This month", format!("${:.2}", c.this_month), format!("about ${if_kept:.2} by {month_end} if kept")))
-                    .child(stat("Since created", format!("${:.2}", c.cost_so_far), format!("created {age} ago"))),
+                    .child(stat(
+                        "Rate",
+                        format!("${:.3}/h", c.price_hourly),
+                        format!("up to ${:.2} a month", c.price_monthly),
+                    ))
+                    .child(stat(
+                        "This month",
+                        format!("${:.2}", c.this_month),
+                        format!("about ${if_kept:.2} by {month_end} if kept"),
+                    ))
+                    .child(stat(
+                        "Since created",
+                        format!("${:.2}", c.cost_so_far),
+                        format!("created {age} ago"),
+                    )),
             )
             .child(
                 div()
@@ -414,17 +656,42 @@ impl Root {
                     .border_t_1()
                     .border_color(theme.border_variant)
                     .child(icon(note.0, 13., note.1))
-                    .child(div().flex_1().min_w(px(0.)).truncate().text_size(px(12.)).text_color(if off { theme.warning } else { theme.text_muted }).child(note.2)),
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .truncate()
+                            .text_size(px(12.))
+                            .text_color(if off { theme.warning } else { theme.text_muted })
+                            .child(note.2),
+                    ),
             )
     }
 
-    fn machine_runner_row(&self, theme: &Theme, s: &Snapshot, r: &Runner, i: usize, busy: bool, cx: &mut Context<Self>) -> AnyElement {
+    fn machine_runner_row(
+        &self,
+        theme: &Theme,
+        s: &Snapshot,
+        r: &Runner,
+        i: usize,
+        busy: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let id = r.id.clone();
-        let job = r.job_id.and_then(|j| s.jobs.running.iter().find(|x| x.id == j));
+        let job = r
+            .job_id
+            .and_then(|j| s.jobs.running.iter().find(|x| x.id == j));
         let local = r.local.as_ref();
-        let service = local.and_then(|l| l.service_state.clone()).map(|st| format!("service {st}")).unwrap_or_else(|| {
-            if local.is_some() { "no service".into() } else { "not installed".into() }
-        });
+        let service = local
+            .and_then(|l| l.service_state.clone())
+            .map(|st| format!("service {st}"))
+            .unwrap_or_else(|| {
+                if local.is_some() {
+                    "no service".into()
+                } else {
+                    "not installed".into()
+                }
+            });
         div()
             .id(SharedString::from(format!("mr-{}", r.id)))
             .group("runner-row")
@@ -443,8 +710,19 @@ impl Root {
                     .flex_col()
                     .w(px(190.))
                     .flex_none()
-                    .child(div().truncate().font_family(mono_font()).text_size(px(12.5)).child(r.name.clone()))
-                    .child(div().text_size(px(11.5)).text_color(theme.state(&r.state)).child(state_label(r))),
+                    .child(
+                        div()
+                            .truncate()
+                            .font_family(mono_font())
+                            .text_size(px(12.5))
+                            .child(r.name.clone()),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.5))
+                            .text_color(theme.state(&r.state))
+                            .child(state_label(r)),
+                    ),
             )
             .child(
                 div()
@@ -452,50 +730,114 @@ impl Root {
                     .flex_col()
                     .flex_1()
                     .min_w(px(0.))
-                    .child(div().truncate().text_size(px(12.5)).text_color(if job.is_some() { theme.text } else { theme.text_placeholder }).child(
-                        job.map(|j| j.name.clone()).unwrap_or_else(|| if r.state == "working" { "Running a job".into() } else { "—".into() }),
-                    ))
-                    .child(div().truncate().text_size(px(11.5)).text_color(theme.text_placeholder).child(format!(
-                        "{}{}",
-                        local.and_then(|l| l.version.clone()).map(|v| format!("v{v} · ")).unwrap_or_default(),
-                        service
-                    ))),
+                    .child(
+                        div()
+                            .truncate()
+                            .text_size(px(12.5))
+                            .text_color(if job.is_some() {
+                                theme.text
+                            } else {
+                                theme.text_placeholder
+                            })
+                            .child(job.map(|j| j.name.clone()).unwrap_or_else(|| {
+                                if r.state == "working" {
+                                    "Running a job".into()
+                                } else {
+                                    "—".into()
+                                }
+                            })),
+                    )
+                    .child(
+                        div()
+                            .truncate()
+                            .text_size(px(11.5))
+                            .text_color(theme.text_placeholder)
+                            .child(format!(
+                                "{}{}",
+                                local
+                                    .and_then(|l| l.version.clone())
+                                    .map(|v| format!("v{v} · "))
+                                    .unwrap_or_default(),
+                                service
+                            )),
+                    ),
             )
             .child(self.runner_actions(theme, r, busy, "row", cx))
             .on_mouse_down(gpui::MouseButton::Right, {
                 let rid = r.id.clone();
-                super::menu::on_right_click(move || super::menu::MenuTarget::Runner(rid.clone()), cx)
+                super::menu::on_right_click(
+                    move || super::menu::MenuTarget::Runner(rid.clone()),
+                    cx,
+                )
             })
-            .on_click(cx.listener(move |this, _, window, cx| this.navigate(Route::Runner(id.clone()), window, cx)))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.navigate(Route::Runner(id.clone()), window, cx)
+            }))
             .into_any_element()
     }
 
     /// Start / stop / restart / logs / remove buttons for a runner.
-    fn runner_actions(&self, theme: &Theme, r: &Runner, busy: bool, prefix: &'static str, cx: &mut Context<Self>) -> impl IntoElement {
+    fn runner_actions(
+        &self,
+        theme: &Theme,
+        r: &Runner,
+        busy: bool,
+        prefix: &'static str,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let controllable = r.local.is_some() && r.machine_id.is_some();
         let running = r.local.as_ref().is_some_and(|l| l.listener);
-        let mk = |action: RunnerAction, icon_name: &'static str, tip: &'static str, enabled: bool| {
-            let id = r.id.clone();
-            Button::icon_only(SharedString::from(format!("{prefix}-{}-{}", action.label(), r.id)), icon_name)
+        let mk =
+            |action: RunnerAction, icon_name: &'static str, tip: &'static str, enabled: bool| {
+                let id = r.id.clone();
+                Button::icon_only(
+                    SharedString::from(format!("{prefix}-{}-{}", action.label(), r.id)),
+                    icon_name,
+                )
                 .tooltip(tip)
                 .disabled(!enabled)
                 .on_click(cx.listener(move |this, _, _, cx| this.runner_action(&id, action, cx)))
-        };
+            };
         let runner = r.clone();
         div()
             .flex()
             .flex_none()
             .gap(px(2.))
-            .child(mk(RunnerAction::Start, "play", "Start", controllable && !running && !busy))
-            .child(mk(RunnerAction::Stop, "square", "Stop", controllable && running && !busy))
-            .child(mk(RunnerAction::Restart, "rotate-ccw", "Restart", controllable && !busy))
-            .child(mk(RunnerAction::Logs, "scroll-text", "Show logs", controllable))
+            .child(mk(
+                RunnerAction::Start,
+                "play",
+                "Start",
+                controllable && !running && !busy,
+            ))
+            .child(mk(
+                RunnerAction::Stop,
+                "square",
+                "Stop",
+                controllable && running && !busy,
+            ))
+            .child(mk(
+                RunnerAction::Restart,
+                "rotate-ccw",
+                "Restart",
+                controllable && !busy,
+            ))
+            .child(mk(
+                RunnerAction::Logs,
+                "scroll-text",
+                "Show logs",
+                controllable,
+            ))
             .child(
-                Button::icon_only(SharedString::from(format!("{prefix}-remove-{}", r.id)), "trash-2")
-                    .style(ButtonStyle::Danger)
-                    .tooltip("Remove runner")
-                    .disabled(busy)
-                    .on_click(cx.listener(move |this, _, window, cx| this.confirm_remove_runner(&runner, window, cx))),
+                Button::icon_only(
+                    SharedString::from(format!("{prefix}-remove-{}", r.id)),
+                    "trash-2",
+                )
+                .style(ButtonStyle::Danger)
+                .tooltip("Remove runner")
+                .disabled(busy)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.confirm_remove_runner(&runner, window, cx)
+                })),
             )
             .text_color(theme.text_muted)
     }
@@ -504,13 +846,26 @@ impl Root {
         let theme = cx.theme();
         let s = self.snapshot.clone();
         let Some(r) = s.runners.iter().find(|r| r.id == id).cloned() else {
-            return gone(&theme, "This runner is gone. It was removed, or renamed on its machine.").into_any_element();
+            return gone(
+                &theme,
+                "This runner is gone. It was removed, or renamed on its machine.",
+            )
+            .into_any_element();
         };
-        let machine = r.machine_id.as_deref().and_then(|mid| s.machines.iter().find(|m| m.id == mid)).cloned();
+        let machine = r
+            .machine_id
+            .as_deref()
+            .and_then(|mid| s.machines.iter().find(|m| m.id == mid))
+            .cloned();
         let busy = machine.as_ref().is_some_and(|m| {
-            s.operations.iter().any(|o| o.status == "running" && o.machine_id.as_deref() == Some(&m.id) && o.kind != "logs")
+            s.operations.iter().any(|o| {
+                o.status == "running" && o.machine_id.as_deref() == Some(&m.id) && o.kind != "logs"
+            })
         });
-        let job = r.job_id.and_then(|j| s.jobs.running.iter().find(|x| x.id == j)).cloned();
+        let job = r
+            .job_id
+            .and_then(|j| s.jobs.running.iter().find(|x| x.id == j))
+            .cloned();
         let source = match r.source.as_str() {
             "github" => "live from GitHub",
             "probe" => "from the last machine check",
@@ -533,7 +888,13 @@ impl Root {
                             .items_center()
                             .gap(px(10.))
                             .child(kit::runner_glyph(&theme, &r.state, 14.))
-                            .child(div().font_family(mono_font()).text_size(px(20.)).font_weight(FontWeight::MEDIUM).child(r.name.clone()))
+                            .child(
+                                div()
+                                    .font_family(mono_font())
+                                    .text_size(px(20.))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(r.name.clone()),
+                            )
                             .child(pill(state_label(&r), theme.state(&r.state))),
                     )
                     .child(
@@ -554,14 +915,24 @@ impl Root {
                                     .text_color(theme.text_accent)
                                     .child(icon(format::machine_icon(m), 12., theme.text_accent))
                                     .child(m.name.clone())
-                                    .on_click(cx.listener(move |this, _, window, cx| this.navigate(Route::Machine(mid.clone()), window, cx)))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.navigate(Route::Machine(mid.clone()), window, cx)
+                                    }))
                             }))
                             .when(machine.is_none(), |d| d.child("Not in config.toml"))
                             .child("·")
                             .child(format!("State {source}"))
-                            .when(!r.declared && r.machine_id.is_some(), |d| d.child("·").child("discovered")),
+                            .when(!r.declared && r.machine_id.is_some(), |d| {
+                                d.child("·").child("discovered")
+                            }),
                     )
-                    .child(div().flex().flex_wrap().gap(px(4.)).children(r.labels.iter().map(|l| chip(&theme, l.clone())))),
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap(px(4.))
+                            .children(r.labels.iter().map(|l| chip(&theme, l.clone()))),
+                    ),
             )
             .child(self.runner_actions(&theme, &r, busy, "page", cx));
 
@@ -584,15 +955,27 @@ impl Root {
                             .flex_1()
                             .min_w(px(0.))
                             .child(div().text_size(px(13.)).child(j.name.clone()))
-                            .child(div().text_size(px(12.)).text_color(theme.text_muted).child(format!(
+                            .child(div().text_size(px(12.)).text_color(theme.text_muted).child(
+                                format!(
                                 "{} · {}{}",
                                 j.repo,
                                 j.workflow,
                                 j.actor.as_ref().map(|a| format!(" · by {a}")).unwrap_or_default()
-                            ))),
+                            ),
+                            )),
                     )
-                    .child(div().font_family(mono_font()).text_size(px(13.)).text_color(theme.text_muted).child(format::elapsed(j.started_at.unwrap_or(j.created_at))))
-                    .child(Button::new("runner-job-open", "Open").icon("external-link").on_click(move |_, _, cx| cx.open_url(&url))),
+                    .child(
+                        div()
+                            .font_family(mono_font())
+                            .text_size(px(13.))
+                            .text_color(theme.text_muted)
+                            .child(format::elapsed(j.started_at.unwrap_or(j.created_at))),
+                    )
+                    .child(
+                        Button::new("runner-job-open", "Open")
+                            .icon("external-link")
+                            .on_click(move |_, _, cx| cx.open_url(&url)),
+                    ),
             );
         }
 
@@ -600,36 +983,86 @@ impl Root {
             Some(g) => card(&theme)
                 .px(px(14.))
                 .py(px(8.))
-                .child(kv(&theme, "Status", status_dot_text(&theme, &g.status, if g.status == "online" { theme.success } else { theme.text_placeholder })))
+                .child(kv(
+                    &theme,
+                    "Status",
+                    status_dot_text(
+                        &theme,
+                        &g.status,
+                        if g.status == "online" {
+                            theme.success
+                        } else {
+                            theme.text_placeholder
+                        },
+                    ),
+                ))
                 .child(kv(&theme, "Busy", if g.busy { "yes" } else { "no" }))
                 .child(kv(&theme, "Registered to", kit::mono(g.scope.clone())))
                 .child(kv(&theme, "Runner id", kit::mono(g.id.to_string())))
                 .child(kv(&theme, "OS", g.os.clone())),
-            None => card(&theme).p(px(14.)).child(div().text_size(px(12.5)).text_color(theme.text_placeholder).child(
-                if s.github.configured {
-                    "GitHub doesn't list this runner in the orgs and repos you watch."
-                } else {
-                    "Add your GitHub organization in Settings to see this runner's live status."
-                },
-            )),
+            None => card(&theme).p(px(14.)).child(
+                div()
+                    .text_size(px(12.5))
+                    .text_color(theme.text_placeholder)
+                    .child(if s.github.configured {
+                        "GitHub doesn't list this runner in the orgs and repos you watch."
+                    } else {
+                        "Add your GitHub organization in Settings to see this runner's live status."
+                    }),
+            ),
         };
         let local = match &r.local {
             Some(l) => card(&theme)
                 .px(px(14.))
                 .py(px(8.))
                 .child(kv(&theme, "Folder", kit::mono(l.dir.clone())))
-                .child(kv(&theme, "Version", kit::mono(l.version.clone().unwrap_or_else(|| "—".into()))))
-                .child(kv(&theme, "Service", kit::mono(match (&l.service, &l.service_state) {
-                    (Some(sv), Some(st)) => format!("{sv} ({st})"),
-                    (Some(sv), None) => sv.clone(),
-                    _ => "not installed as a service".into(),
-                })))
-                .child(kv(&theme, "Listener", kit::mono(l.listener_pid.map(|p| format!("running · pid {p}")).unwrap_or_else(|| "stopped".into()))))
-                .child(kv(&theme, "Worker", kit::mono(l.worker_pid.map(|p| format!("running a job · pid {p}")).unwrap_or_else(|| "idle".into()))))
-                .children(l.url.clone().map(|u| kv(&theme, "Config URL", kit::mono(u)))),
-            None => card(&theme).p(px(14.)).child(div().text_size(px(12.5)).text_color(theme.text_placeholder).child(
-                if machine.is_some() { "Not found on the machine at the last check." } else { "No machine in config.toml runs this runner." },
-            )),
+                .child(kv(
+                    &theme,
+                    "Version",
+                    kit::mono(l.version.clone().unwrap_or_else(|| "—".into())),
+                ))
+                .child(kv(
+                    &theme,
+                    "Service",
+                    kit::mono(match (&l.service, &l.service_state) {
+                        (Some(sv), Some(st)) => format!("{sv} ({st})"),
+                        (Some(sv), None) => sv.clone(),
+                        _ => "not installed as a service".into(),
+                    }),
+                ))
+                .child(kv(
+                    &theme,
+                    "Listener",
+                    kit::mono(
+                        l.listener_pid
+                            .map(|p| format!("running · pid {p}"))
+                            .unwrap_or_else(|| "stopped".into()),
+                    ),
+                ))
+                .child(kv(
+                    &theme,
+                    "Worker",
+                    kit::mono(
+                        l.worker_pid
+                            .map(|p| format!("running a job · pid {p}"))
+                            .unwrap_or_else(|| "idle".into()),
+                    ),
+                ))
+                .children(
+                    l.url
+                        .clone()
+                        .map(|u| kv(&theme, "Config URL", kit::mono(u))),
+                ),
+            None => card(&theme).p(px(14.)).child(
+                div()
+                    .text_size(px(12.5))
+                    .text_color(theme.text_placeholder)
+                    .child(if machine.is_some() {
+                        "Not found on the machine at the last check."
+                    } else {
+                        "No machine in config.toml runs this runner."
+                    }),
+            ),
         };
         let wide = self.content_width >= 900.;
         body = body.child(
@@ -637,19 +1070,52 @@ impl Root {
                 .flex()
                 .when(!wide, |d| d.flex_col())
                 .gap(px(if wide { 16. } else { 26. }))
-                .child(div().flex().flex_col().flex_1().min_w(px(0.)).gap(px(10.)).child(section_title(&theme, "GitHub", None)).child(gh))
-                .child(div().flex().flex_col().flex_1().min_w(px(0.)).gap(px(10.)).child(section_title(&theme, "On the machine", None)).child(local)),
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .gap(px(10.))
+                        .child(section_title(&theme, "GitHub", None))
+                        .child(gh),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .gap(px(10.))
+                        .child(section_title(&theme, "On the machine", None))
+                        .child(local),
+                ),
         );
 
-        let diags: Vec<Diagnostic> =
-            machine.iter().flat_map(|m| m.diagnostics.iter()).filter(|d| d.runner_id.as_deref() == Some(id)).cloned().collect();
+        let diags: Vec<Diagnostic> = machine
+            .iter()
+            .flat_map(|m| m.diagnostics.iter())
+            .filter(|d| d.runner_id.as_deref() == Some(id))
+            .cloned()
+            .collect();
         body = body.child(diagnostics_section(&theme, &diags, &s));
         let rid = r.id.clone();
-        body = body.child(self.operations_section(&theme, &s, move |o| o.runner_id.as_deref() == Some(&rid), cx));
+        body = body.child(self.operations_section(
+            &theme,
+            &s,
+            move |o| o.runner_id.as_deref() == Some(&rid),
+            cx,
+        ));
         body.into_any_element()
     }
 
-    fn operations_section(&self, theme: &Theme, s: &Snapshot, filter: impl Fn(&Operation) -> bool, cx: &mut Context<Self>) -> AnyElement {
+    fn operations_section(
+        &self,
+        theme: &Theme,
+        s: &Snapshot,
+        filter: impl Fn(&Operation) -> bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let ops: Vec<&Operation> = s.operations.iter().filter(|o| filter(o)).take(6).collect();
         if ops.is_empty() {
             return div().into_any_element();
@@ -670,8 +1136,19 @@ impl Root {
                     .hover(|st| st.bg(theme.ghost_hover))
                     .when(i > 0, |d| d.border_t_1().border_color(theme.border_variant))
                     .child(op_status_icon(theme, o))
-                    .child(div().flex_1().truncate().text_size(px(12.5)).child(o.title.clone()))
-                    .child(div().text_size(px(11.5)).text_color(theme.text_placeholder).child(format::ago(Some(o.started_at))))
+                    .child(
+                        div()
+                            .flex_1()
+                            .truncate()
+                            .text_size(px(12.5))
+                            .child(o.title.clone()),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.5))
+                            .text_color(theme.text_placeholder)
+                            .child(format::ago(Some(o.started_at))),
+                    )
                     .on_click(cx.listener(move |this, _, _, cx| this.show_operation(id, cx)))
                     .into_any_element()
             })
@@ -688,7 +1165,12 @@ impl Root {
 
 pub(super) fn op_status_icon(theme: &Theme, o: &Operation) -> AnyElement {
     match o.status.as_str() {
-        "running" => kit::spinner(SharedString::from(format!("op-spin-{}", o.id)), 13., theme.accent).into_any_element(),
+        "running" => kit::spinner(
+            SharedString::from(format!("op-spin-{}", o.id)),
+            13.,
+            theme.accent,
+        )
+        .into_any_element(),
         "succeeded" => icon("circle-check", 13., theme.success).into_any_element(),
         _ => icon("circle-x", 13., theme.error).into_any_element(),
     }
@@ -732,13 +1214,30 @@ fn diagnostics_section(theme: &Theme, diags: &[Diagnostic], _s: &Snapshot) -> An
         .flex_col()
         .gap(px(10.))
         .child(section_title(theme, "Diagnostics", Some(diags.len())))
-        .child(card(theme).when(rows.is_empty(), |d| d.child(kit::empty_state(theme, "circle-check", "No warnings."))).children(rows))
+        .child(
+            card(theme)
+                .when(rows.is_empty(), |d| {
+                    d.child(kit::empty_state(theme, "circle-check", "No warnings."))
+                })
+                .children(rows),
+        )
         .into_any_element()
 }
 
 /// A hint line; commands get a copy button.
 fn copyable(theme: &Theme, i: usize, text: String) -> impl IntoElement {
-    let looks_like_command = ["gh ", "ssh ", "ssh-", "sudo ", "cd ", "Start-Service", "systemctl", "launchctl"].iter().any(|p| text.starts_with(p));
+    let looks_like_command = [
+        "gh ",
+        "ssh ",
+        "ssh-",
+        "sudo ",
+        "cd ",
+        "Start-Service",
+        "systemctl",
+        "launchctl",
+    ]
+    .iter()
+    .any(|p| text.starts_with(p));
     let copy = text.clone();
     div()
         .flex()
@@ -748,27 +1247,60 @@ fn copyable(theme: &Theme, i: usize, text: String) -> impl IntoElement {
             div()
                 .text_size(px(12.))
                 .text_color(theme.text_muted)
-                .when(looks_like_command, |d| d.font_family(mono_font()).px(px(6.)).py(px(2.)).rounded(px(4.)).bg(theme.element))
+                .when(looks_like_command, |d| {
+                    d.font_family(mono_font())
+                        .px(px(6.))
+                        .py(px(2.))
+                        .rounded(px(4.))
+                        .bg(theme.element)
+                })
                 .child(text),
         )
         .when(looks_like_command, |d| {
-            d.child(Button::icon_only(("copy-hint", i), "copy").tooltip("Copy").on_click(move |_, _, cx| {
-                cx.write_to_clipboard(gpui::ClipboardItem::new_string(copy.clone()))
-            }))
+            d.child(
+                Button::icon_only(("copy-hint", i), "copy")
+                    .tooltip("Copy")
+                    .on_click(move |_, _, cx| {
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(copy.clone()))
+                    }),
+            )
         })
 }
 
-fn metric_card(theme: &Theme, title: &'static str, value: Option<String>, sub: Option<String>, fraction: Option<f32>, color: gpui::Hsla) -> impl IntoElement {
+fn metric_card(
+    theme: &Theme,
+    title: &'static str,
+    value: Option<String>,
+    sub: Option<String>,
+    fraction: Option<f32>,
+    color: gpui::Hsla,
+) -> impl IntoElement {
     card(theme)
         .flex_1()
         .min_w(px(0.))
         .px(px(14.))
         .py(px(12.))
         .gap(px(6.))
-        .child(div().text_size(px(12.)).text_color(theme.text_muted).child(title))
-        .child(div().font_family(mono_font()).text_size(px(20.)).child(value.unwrap_or_else(|| "—".into())))
+        .child(
+            div()
+                .text_size(px(12.))
+                .text_color(theme.text_muted)
+                .child(title),
+        )
+        .child(
+            div()
+                .font_family(mono_font())
+                .text_size(px(20.))
+                .child(value.unwrap_or_else(|| "—".into())),
+        )
         .children(fraction.map(|f| meter(theme, f, color)))
-        .children(sub.map(|s| div().truncate().text_size(px(11.5)).text_color(theme.text_placeholder).child(s)))
+        .children(sub.map(|s| {
+            div()
+                .truncate()
+                .text_size(px(11.5))
+                .text_color(theme.text_placeholder)
+                .child(s)
+        }))
 }
 
 impl Root {
@@ -777,7 +1309,11 @@ impl Root {
     /// A machine disconnected on purpose: what that means, and Connect.
     fn disconnected_card(&self, theme: &Theme, m: &Machine, cx: &mut Context<Self>) -> AnyElement {
         let mid = m.id.clone();
-        let seen = m.probe.as_ref().map(|p| format!("Last updated {}.", format::ago(Some(p.checked_at)))).unwrap_or_default();
+        let seen = m
+            .probe
+            .as_ref()
+            .map(|p| format!("Last updated {}.", format::ago(Some(p.checked_at))))
+            .unwrap_or_default();
         card(theme)
             .p(px(16.))
             .flex_row()
@@ -798,7 +1334,13 @@ impl Root {
             .into_any_element()
     }
 
-    fn unreachable_card(&self, theme: &Theme, m: &Machine, u: &Unreachable, cx: &mut Context<Self>) -> AnyElement {
+    fn unreachable_card(
+        &self,
+        theme: &Theme,
+        m: &Machine,
+        u: &Unreachable,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let just_offline = u.kind == "offline";
         let (glyph, color) = match u.kind.as_str() {
             "offline" => ("power", theme.text_muted),
@@ -810,8 +1352,11 @@ impl Root {
         let open = self.offline_details.contains(&m.id);
         // "Last reached 12m ago · checked just now"
         let when = [
-            u.last_seen_at.map(|t| format!("Last reached {}", format::ago(Some(t)))),
-            m.probe.as_ref().map(|p| format!("checked {}", format::ago(Some(p.checked_at)))),
+            u.last_seen_at
+                .map(|t| format!("Last reached {}", format::ago(Some(t)))),
+            m.probe
+                .as_ref()
+                .map(|p| format!("checked {}", format::ago(Some(p.checked_at)))),
         ];
         let mut when: Vec<String> = when.into_iter().flatten().collect();
         if let Some(first) = when.first_mut() {
@@ -843,8 +1388,18 @@ impl Root {
                     .flex_1()
                     .min_w(px(0.))
                     .gap(px(6.))
-                    .child(div().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).child(u.title.clone()))
-                    .child(div().text_size(px(12.5)).text_color(theme.text_muted).child(u.detail.clone()))
+                    .child(
+                        div()
+                            .text_size(px(14.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(u.title.clone()),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.5))
+                            .text_color(theme.text_muted)
+                            .child(u.detail.clone()),
+                    )
                     .children(u.hint.clone().map(|h| copyable(theme, 1000, h)))
                     .child(
                         div()
@@ -864,7 +1419,15 @@ impl Root {
                                     .gap(px(3.))
                                     .cursor_pointer()
                                     .hover(|st| st.text_color(theme.text_muted))
-                                    .child(icon(if open { "chevron-down" } else { "chevron-right" }, 11., theme.text_placeholder))
+                                    .child(icon(
+                                        if open {
+                                            "chevron-down"
+                                        } else {
+                                            "chevron-right"
+                                        },
+                                        11.,
+                                        theme.text_placeholder,
+                                    ))
                                     .child("What ssh said")
                                     .on_click(cx.listener({
                                         let mid = mid.clone();
@@ -895,33 +1458,61 @@ impl Root {
                 d.child(
                     Button::new("m-offline-access", "Set up access")
                         .style(ButtonStyle::Primary)
-                        .on_click(cx.listener(move |this, _, window, cx| this.setup_ssh_access(&mid, window, cx))),
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.setup_ssh_access(&mid, window, cx)
+                        })),
                 )
             })
-            .when(u.kind == "tailscale-off" && super::can_open_tailscale(), |d| {
-                d.child(Button::new("m-offline-tailscale", "Open Tailscale").style(ButtonStyle::Primary).on_click(|_, _, _| super::open_tailscale()))
-            })
+            .when(
+                u.kind == "tailscale-off" && super::can_open_tailscale(),
+                |d| {
+                    d.child(
+                        Button::new("m-offline-tailscale", "Open Tailscale")
+                            .style(ButtonStyle::Primary)
+                            .on_click(|_, _, _| super::open_tailscale()),
+                    )
+                },
+            )
             // Asleep (or off): wake it over its network.
             .when(u.kind == "offline" && self.engine.can_wake(&m.id), |d| {
                 let mid = m.id.clone();
-                d.child(Button::new("m-offline-wake", "Wake").icon("power").style(ButtonStyle::Primary).tooltip("Send it the Wake on LAN signal").on_click(cx.listener(move |this, _, _, cx| this.wake_machine(&mid, cx))))
+                d.child(
+                    Button::new("m-offline-wake", "Wake")
+                        .icon("power")
+                        .style(ButtonStyle::Primary)
+                        .tooltip("Send it the Wake on LAN signal")
+                        .on_click(cx.listener(move |this, _, _, cx| this.wake_machine(&mid, cx))),
+                )
             })
             .child(
                 Button::new("m-offline-check", "Try again")
                     .icon("refresh-cw")
                     .loading(m.checking)
-                    .on_click(cx.listener(move |this, _, _, _| this.engine.trigger_check(Some(mid.clone())))),
+                    .on_click(cx.listener(move |this, _, _, _| {
+                        this.engine.trigger_check(Some(mid.clone()))
+                    })),
             )
             .into_any_element()
     }
 }
 
 fn gone(theme: &Theme, text: &'static str) -> impl IntoElement {
-    div().size_full().flex().items_center().justify_center().text_color(theme.text_placeholder).child(text)
+    div()
+        .size_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_color(theme.text_placeholder)
+        .child(text)
 }
 
 fn status_dot_text(_theme: &Theme, text: &str, color: gpui::Hsla) -> impl IntoElement {
-    div().flex().items_center().gap(px(6.)).child(kit::dot(color, 7.)).child(text.to_string())
+    div()
+        .flex()
+        .items_center()
+        .gap(px(6.))
+        .child(kit::dot(color, 7.))
+        .child(text.to_string())
 }
 
 fn status_label(m: &Machine) -> &'static str {

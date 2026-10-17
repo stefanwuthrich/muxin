@@ -51,7 +51,12 @@ fn send(out: &Out, channel: u32, kind: u8, payload: &[u8]) -> io::Result<()> {
 }
 
 fn send_json(out: &Out, value: &Value) -> io::Result<()> {
-    send(out, CONTROL, JSON, &serde_json::to_vec(value).unwrap_or_default())
+    send(
+        out,
+        CONTROL,
+        JSON,
+        &serde_json::to_vec(value).unwrap_or_default(),
+    )
 }
 
 fn read_frame(r: &mut impl Read) -> io::Result<(u32, u8, Vec<u8>)> {
@@ -60,7 +65,10 @@ fn read_frame(r: &mut impl Read) -> io::Result<(u32, u8, Vec<u8>)> {
     let channel = u32::from_be_bytes([head[0], head[1], head[2], head[3]]);
     let len = u32::from_be_bytes([head[5], head[6], head[7], head[8]]) as usize;
     if len > MAX_FRAME {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "frame too large"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "frame too large",
+        ));
     }
     let mut payload = vec![0u8; len];
     r.read_exact(&mut payload)?;
@@ -84,7 +92,10 @@ enum Sink {
     /// A TCP connection to a port here (a server forwarded to the app's
     /// computer): what the app sends goes to its writer thread, so a slow
     /// server doesn't hold up the link.
-    Tcp { to: mpsc::Sender<Vec<u8>>, stream: std::net::TcpStream },
+    Tcp {
+        to: mpsc::Sender<Vec<u8>>,
+        stream: std::net::TcpStream,
+    },
 }
 
 impl Sink {
@@ -132,21 +143,37 @@ enum Stop {
 
 impl Program {
     /// Starts `muxen-agent <args>`; returns it and what it prints.
-    fn start(args: &[String], env: Vec<(String, String)>) -> Result<(Program, Box<dyn Read + Send>), String> {
+    fn start(
+        args: &[String],
+        env: Vec<(String, String)>,
+    ) -> Result<(Program, Box<dyn Read + Send>), String> {
         #[cfg(unix)]
         let elsewhere = crate::gui::needed().then(|| crate::gui::connect(args));
         #[cfg(windows)]
-        let elsewhere = (!crate::win_screen::in_desktop_session()).then(|| crate::win_screen::start_in_desktop(args));
+        let elsewhere = (!crate::win_screen::in_desktop_session())
+            .then(|| crate::win_screen::start_in_desktop(args));
         if let Some(stream) = elsewhere {
             let stream = stream?;
             let reader = stream.try_clone().map_err(|e| e.to_string())?;
             let writer = stream.try_clone().map_err(|e| e.to_string())?;
-            return Ok((Program { input: Box::new(writer), stop: Stop::Socket(stream) }, Box::new(reader)));
+            return Ok((
+                Program {
+                    input: Box::new(writer),
+                    stop: Stop::Socket(stream),
+                },
+                Box::new(reader),
+            ));
         }
         let exe = std::env::current_exe().map_err(|_| "can't find the agent".to_string())?;
-        let log = std::fs::OpenOptions::new().create(true).append(true).open(crate::home_dir().join("screen.log"));
+        let log = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(crate::home_dir().join("screen.log"));
         let mut cmd = Command::new(exe);
-        cmd.args(args).envs(env).stdin(Stdio::piped()).stdout(Stdio::piped());
+        cmd.args(args)
+            .envs(env)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped());
         sys::no_window(&mut cmd);
         match log {
             Ok(l) => cmd.stderr(l),
@@ -157,7 +184,13 @@ impl Program {
             let _ = child.kill();
             return Err("couldn't start it".into());
         };
-        Ok((Program { input: Box::new(stdin), stop: Stop::Child(child) }, Box::new(stdout)))
+        Ok((
+            Program {
+                input: Box::new(stdin),
+                stop: Stop::Child(child),
+            },
+            Box::new(stdout),
+        ))
     }
 
     fn close(self) {
@@ -182,7 +215,12 @@ pub fn run() -> i32 {
 pub fn serve(mut input: Box<dyn Read + Send>, output: Box<dyn Write + Send>) -> i32 {
     let out: Out = Arc::new(Mutex::new(BufWriter::new(output)));
     let attached: Attached = Arc::new(Mutex::new(HashMap::new()));
-    if send_json(&out, &json!({ "event": "hello", "version": crate::VERSION, "now": now() })).is_err() {
+    if send_json(
+        &out,
+        &json!({ "event": "hello", "version": crate::VERSION, "now": now() }),
+    )
+    .is_err()
+    {
         return 1;
     }
     loop {
@@ -194,7 +232,9 @@ pub fn serve(mut input: Box<dyn Read + Send>, output: Box<dyn Write + Send>) -> 
             if kind != JSON {
                 continue;
             }
-            let Ok(req) = serde_json::from_slice::<Value>(&payload) else { continue };
+            let Ok(req) = serde_json::from_slice::<Value>(&payload) else {
+                continue;
+            };
             let (out, attached) = (out.clone(), attached.clone());
             // Requests run side by side; a slow one doesn't hold up the rest.
             thread::spawn(move || {
@@ -214,15 +254,28 @@ pub fn serve(mut input: Box<dyn Read + Send>, output: Box<dyn Write + Send>) -> 
             continue;
         }
         let written = match map.get_mut(&channel) {
-            Some(Sink::Session(s)) if kind == proto::DATA || kind == proto::RESIZE => proto::write_frame(s, kind, &payload),
-            Some(Sink::Desktop(p)) if kind == crate::desktop::INPUT => crate::gui::write(&mut p.input, kind, &payload),
+            Some(Sink::Session(s)) if kind == proto::DATA || kind == proto::RESIZE => {
+                proto::write_frame(s, kind, &payload)
+            }
+            Some(Sink::Desktop(p)) if kind == crate::desktop::INPUT => {
+                crate::gui::write(&mut p.input, kind, &payload)
+            }
             Some(Sink::Pack(credit)) if kind == crate::files::ACK => {
-                credit.ack(payload.get(..8).map(|b| u64::from_be_bytes(b.try_into().unwrap_or_default())).unwrap_or(0));
+                credit.ack(
+                    payload
+                        .get(..8)
+                        .map(|b| u64::from_be_bytes(b.try_into().unwrap_or_default()))
+                        .unwrap_or(0),
+                );
                 Ok(())
             }
             Some(Sink::Unpack(u)) if kind == proto::DATA => u.write(&payload),
-            Some(Sink::Tcp { to, .. }) if kind == proto::DATA => to.send(std::mem::take(&mut payload)).map_err(|_| io::Error::other("closed")),
-            Some(Sink::Clip(p)) if kind == crate::clipboard::CLIP => crate::gui::write(&mut p.input, kind, &payload),
+            Some(Sink::Tcp { to, .. }) if kind == proto::DATA => to
+                .send(std::mem::take(&mut payload))
+                .map_err(|_| io::Error::other("closed")),
+            Some(Sink::Clip(p)) if kind == crate::clipboard::CLIP => {
+                crate::gui::write(&mut p.input, kind, &payload)
+            }
             Some(Sink::Unpack(u)) if kind == crate::files::END => {
                 u.end();
                 Ok(())
@@ -258,7 +311,9 @@ fn handle(req: &Value, out: &Out, attached: &Attached) -> Value {
             json!({ "ok": true })
         }
         "ping" => json!({ "ok": true, "version": crate::VERSION, "now": now() }),
-        "addresses" => json!({ "ok": true, "addresses": crate::direct::lan_addresses(), "tailnet": crate::direct::tailnet_addresses(), "port": crate::direct::port() }),
+        "addresses" => {
+            json!({ "ok": true, "addresses": crate::direct::lan_addresses(), "tailnet": crate::direct::tailnet_addresses(), "port": crate::direct::port() })
+        }
         "pair" => crate::direct::pair(req),
         "unpair" => crate::direct::unpair(),
         // Everything `muxen-agent ctl` does.
@@ -280,16 +335,33 @@ fn run_script(req: &Value) -> Value {
         if !login {
             c.arg("-NoProfile");
         }
-        c.args(["-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "[Console]::In.ReadToEnd() | Invoke-Expression"]);
+        c.args([
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "[Console]::In.ReadToEnd() | Invoke-Expression",
+        ]);
         c
     } else {
         let name = shell.rsplit('/').next().unwrap_or("");
-        let program = if login && ["bash", "zsh", "sh", "ksh", "dash"].contains(&name) { shell.clone() } else { "/bin/sh".to_string() };
+        let program = if login && ["bash", "zsh", "sh", "ksh", "dash"].contains(&name) {
+            shell.clone()
+        } else {
+            "/bin/sh".to_string()
+        };
         let mut c = Command::new(program);
-        c.args(if login { &["-l", "-s"][..] } else { &["-s"][..] });
+        c.args(if login {
+            &["-l", "-s"][..]
+        } else {
+            &["-s"][..]
+        });
         c
     };
-    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).current_dir(sys::user_home());
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .current_dir(sys::user_home());
     // Its own process group, so a timeout takes down whatever it started.
     sys::own_group(&mut cmd);
     let mut child = match cmd.spawn() {
@@ -321,8 +393,18 @@ fn run_script(req: &Value) -> Value {
         });
         rx
     };
-    let stdout = collect(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
-    let stderr = collect(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+    let stdout = collect(
+        child
+            .stdout
+            .take()
+            .map(|p| Box::new(p) as Box<dyn Read + Send>),
+    );
+    let stderr = collect(
+        child
+            .stderr
+            .take()
+            .map(|p| Box::new(p) as Box<dyn Read + Send>),
+    );
 
     let started = Instant::now();
     let mut timed_out = false;
@@ -340,7 +422,9 @@ fn run_script(req: &Value) -> Value {
     };
     // Something it left running may hold the pipes; don't wait on it for long.
     let grace = Duration::from_secs(2);
-    let text = |rx: mpsc::Receiver<Vec<u8>>| String::from_utf8_lossy(&rx.recv_timeout(grace).unwrap_or_default()).into_owned();
+    let text = |rx: mpsc::Receiver<Vec<u8>>| {
+        String::from_utf8_lossy(&rx.recv_timeout(grace).unwrap_or_default()).into_owned()
+    };
     json!({ "ok": true, "status": status, "stdout": text(stdout), "stderr": text(stderr), "timed_out": timed_out })
 }
 
@@ -354,17 +438,25 @@ fn attach(req: &Value, out: &Out, attached: &Attached) -> Value {
         Ok(s) => s,
         Err(_) => return json!({ "ok": false, "error": "no sessions are running on this machine" }),
     };
-    let request = json!({ "op": "attach", "name": req["name"], "cols": req["cols"], "rows": req["rows"] });
+    let request =
+        json!({ "op": "attach", "name": req["name"], "cols": req["cols"], "rows": req["rows"] });
     if let Err(e) = proto::write_line(&mut stream, &request) {
         return json!({ "ok": false, "error": e.to_string() });
     }
     match proto::read_line(&mut stream) {
         Ok(v) if v["ok"].as_bool() == Some(true) => {}
-        Ok(v) => return json!({ "ok": false, "error": v["error"].as_str().unwrap_or("can't attach") }),
+        Ok(v) => {
+            return json!({ "ok": false, "error": v["error"].as_str().unwrap_or("can't attach") });
+        }
         Err(e) => return json!({ "ok": false, "error": e.to_string() }),
     }
-    let Ok(mut reader) = stream.try_clone() else { return json!({ "ok": false, "error": "can't attach" }) };
-    attached.lock().unwrap().insert(channel, Sink::Session(stream));
+    let Ok(mut reader) = stream.try_clone() else {
+        return json!({ "ok": false, "error": "can't attach" });
+    };
+    attached
+        .lock()
+        .unwrap()
+        .insert(channel, Sink::Session(stream));
     // The session's output, and its end, to the app.
     let (out, attached) = (out.clone(), attached.clone());
     thread::spawn(move || {
@@ -400,12 +492,25 @@ fn desktop(req: &Value, out: &Out, attached: &Attached) -> Value {
         return json!({ "ok": false, "error": "No graphical session found here (nobody logged in to a desktop?)." });
     };
     let arg = |k: &str, d: u64| req[k].as_u64().unwrap_or(d).to_string();
-    let mode = if req["tiles"].as_bool() == Some(true) { "tiles" } else { "frames" };
+    let mode = if req["tiles"].as_bool() == Some(true) {
+        "tiles"
+    } else {
+        "frames"
+    };
     let display = req["display"].as_str().unwrap_or("").to_string();
-    let args = vec!["screen".to_string(), arg("fps", 30), arg("quality", 75), arg("max_width", 1920), mode.to_string(), display];
+    let args = vec![
+        "screen".to_string(),
+        arg("fps", 30),
+        arg("quality", 75),
+        arg("max_width", 1920),
+        mode.to_string(),
+        display,
+    ];
     let (program, mut frames) = match Program::start(&args, env) {
         Ok(p) => p,
-        Err(e) => return json!({ "ok": false, "error": format!("couldn't start capturing the screen: {e}") }),
+        Err(e) => {
+            return json!({ "ok": false, "error": format!("couldn't start capturing the screen: {e}") });
+        }
     };
     // Its first word: the frame size, or why it can't.
     let info = crate::gui::read_hello(&mut frames);
@@ -413,7 +518,10 @@ fn desktop(req: &Value, out: &Out, attached: &Attached) -> Value {
         program.close();
         return json!({ "ok": false, "error": e });
     }
-    attached.lock().unwrap().insert(channel, Sink::Desktop(program));
+    attached
+        .lock()
+        .unwrap()
+        .insert(channel, Sink::Desktop(program));
     relay(out, attached, channel, frames);
     let mut reply = info;
     reply["ok"] = json!(true);
@@ -445,12 +553,16 @@ fn logs(req: &Value, out: &Out, attached: &Attached) -> Value {
     if channel == CONTROL {
         return json!({ "ok": false, "error": "a log needs a channel" });
     }
-    let (program, args) = match crate::logs::command(&req["source"], crate::logs::initial_lines(req), true) {
-        Ok(c) => c,
-        Err(e) => return json!({ "ok": false, "error": e }),
-    };
+    let (program, args) =
+        match crate::logs::command(&req["source"], crate::logs::initial_lines(req), true) {
+            Ok(c) => c,
+            Err(e) => return json!({ "ok": false, "error": e }),
+        };
     let mut cmd = Command::new(&program);
-    cmd.args(&args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.args(&args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     sys::own_group(&mut cmd);
     let mut child = match cmd.spawn() {
         Ok(c) => c,
@@ -476,7 +588,9 @@ fn logs(req: &Value, out: &Out, attached: &Attached) -> Value {
                     break;
                 }
                 pending.extend_from_slice(&chunk[..n]);
-                if let Some(end) = pending.iter().rposition(|b| *b == b'\n') && tx.send(pending.drain(..=end).collect()).is_err() {
+                if let Some(end) = pending.iter().rposition(|b| *b == b'\n')
+                    && tx.send(pending.drain(..=end).collect()).is_err()
+                {
                     return;
                 }
             }
@@ -542,10 +656,17 @@ fn tcp(req: &Value, out: &Out, attached: &Attached) -> Value {
     if channel == CONTROL {
         return json!({ "ok": false, "error": "a connection needs a channel" });
     }
-    let Some(port) = req["port"].as_u64().filter(|p| (1..=65535).contains(p)).map(|p| p as u16) else {
+    let Some(port) = req["port"]
+        .as_u64()
+        .filter(|p| (1..=65535).contains(p))
+        .map(|p| p as u16)
+    else {
         return json!({ "ok": false, "error": "Which port?" });
     };
-    let host = req["host"].as_str().filter(|h| !h.is_empty()).unwrap_or("127.0.0.1");
+    let host = req["host"]
+        .as_str()
+        .filter(|h| !h.is_empty())
+        .unwrap_or("127.0.0.1");
     let Ok(ip) = host.parse::<IpAddr>() else {
         return json!({ "ok": false, "error": format!("\"{host}\" isn't an address.") });
     };
@@ -554,7 +675,10 @@ fn tcp(req: &Value, out: &Out, attached: &Attached) -> Value {
     if host == "127.0.0.1" {
         tries.push(SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), port));
     }
-    let Some(stream) = tries.iter().find_map(|a| TcpStream::connect_timeout(a, Duration::from_secs(5)).ok()) else {
+    let Some(stream) = tries
+        .iter()
+        .find_map(|a| TcpStream::connect_timeout(a, Duration::from_secs(5)).ok())
+    else {
         return json!({ "ok": false, "error": format!("Nothing is listening on port {port} there.") });
     };
     let _ = stream.set_nodelay(true);
@@ -570,7 +694,10 @@ fn tcp(req: &Value, out: &Out, attached: &Attached) -> Value {
         }
         let _ = writer.shutdown(Shutdown::Write);
     });
-    attached.lock().unwrap().insert(channel, Sink::Tcp { to, stream });
+    attached
+        .lock()
+        .unwrap()
+        .insert(channel, Sink::Tcp { to, stream });
     let (out, attached) = (out.clone(), attached.clone());
     thread::spawn(move || {
         let mut buf = vec![0u8; 32 * 1024];
@@ -605,9 +732,14 @@ fn clipboard(req: &Value, out: &Out, attached: &Attached) -> Value {
     };
     let (program, from) = match Program::start(&["clip".to_string()], env) {
         Ok(p) => p,
-        Err(e) => return json!({ "ok": false, "error": format!("couldn't start sharing the clipboard: {e}") }),
+        Err(e) => {
+            return json!({ "ok": false, "error": format!("couldn't start sharing the clipboard: {e}") });
+        }
     };
-    attached.lock().unwrap().insert(channel, Sink::Clip(program));
+    attached
+        .lock()
+        .unwrap()
+        .insert(channel, Sink::Clip(program));
     relay(out, attached, channel, from);
     json!({ "ok": true })
 }
@@ -643,17 +775,25 @@ fn watch(out: Out) {
         let signature = match sys::connect() {
             Err(_) => "no server".to_string(),
             Ok(mut s) => {
-                let list = proto::write_line(&mut s, &json!({ "op": "list" })).and_then(|_| proto::read_line(&mut s)).unwrap_or(Value::Null);
+                let list = proto::write_line(&mut s, &json!({ "op": "list" }))
+                    .and_then(|_| proto::read_line(&mut s))
+                    .unwrap_or(Value::Null);
                 let sessions: Vec<String> = list["sessions"]
                     .as_array()
                     .into_iter()
                     .flatten()
                     .map(|x| {
                         let busy = x["last_output"].as_i64().is_some_and(|t| now - t < 6);
-                        format!("{}:{}:{}:{}:{}", x["name"], x["status"], x["exit_code"], x["title"], busy)
+                        format!(
+                            "{}:{}:{}:{}:{}",
+                            x["name"], x["status"], x["exit_code"], x["title"], busy
+                        )
                     })
                     .collect();
-                let events = list["events"].as_array().map(|e| (e.len(), e.last().cloned())).unwrap_or_default();
+                let events = list["events"]
+                    .as_array()
+                    .map(|e| (e.len(), e.last().cloned()))
+                    .unwrap_or_default();
                 format!("{}|{}|{:?}", sessions.join(","), events.0, events.1)
             }
         };
@@ -692,13 +832,22 @@ mod tests {
             serde_json::from_slice::<Value>(&payload).unwrap()
         };
         assert_eq!(next(&mut app)["event"], "hello");
-        app.write_all(&frame(CONTROL, JSON, br#"{"id":1,"op":"ping"}"#)).unwrap();
+        app.write_all(&frame(CONTROL, JSON, br#"{"id":1,"op":"ping"}"#))
+            .unwrap();
         let script = json!({ "id": 2, "op": "sh", "login": false, "script": "echo out; echo err >&2; exit 4" });
-        app.write_all(&frame(CONTROL, JSON, script.to_string().as_bytes())).unwrap();
+        app.write_all(&frame(CONTROL, JSON, script.to_string().as_bytes()))
+            .unwrap();
         let mut replies: Vec<Value> = (0..2).map(|_| next(&mut app)).collect();
         replies.sort_by_key(|r| r["id"].as_u64());
         assert_eq!(replies[0]["version"], crate::VERSION);
-        assert_eq!((replies[1]["stdout"].as_str(), replies[1]["stderr"].as_str(), replies[1]["status"].as_i64()), (Some("out\n"), Some("err\n"), Some(4)));
+        assert_eq!(
+            (
+                replies[1]["stdout"].as_str(),
+                replies[1]["stderr"].as_str(),
+                replies[1]["status"].as_i64()
+            ),
+            (Some("out\n"), Some("err\n"), Some(4))
+        );
         drop(app);
         assert_eq!(server.join().unwrap(), 0);
     }

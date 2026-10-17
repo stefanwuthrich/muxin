@@ -10,8 +10,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
-    Bounds, ClipboardItem, Context, Entity, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Point, FocusHandle, Focusable, FontWeight, ListHorizontalSizingBehavior, ScrollStrategy, SharedString, Subscription, Task,
-    UniformListScrollHandle, Window, div, prelude::*, px, uniform_list,
+    Bounds, ClipboardItem, Context, Entity, FocusHandle, Focusable, FontWeight, KeyDownEvent,
+    ListHorizontalSizingBehavior, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Point,
+    ScrollStrategy, SharedString, Subscription, Task, UniformListScrollHandle, Window, div,
+    prelude::*, px, uniform_list,
 };
 use serde_json::json;
 
@@ -111,14 +113,27 @@ impl Focusable for LogsView {
 }
 
 impl LogsView {
-    pub fn new(engine: Arc<Engine>, machine: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        engine: Arc<Engine>,
+        machine: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let mut view = Self::make(engine, machine, window, cx);
         view.load_sources(true, window, cx);
         view
     }
 
     /// One log inside another page: a Compose project's, with its services.
-    pub fn embedded(engine: Arc<Engine>, machine: String, source: LogSource, services: Vec<String>, only: Option<String>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn embedded(
+        engine: Arc<Engine>,
+        machine: String,
+        source: LogSource,
+        services: Vec<String>,
+        only: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let mut view = Self::make(engine, machine, window, cx);
         view.embedded = true;
         view.services = services;
@@ -143,7 +158,12 @@ impl LogsView {
         }
     }
 
-    fn make(engine: Arc<Engine>, machine: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn make(
+        engine: Arc<Engine>,
+        machine: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let filter = cx.new(|cx| TextInput::new(cx, "Filter"));
         let path = cx.new(|cx| TextInput::new(cx, "A file's path, then Return"));
         let find = cx.new(|cx| TextInput::new(cx, "Find"));
@@ -216,8 +236,20 @@ impl LogsView {
         let task = cx.spawn_in(window, async move |this, cx| {
             let result = job.await.unwrap_or_else(|e| Err(e.to_string()));
             let _ = this.update_in(cx, |this, window, cx| {
-                if first && this.source.is_none() && let Ok(s) = &result {
-                    let pick = s.system.first().map(|x| (Tab::System, x.clone())).or_else(|| s.files.iter().find(|f| f.readable != Some(false)).map(|f| (Tab::Files, f.clone())));
+                if first
+                    && this.source.is_none()
+                    && let Ok(s) = &result
+                {
+                    let pick = s
+                        .system
+                        .first()
+                        .map(|x| (Tab::System, x.clone()))
+                        .or_else(|| {
+                            s.files
+                                .iter()
+                                .find(|f| f.readable != Some(false))
+                                .map(|f| (Tab::Files, f.clone()))
+                        });
                     if let Some((tab, source)) = pick {
                         this.tab = tab;
                         this.open(source, window, cx);
@@ -338,10 +370,15 @@ impl LogsView {
     /// New text: whole lines join the log (or wait while paused).
     fn append(&mut self, text: String) {
         self.partial.push_str(&text);
-        let Some(end) = self.partial.rfind('\n') else { return };
+        let Some(end) = self.partial.rfind('\n') else {
+            return;
+        };
         let rest = self.partial.split_off(end + 1);
         let done = std::mem::replace(&mut self.partial, rest);
-        let new: Vec<SharedString> = done.lines().map(|l| SharedString::from(l.trim_end_matches('\r').to_string())).collect();
+        let new: Vec<SharedString> = done
+            .lines()
+            .map(|l| SharedString::from(l.trim_end_matches('\r').to_string()))
+            .collect();
         if self.paused {
             self.held.extend(new);
             return;
@@ -365,13 +402,18 @@ impl LogsView {
             }
         }
         if self.follow && !self.shown.is_empty() {
-            self.scroll.scroll_to_item(self.shown.len() - 1, ScrollStrategy::Top);
+            self.scroll
+                .scroll_to_item(self.shown.len() - 1, ScrollStrategy::Top);
         }
     }
 
     fn note_longest(&mut self, i: usize) {
         let len = self.lines[i].len();
-        if self.longest.is_none_or(|l| self.lines.get(self.shown.get(l).copied().unwrap_or(usize::MAX)).is_none_or(|x| x.len() < len)) {
+        if self.longest.is_none_or(|l| {
+            self.lines
+                .get(self.shown.get(l).copied().unwrap_or(usize::MAX))
+                .is_none_or(|x| x.len() < len)
+        }) {
             self.longest = Some(self.shown.len());
         }
     }
@@ -392,7 +434,8 @@ impl LogsView {
             }
         }
         if self.follow && !self.shown.is_empty() {
-            self.scroll.scroll_to_item(self.shown.len() - 1, ScrollStrategy::Top);
+            self.scroll
+                .scroll_to_item(self.shown.len() - 1, ScrollStrategy::Top);
         }
     }
 
@@ -409,7 +452,12 @@ impl LogsView {
     fn copy(&mut self, cx: &mut Context<Self>) {
         let text = match self.selected_text() {
             Some(t) => t,
-            None => self.shown.iter().map(|i| self.lines[*i].as_ref()).collect::<Vec<_>>().join("\n"),
+            None => self
+                .shown
+                .iter()
+                .map(|i| self.lines[*i].as_ref())
+                .collect::<Vec<_>>()
+                .join("\n"),
         };
         cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
@@ -450,13 +498,17 @@ impl LogsView {
 
     fn mouse_down(&mut self, e: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus);
-        let Some(pos) = self.at(e.position) else { return };
+        let Some(pos) = self.at(e.position) else {
+            return;
+        };
         if e.click_count >= 2 {
             // The whole line.
             let len = self.lines[self.shown[pos.0]].chars().count();
             self.selection = Some(((pos.0, 0), (pos.0, len)));
             self.selecting = false;
-        } else if e.modifiers.shift && let Some((anchor, _)) = self.selection {
+        } else if e.modifiers.shift
+            && let Some((anchor, _)) = self.selection
+        {
             self.selection = Some((anchor, pos));
             self.selecting = true;
         } else {
@@ -486,7 +538,12 @@ const LIST_PAD_Y: f32 = 6.;
 
 /// Characters `from..to` of a line.
 fn chars(line: &str, from: usize, to: usize) -> &str {
-    let byte = |n: usize| line.char_indices().nth(n).map(|(i, _)| i).unwrap_or(line.len());
+    let byte = |n: usize| {
+        line.char_indices()
+            .nth(n)
+            .map(|(i, _)| i)
+            .unwrap_or(line.len())
+    };
     let (a, b) = (byte(from), byte(to));
     &line[a.min(b)..b]
 }
@@ -494,27 +551,39 @@ fn chars(line: &str, from: usize, to: usize) -> &str {
 /// Whether a line holds the filter (any case), and is the service's when
 /// one is picked.
 fn keeps(line: &str, filter: &str, only: Option<&str>) -> bool {
-    (filter.is_empty() || line.to_lowercase().contains(filter)) && only.is_none_or(|svc| service_of(line) == Some(svc))
+    (filter.is_empty() || line.to_lowercase().contains(filter))
+        && only.is_none_or(|svc| service_of(line) == Some(svc))
 }
 
 /// The Compose service a line is from ("web-1    | ..." is web's).
 fn service_of(line: &str) -> Option<&str> {
     let (left, _) = line.split_once('|')?;
     let name = left.trim();
-    Some(name.rsplit_once('-').filter(|(_, n)| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit())).map(|(s, _)| s).unwrap_or(name))
+    Some(
+        name.rsplit_once('-')
+            .filter(|(_, n)| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+            .map(|(s, _)| s)
+            .unwrap_or(name),
+    )
 }
 
 /// A service's color: by its place among the project's services, else by its name.
 pub fn service_color(name: &str, services: &[String]) -> gpui::Hsla {
     const HUES: [f32; 8] = [0.58, 0.11, 0.47, 0.92, 0.76, 0.33, 0.02, 0.66];
-    let i = services.iter().position(|s| s == name).unwrap_or_else(|| name.bytes().fold(0usize, |h, b| h.wrapping_mul(31).wrapping_add(b as usize)));
+    let i = services.iter().position(|s| s == name).unwrap_or_else(|| {
+        name.bytes()
+            .fold(0usize, |h, b| h.wrapping_mul(31).wrapping_add(b as usize))
+    });
     gpui::hsla(HUES[i % HUES.len()], 0.6, 0.66, 1.)
 }
 
 /// A line's color by what it says: errors, warnings, debug noise.
 fn tone(line: &str, theme: &super::theme::Theme) -> gpui::Hsla {
     let l = line.to_ascii_lowercase();
-    if ["error", "fatal", "panic", "crit", "fail", "emerg", "alert"].iter().any(|w| l.contains(w)) {
+    if ["error", "fatal", "panic", "crit", "fail", "emerg", "alert"]
+        .iter()
+        .any(|w| l.contains(w))
+    {
         theme.error
     } else if l.contains("warn") {
         theme.warning
@@ -531,45 +600,78 @@ impl Render for LogsView {
         // A character's width in the log's font, for picking text with the mouse.
         let ts = window.text_system();
         let font_id = ts.resolve_font(&gpui::font(mono_font()));
-        self.char_w = ts.advance(font_id, px(12.), 'm').map(|s| f32::from(s.width)).unwrap_or(7.2);
+        self.char_w = ts
+            .advance(font_id, px(12.), 'm')
+            .map(|s| f32::from(s.width))
+            .unwrap_or(7.2);
         // The filter, as typed (refiltered when it changes; see the subscription).
         let typed = self.filter.read(cx).text().trim().to_lowercase();
         if typed != self.filter_cache {
             self.filter_cache = typed;
             self.refilter();
         }
-        let sources = self.sources.as_ref().and_then(|s| s.as_ref().ok()).cloned().unwrap_or_default();
+        let sources = self
+            .sources
+            .as_ref()
+            .and_then(|s| s.as_ref().ok())
+            .cloned()
+            .unwrap_or_default();
         let count = |tab: Tab| match tab {
             Tab::System => sources.system.len(),
             Tab::Files => sources.files.len(),
             Tab::Docker => sources.docker.len(),
             Tab::Services => sources.services.len(),
         };
-        let tabs = div().flex_none().flex().gap(px(2.)).p(px(2.)).rounded(px(7.)).bg(theme.element).children(
-            [(Tab::System, "System"), (Tab::Files, "Files"), (Tab::Docker, "Docker"), (Tab::Services, "Services")].into_iter().map(|(tab, label)| {
-                let on = self.tab == tab;
-                let n = count(tab);
-                div()
-                    .id(SharedString::from(format!("logs-tab-{label}")))
-                    .px(px(9.))
-                    .h(px(24.))
-                    .flex()
-                    .items_center()
-                    .gap(px(5.))
-                    .rounded(px(5.))
-                    .cursor_pointer()
-                    .text_size(px(12.))
-                    .text_color(if on { theme.text } else { theme.text_placeholder })
-                    .when(on, |d| d.bg(theme.element_selected))
-                    .when(!on, |d| d.hover(|st| st.bg(theme.ghost_hover)))
-                    .child(label)
-                    .when(n > 0, |d| d.child(div().text_size(px(10.5)).text_color(theme.text_placeholder).child(n.to_string())))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.tab = tab;
-                        cx.notify();
-                    }))
-            }),
-        );
+        let tabs = div()
+            .flex_none()
+            .flex()
+            .gap(px(2.))
+            .p(px(2.))
+            .rounded(px(7.))
+            .bg(theme.element)
+            .children(
+                [
+                    (Tab::System, "System"),
+                    (Tab::Files, "Files"),
+                    (Tab::Docker, "Docker"),
+                    (Tab::Services, "Services"),
+                ]
+                .into_iter()
+                .map(|(tab, label)| {
+                    let on = self.tab == tab;
+                    let n = count(tab);
+                    div()
+                        .id(SharedString::from(format!("logs-tab-{label}")))
+                        .px(px(9.))
+                        .h(px(24.))
+                        .flex()
+                        .items_center()
+                        .gap(px(5.))
+                        .rounded(px(5.))
+                        .cursor_pointer()
+                        .text_size(px(12.))
+                        .text_color(if on {
+                            theme.text
+                        } else {
+                            theme.text_placeholder
+                        })
+                        .when(on, |d| d.bg(theme.element_selected))
+                        .when(!on, |d| d.hover(|st| st.bg(theme.ghost_hover)))
+                        .child(label)
+                        .when(n > 0, |d| {
+                            d.child(
+                                div()
+                                    .text_size(px(10.5))
+                                    .text_color(theme.text_placeholder)
+                                    .child(n.to_string()),
+                            )
+                        })
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.tab = tab;
+                            cx.notify();
+                        }))
+                }),
+            );
         let status = match &self.state {
             State::Idle => "Pick a log".to_string(),
             State::Connecting => "Opening…".to_string(),
@@ -582,26 +684,37 @@ impl Render for LogsView {
             let mut all: Vec<(Option<String>, String)> = vec![(None, "All".to_string())];
             all.extend(self.services.iter().map(|s| (Some(s.clone()), s.clone())));
             let services = self.services.clone();
-            div().flex_none().flex().gap(px(2.)).p(px(2.)).rounded(px(7.)).bg(theme.element).children(all.into_iter().map(|(svc, label)| {
-                let on = self.only == svc;
-                let color = svc.as_deref().map(|s| service_color(s, &services));
-                div()
-                    .id(SharedString::from(format!("logs-only-{label}")))
-                    .px(px(9.))
-                    .h(px(24.))
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .rounded(px(5.))
-                    .cursor_pointer()
-                    .text_size(px(12.))
-                    .text_color(if on { theme.text } else { theme.text_placeholder })
-                    .when(on, |d| d.bg(theme.element_selected))
-                    .when(!on, |d| d.hover(|st| st.bg(theme.ghost_hover)))
-                    .children(color.map(|c| kit::dot(c, 7.)))
-                    .child(label)
-                    .on_click(cx.listener(move |this, _, _, cx| this.set_only(svc.clone(), cx)))
-            }))
+            div()
+                .flex_none()
+                .flex()
+                .gap(px(2.))
+                .p(px(2.))
+                .rounded(px(7.))
+                .bg(theme.element)
+                .children(all.into_iter().map(|(svc, label)| {
+                    let on = self.only == svc;
+                    let color = svc.as_deref().map(|s| service_color(s, &services));
+                    div()
+                        .id(SharedString::from(format!("logs-only-{label}")))
+                        .px(px(9.))
+                        .h(px(24.))
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .rounded(px(5.))
+                        .cursor_pointer()
+                        .text_size(px(12.))
+                        .text_color(if on {
+                            theme.text
+                        } else {
+                            theme.text_placeholder
+                        })
+                        .when(on, |d| d.bg(theme.element_selected))
+                        .when(!on, |d| d.hover(|st| st.bg(theme.ghost_hover)))
+                        .children(color.map(|c| kit::dot(c, 7.)))
+                        .child(label)
+                        .on_click(cx.listener(move |this, _, _, cx| this.set_only(svc.clone(), cx)))
+                }))
         });
         let toolbar = div()
             .flex_none()
@@ -616,7 +729,14 @@ impl Render for LogsView {
             .border_color(theme.border_variant)
             .when(!self.embedded, |d| d.child(tabs))
             .children(chips)
-            .when(self.embedded, |d| d.child(div().text_size(px(12.)).text_color(theme.text_placeholder).child(status.clone())))
+            .when(self.embedded, |d| {
+                d.child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(theme.text_placeholder)
+                        .child(status.clone()),
+                )
+            })
             .child(div().flex_1())
             .child(div().flex_none().w(px(200.)).child(self.filter.clone()))
             .child(
@@ -628,44 +748,83 @@ impl Render for LogsView {
             .child(
                 Button::new("logs-follow", "Follow")
                     .icon("arrow-down")
-                    .style(if self.follow { ButtonStyle::Outlined } else { ButtonStyle::Ghost })
+                    .style(if self.follow {
+                        ButtonStyle::Outlined
+                    } else {
+                        ButtonStyle::Ghost
+                    })
                     .tooltip("Keep the newest line in view")
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.follow = !this.follow;
                         if this.follow && !this.shown.is_empty() {
-                            this.scroll.scroll_to_item(this.shown.len() - 1, ScrollStrategy::Top);
+                            this.scroll
+                                .scroll_to_item(this.shown.len() - 1, ScrollStrategy::Top);
                         }
                         cx.notify();
                     })),
             )
-            .child(Button::icon_only("logs-copy", "copy").tooltip("Copy the selection (⌘C), or every line shown").on_click(cx.listener(|this, _, _, cx| this.copy(cx))))
             .child(
-                Button::icon_only("logs-clear", "trash-2").tooltip("Clear").on_click(cx.listener(|this, _, _, cx| {
-                    this.lines.clear();
-                    this.shown.clear();
-                    this.longest = None;
-                    cx.notify();
-                })),
+                Button::icon_only("logs-copy", "copy")
+                    .tooltip("Copy the selection (⌘C), or every line shown")
+                    .on_click(cx.listener(|this, _, _, cx| this.copy(cx))),
+            )
+            .child(
+                Button::icon_only("logs-clear", "trash-2")
+                    .tooltip("Clear")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.lines.clear();
+                        this.shown.clear();
+                        this.longest = None;
+                        cx.notify();
+                    })),
             );
 
         // What there is to open, for the tab.
         let (list, note): (Vec<LogSource>, Option<String>) = match self.tab {
             Tab::System => (sources.system.clone(), sources.system_note.clone()),
             Tab::Files => (sources.files.clone(), None),
-            Tab::Docker => (sources.docker.clone(), sources.docker_note.clone().or_else(|| sources.docker.is_empty().then(|| "No containers here.".to_string()))),
+            Tab::Docker => (
+                sources.docker.clone(),
+                sources.docker_note.clone().or_else(|| {
+                    sources
+                        .docker
+                        .is_empty()
+                        .then(|| "No containers here.".to_string())
+                }),
+            ),
             Tab::Services => (sources.services.clone(), sources.services_note.clone()),
         };
         let find = self.find.read(cx).text().trim().to_lowercase();
-        let list: Vec<LogSource> = list.into_iter().filter(|x| find.is_empty() || x.name.to_lowercase().contains(&find) || x.detail.to_lowercase().contains(&find)).collect();
+        let list: Vec<LogSource> = list
+            .into_iter()
+            .filter(|x| {
+                find.is_empty()
+                    || x.name.to_lowercase().contains(&find)
+                    || x.detail.to_lowercase().contains(&find)
+            })
+            .collect();
         // Docker: each Compose project, its containers under it, then the rest.
         let list: Vec<(LogSource, bool)> = if self.tab == Tab::Docker {
             let mut ordered = Vec::new();
             for p in list.iter().filter(|x| x.kind == "compose") {
                 ordered.push((p.clone(), false));
-                ordered.extend(list.iter().filter(|x| x.kind == "docker" && x.project == p.project).map(|x| (x.clone(), true)));
+                ordered.extend(
+                    list.iter()
+                        .filter(|x| x.kind == "docker" && x.project == p.project)
+                        .map(|x| (x.clone(), true)),
+                );
             }
-            let grouped = |x: &LogSource| x.kind == "compose" || list.iter().any(|p| p.kind == "compose" && p.project.is_some() && p.project == x.project);
-            ordered.extend(list.iter().filter(|x| !grouped(x)).map(|x| (x.clone(), false)));
+            let grouped = |x: &LogSource| {
+                x.kind == "compose"
+                    || list.iter().any(|p| {
+                        p.kind == "compose" && p.project.is_some() && p.project == x.project
+                    })
+            };
+            ordered.extend(
+                list.iter()
+                    .filter(|x| !grouped(x))
+                    .map(|x| (x.clone(), false)),
+            );
             ordered
         } else {
             list.into_iter().map(|x| (x, false)).collect()
@@ -683,19 +842,67 @@ impl Render for LogsView {
             .flex_col()
             .p(px(6.))
             .gap(px(1.))
-            .child(div().flex_none().p(px(4.)).child(div().w(px(230.)).child(self.find.clone())))
-            .when(self.tab == Tab::Files, |d| d.child(div().flex_none().px(px(4.)).pb(px(4.)).child(div().w(px(230.)).child(self.path.clone()))))
+            .child(
+                div()
+                    .flex_none()
+                    .p(px(4.))
+                    .child(div().w(px(230.)).child(self.find.clone())),
+            )
+            .when(self.tab == Tab::Files, |d| {
+                d.child(
+                    div()
+                        .flex_none()
+                        .px(px(4.))
+                        .pb(px(4.))
+                        .child(div().w(px(230.)).child(self.path.clone())),
+                )
+            })
             .children(match &self.sources {
-                None => Some(div().flex().items_center().gap(px(8.)).p(px(10.)).text_size(px(12.)).text_color(theme.text_muted).child(spinner("logs-loading", 12., theme.text_muted)).child("Looking for logs…").into_any_element()),
-                Some(Err(e)) => Some(div().p(px(10.)).text_size(px(12.)).text_color(theme.error).child(e.clone()).into_any_element()),
+                None => Some(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .p(px(10.))
+                        .text_size(px(12.))
+                        .text_color(theme.text_muted)
+                        .child(spinner("logs-loading", 12., theme.text_muted))
+                        .child("Looking for logs…")
+                        .into_any_element(),
+                ),
+                Some(Err(e)) => Some(
+                    div()
+                        .p(px(10.))
+                        .text_size(px(12.))
+                        .text_color(theme.error)
+                        .child(e.clone())
+                        .into_any_element(),
+                ),
                 Some(Ok(_)) => None,
             })
-            .children(note.map(|n| div().p(px(8.)).text_size(px(11.5)).text_color(theme.text_placeholder).child(n)))
-            .when(list.is_empty() && !find.is_empty(), |d| d.child(div().p(px(8.)).text_size(px(11.5)).text_color(theme.text_placeholder).child("Nothing matches.")))
+            .children(note.map(|n| {
+                div()
+                    .p(px(8.))
+                    .text_size(px(11.5))
+                    .text_color(theme.text_placeholder)
+                    .child(n)
+            }))
+            .when(list.is_empty() && !find.is_empty(), |d| {
+                d.child(
+                    div()
+                        .p(px(8.))
+                        .text_size(px(11.5))
+                        .text_color(theme.text_placeholder)
+                        .child("Nothing matches."),
+                )
+            })
             .children(list.into_iter().enumerate().map(|(i, (s, nested))| {
-                let on = current.as_ref().is_some_and(|c| c.kind == s.kind && c.target == s.target);
+                let on = current
+                    .as_ref()
+                    .is_some_and(|c| c.kind == s.kind && c.target == s.target);
                 let locked = s.readable == Some(false);
-                let stopped = s.running == Some(false) || s.state.as_deref().is_some_and(|st| st != "running");
+                let stopped = s.running == Some(false)
+                    || s.state.as_deref().is_some_and(|st| st != "running");
                 // A service's or container's state, as a dot.
                 let dot = match (s.state.as_deref(), s.running) {
                     (Some("failed"), _) => Some(theme.error),
@@ -712,7 +919,11 @@ impl Render for LogsView {
                     .flex()
                     .flex_col()
                     .ml(px(inset))
-                    .when(nested, |d| d.border_l_1().border_color(theme.border_variant).rounded_l_none())
+                    .when(nested, |d| {
+                        d.border_l_1()
+                            .border_color(theme.border_variant)
+                            .rounded_l_none()
+                    })
                     .px(px(8.))
                     .py(px(5.))
                     .rounded(px(6.))
@@ -725,14 +936,37 @@ impl Render for LogsView {
                             .items_center()
                             .gap(px(6.))
                             .text_size(px(12.5))
-                            .text_color(if locked || stopped { theme.text_placeholder } else { theme.text })
+                            .text_color(if locked || stopped {
+                                theme.text_placeholder
+                            } else {
+                                theme.text
+                            })
                             .children(dot.map(|c| kit::dot(c, 6.)))
                             .when(compose, |d| d.child(icon("layers", 12., theme.text_muted)))
-                            .child(div().w(px(190. - inset - if compose { 18. } else { 0. })).truncate().when(compose, |d| d.font_weight(FontWeight::MEDIUM)).child(s.name.clone()))
-                            .when(locked, |d| d.child(icon("lock", 11., theme.text_placeholder))),
+                            .child(
+                                div()
+                                    .w(px(190. - inset - if compose { 18. } else { 0. }))
+                                    .truncate()
+                                    .when(compose, |d| d.font_weight(FontWeight::MEDIUM))
+                                    .child(s.name.clone()),
+                            )
+                            .when(locked, |d| {
+                                d.child(icon("lock", 11., theme.text_placeholder))
+                            }),
                     )
-                    .when(!s.detail.is_empty(), |d| d.child(div().w(px(220. - inset)).truncate().text_size(px(11.)).text_color(theme.text_placeholder).child(s.detail.clone())))
-                    .on_click(cx.listener(move |this, _, window, cx| this.open(pick.clone(), window, cx)))
+                    .when(!s.detail.is_empty(), |d| {
+                        d.child(
+                            div()
+                                .w(px(220. - inset))
+                                .truncate()
+                                .text_size(px(11.))
+                                .text_color(theme.text_placeholder)
+                                .child(s.detail.clone()),
+                        )
+                    })
+                    .on_click(
+                        cx.listener(move |this, _, window, cx| this.open(pick.clone(), window, cx)),
+                    )
             }));
 
         // The lines.
@@ -743,7 +977,17 @@ impl Render for LogsView {
         let compose = self.source.as_ref().is_some_and(|s| s.kind == "compose");
         let services = self.services.clone();
         let body = if self.source.is_none() {
-            div().flex_1().flex().items_center().justify_center().child(kit::empty_state(&theme, "scroll-text", "Pick a log on the left.")).into_any_element()
+            div()
+                .flex_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(kit::empty_state(
+                    &theme,
+                    "scroll-text",
+                    "Pick a log on the left.",
+                ))
+                .into_any_element()
         } else {
             let selection = self.ordered();
             let selected_bg = theme.selection;
@@ -752,20 +996,38 @@ impl Render for LogsView {
                     .map(|n| {
                         let line = lines[shown[n]].clone();
                         let color = tone(&line, &colors);
-                        let row = div().flex().px(px(LINE_PAD_X)).h(px(LINE_H)).whitespace_nowrap().text_color(color);
+                        let row = div()
+                            .flex()
+                            .px(px(LINE_PAD_X))
+                            .h(px(LINE_H))
+                            .whitespace_nowrap()
+                            .text_color(color);
                         // The selected part of this line, highlighted.
                         match selection.filter(|((r0, _), (r1, _))| (*r0..=*r1).contains(&n)) {
                             Some(((r0, c0), (r1, c1))) => {
                                 let from = if n == r0 { c0 } else { 0 };
                                 let to = if n == r1 { c1 } else { usize::MAX };
-                                let (head, mid, tail) = (chars(&line, 0, from).to_string(), chars(&line, from, to).to_string(), chars(&line, to, usize::MAX).to_string());
+                                let (head, mid, tail) = (
+                                    chars(&line, 0, from).to_string(),
+                                    chars(&line, from, to).to_string(),
+                                    chars(&line, to, usize::MAX).to_string(),
+                                );
                                 // An empty line inside the selection still shows it.
-                                let mid = if mid.is_empty() && n != r1 { " ".to_string() } else { mid };
-                                row.child(head).child(div().bg(selected_bg).child(mid)).child(tail)
+                                let mid = if mid.is_empty() && n != r1 {
+                                    " ".to_string()
+                                } else {
+                                    mid
+                                };
+                                row.child(head)
+                                    .child(div().bg(selected_bg).child(mid))
+                                    .child(tail)
                             }
                             None if compose && let Some(bar) = line.find('|') => {
-                                let color = service_of(&line).map(|s| service_color(s, &services)).unwrap_or(colors.text_muted);
-                                row.child(div().text_color(color).child(line[..=bar].to_string())).child(line[bar + 1..].to_string())
+                                let color = service_of(&line)
+                                    .map(|s| service_color(s, &services))
+                                    .unwrap_or(colors.text_muted);
+                                row.child(div().text_color(color).child(line[..=bar].to_string()))
+                                    .child(line[bar + 1..].to_string())
                             }
                             None => row.child(line),
                         }
@@ -786,11 +1048,18 @@ impl Render for LogsView {
                 .relative()
                 .flex_1()
                 .min_h(px(0.))
-                .child(gpui::canvas(move |b, _, _| bounds.set(Some(b)), |_, _, _, _| {}).absolute().size_full())
+                .child(
+                    gpui::canvas(move |b, _, _| bounds.set(Some(b)), |_, _, _, _| {})
+                        .absolute()
+                        .size_full(),
+                )
                 .child(uniform)
                 .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
                 .on_mouse_move(cx.listener(Self::mouse_move))
-                .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, _| this.selecting = false))
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, _| this.selecting = false),
+                )
                 .into_any_element()
         };
         let source_line = self.source.as_ref().map(|s| {
@@ -804,10 +1073,25 @@ impl Render for LogsView {
                 .border_b_1()
                 .border_color(theme.border_variant)
                 .text_size(px(12.))
-                .child(div().font_weight(FontWeight::MEDIUM).text_color(theme.text).child(s.name.clone()))
-                .child(div().text_color(theme.text_placeholder).child(status.clone()))
+                .child(
+                    div()
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(theme.text)
+                        .child(s.name.clone()),
+                )
+                .child(
+                    div()
+                        .text_color(theme.text_placeholder)
+                        .child(status.clone()),
+                )
                 .child(div().flex_1())
-                .child(div().text_color(theme.text_placeholder).child(if self.shown.len() == self.lines.len() { format!("{} lines", self.lines.len()) } else { format!("{} of {} lines", self.shown.len(), self.lines.len()) }))
+                .child(div().text_color(theme.text_placeholder).child(
+                    if self.shown.len() == self.lines.len() {
+                        format!("{} lines", self.lines.len())
+                    } else {
+                        format!("{} of {} lines", self.shown.len(), self.lines.len())
+                    },
+                ))
         });
         div()
             .id("logs-view")
@@ -842,16 +1126,18 @@ impl Render for LogsView {
                             .flex_col()
                             .when(!self.embedded, |d| d.children(source_line))
                             // Scrolling up stops following; the Follow button turns it back on.
-                            .on_scroll_wheel(cx.listener(|this, e: &gpui::ScrollWheelEvent, _, cx| {
-                                let up = match e.delta {
-                                    gpui::ScrollDelta::Lines(l) => l.y > 0.,
-                                    gpui::ScrollDelta::Pixels(p) => f32::from(p.y) > 0.,
-                                };
-                                if up && this.follow {
-                                    this.follow = false;
-                                    cx.notify();
-                                }
-                            }))
+                            .on_scroll_wheel(cx.listener(
+                                |this, e: &gpui::ScrollWheelEvent, _, cx| {
+                                    let up = match e.delta {
+                                        gpui::ScrollDelta::Lines(l) => l.y > 0.,
+                                        gpui::ScrollDelta::Pixels(p) => f32::from(p.y) > 0.,
+                                    };
+                                    if up && this.follow {
+                                        this.follow = false;
+                                        cx.notify();
+                                    }
+                                },
+                            ))
                             .child(body),
                     ),
             )
@@ -864,7 +1150,10 @@ mod tests {
 
     #[test]
     fn knows_a_lines_service() {
-        assert_eq!(service_of("web-1    | 2026-10-12T16:11:56Z start"), Some("web"));
+        assert_eq!(
+            service_of("web-1    | 2026-10-12T16:11:56Z start"),
+            Some("web")
+        );
         assert_eq!(service_of("my-api-12 | up"), Some("my-api"));
         assert_eq!(service_of("cache | up"), Some("cache"));
         assert_eq!(service_of("no bar"), None);

@@ -59,7 +59,9 @@ pub fn regular_size(slug: &str) -> bool {
 /// The sizes on offer in a region, cheapest first (as DigitalOcean lists them).
 pub fn offered<'a>(sizes: &'a [Size], region: &str) -> impl Iterator<Item = &'a Size> {
     let region = region.to_string();
-    sizes.iter().filter(move |s| regular_size(&s.slug) && s.regions.contains(&region))
+    sizes
+        .iter()
+        .filter(move |s| regular_size(&s.slug) && s.regions.contains(&region))
 }
 
 /// One region per city, to pick from: the one with the most sizes on offer
@@ -67,12 +69,31 @@ pub fn offered<'a>(sizes: &'a [Size], region: &str) -> impl Iterator<Item = &'a 
 /// ones among them), in a fixed order of cities. Cities with none are left out.
 pub fn cities(regions: &[Region], sizes: &[Size]) -> Vec<(String, String)> {
     const ORDER: &[&str] = &[
-        "New York", "Toronto", "Atlanta", "Richmond", "San Francisco", "Kansas City", "Memphis",
-        "London", "Amsterdam", "Frankfurt",
-        "Bangalore", "Singapore", "Sydney",
+        "New York",
+        "Toronto",
+        "Atlanta",
+        "Richmond",
+        "San Francisco",
+        "Kansas City",
+        "Memphis",
+        "London",
+        "Amsterdam",
+        "Frankfurt",
+        "Bangalore",
+        "Singapore",
+        "Sydney",
     ];
-    let city_of = |r: &Region| r.name.trim_end_matches(|c: char| c.is_ascii_digit() || c == ' ').trim().to_string();
-    let number = |slug: &str| slug.trim_start_matches(|c: char| c.is_ascii_alphabetic()).parse::<u32>().unwrap_or(0);
+    let city_of = |r: &Region| {
+        r.name
+            .trim_end_matches(|c: char| c.is_ascii_digit() || c == ' ')
+            .trim()
+            .to_string()
+    };
+    let number = |slug: &str| {
+        slug.trim_start_matches(|c: char| c.is_ascii_alphabetic())
+            .parse::<u32>()
+            .unwrap_or(0)
+    };
     // (city, slug, sizes on offer there)
     let mut best: Vec<(String, String, usize)> = Vec::new();
     for r in regions {
@@ -81,7 +102,11 @@ pub fn cities(regions: &[Region], sizes: &[Size]) -> Vec<(String, String)> {
             continue;
         }
         let city = city_of(r);
-        let city = if city.is_empty() { r.slug.to_uppercase() } else { city };
+        let city = if city.is_empty() {
+            r.slug.to_uppercase()
+        } else {
+            city
+        };
         match best.iter_mut().find(|(c, _, _)| *c == city) {
             Some(entry) if (count, number(&r.slug)) > (entry.2, number(&entry.1)) => {
                 entry.1 = r.slug.clone();
@@ -93,13 +118,20 @@ pub fn cities(regions: &[Region], sizes: &[Size]) -> Vec<(String, String)> {
     }
     let rank = |c: &str| ORDER.iter().position(|o| *o == c).unwrap_or(ORDER.len());
     best.sort_by_key(|(c, _, _)| rank(c));
-    best.into_iter().map(|(city, slug, _)| (city, slug)).collect()
+    best.into_iter()
+        .map(|(city, slug, _)| (city, slug))
+        .collect()
 }
 
 /// The city a region slug is in, by the same names.
 pub fn city_of_slug(regions: &[Region], slug: &str) -> Option<String> {
     let r = regions.iter().find(|r| r.slug == slug)?;
-    Some(r.name.trim_end_matches(|c: char| c.is_ascii_digit() || c == ' ').trim().to_string())
+    Some(
+        r.name
+            .trim_end_matches(|c: char| c.is_ascii_digit() || c == ' ')
+            .trim()
+            .to_string(),
+    )
 }
 
 /// A region's city from its slug alone ("nyc3" → "New York"), for when the
@@ -129,7 +161,10 @@ pub fn region_city(slug: &str) -> Option<&'static str> {
 pub fn size_label(slug: &str) -> String {
     let parts: Vec<&str> = slug.split('-').collect();
     let cpu = parts.iter().find_map(|p| p.strip_suffix("vcpu"));
-    let mem = parts.iter().find_map(|p| p.strip_suffix("gb").filter(|n| n.chars().all(|c| c.is_ascii_digit())));
+    let mem = parts.iter().find_map(|p| {
+        p.strip_suffix("gb")
+            .filter(|n| n.chars().all(|c| c.is_ascii_digit()))
+    });
     match (cpu, mem) {
         (Some(c), Some(m)) => format!("{c} vCPU · {m} GB"),
         _ => slug.to_string(),
@@ -142,14 +177,20 @@ pub fn nearest_region(offset_hours: i32, available: &[String]) -> Option<String>
     let preferences: &[&str] = match offset_hours {
         ..=-9 => &["sfo3", "sfo2", "tor1", "nyc3", "nyc1", "syd1"],
         -8..=-6 => &["sfo3", "sfo2", "tor1", "nyc3", "nyc1", "atl1"],
-        -5..=-3 => &["nyc3", "nyc1", "tor1", "atl1", "ric1", "sfo3", "sfo2", "lon1", "ams3"],
+        -5..=-3 => &[
+            "nyc3", "nyc1", "tor1", "atl1", "ric1", "sfo3", "sfo2", "lon1", "ams3",
+        ],
         -2..=2 => &["lon1", "ams3", "fra1", "nyc3", "tor1"],
         3..=4 => &["fra1", "ams3", "lon1", "blr1"],
         5..=6 => &["blr1", "sgp1", "fra1"],
         7..=9 => &["sgp1", "syd1", "blr1"],
         _ => &["syd1", "sgp1"],
     };
-    preferences.iter().map(|s| s.to_string()).find(|s| available.contains(s)).or_else(|| available.first().cloned())
+    preferences
+        .iter()
+        .map(|s| s.to_string())
+        .find(|s| available.contains(s))
+        .or_else(|| available.first().cloned())
 }
 
 #[cfg(test)]
@@ -168,9 +209,24 @@ mod tests {
 
     #[test]
     fn one_choice_per_city() {
-        let r = |slug: &str, name: &str| Region { slug: slug.into(), name: name.into(), sizes: Vec::new() };
-        let size = |slug: &str, regions: &[&str]| Size { slug: slug.into(), regions: regions.iter().map(|r| r.to_string()).collect(), ..Default::default() };
-        let regions = vec![r("nyc1", "New York 1"), r("sgp1", "Singapore 1"), r("nyc3", "New York 3"), r("lon1", "London 1"), r("nyc2", "New York 2"), r("atl1", "Atlanta 1")];
+        let r = |slug: &str, name: &str| Region {
+            slug: slug.into(),
+            name: name.into(),
+            sizes: Vec::new(),
+        };
+        let size = |slug: &str, regions: &[&str]| Size {
+            slug: slug.into(),
+            regions: regions.iter().map(|r| r.to_string()).collect(),
+            ..Default::default()
+        };
+        let regions = vec![
+            r("nyc1", "New York 1"),
+            r("sgp1", "Singapore 1"),
+            r("nyc3", "New York 3"),
+            r("lon1", "London 1"),
+            r("nyc2", "New York 2"),
+            r("atl1", "Atlanta 1"),
+        ];
         // nyc3 has the most on offer; atl1 has only a premium size, so it isn't offered.
         let sizes = vec![
             size("s-1vcpu-1gb", &["nyc1", "nyc3", "sgp1", "lon1"]),
@@ -179,11 +235,24 @@ mod tests {
         ];
         assert_eq!(
             cities(&regions, &sizes),
-            vec![("New York".to_string(), "nyc3".to_string()), ("London".into(), "lon1".into()), ("Singapore".into(), "sgp1".into())]
+            vec![
+                ("New York".to_string(), "nyc3".to_string()),
+                ("London".into(), "lon1".into()),
+                ("Singapore".into(), "sgp1".into())
+            ]
         );
         // When the newest datacenter has nothing on offer, an older one with sizes is chosen.
-        let sizes = vec![size("s-1vcpu-1gb", &["nyc1", "lon1"]), size("s-2vcpu-2gb", &["lon1"])];
-        assert_eq!(cities(&regions, &sizes), vec![("New York".to_string(), "nyc1".to_string()), ("London".into(), "lon1".into())]);
+        let sizes = vec![
+            size("s-1vcpu-1gb", &["nyc1", "lon1"]),
+            size("s-2vcpu-2gb", &["lon1"]),
+        ];
+        assert_eq!(
+            cities(&regions, &sizes),
+            vec![
+                ("New York".to_string(), "nyc1".to_string()),
+                ("London".into(), "lon1".into())
+            ]
+        );
         assert_eq!(city_of_slug(&regions, "nyc1").as_deref(), Some("New York"));
         assert_eq!(offered(&sizes, "lon1").count(), 2);
     }

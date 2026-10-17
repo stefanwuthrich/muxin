@@ -89,9 +89,15 @@ impl Theme {
     /// A machine's status dot: green online; gray when it's just offline (shut
     /// down, asleep) or unchecked; amber or red when something needs fixing.
     pub fn machine_status(&self, m: &crate::fleet::model::Machine) -> Hsla {
-        match (m.status.as_str(), m.unreachable.as_ref().map(|u| u.kind.as_str())) {
+        match (
+            m.status.as_str(),
+            m.unreachable.as_ref().map(|u| u.kind.as_str()),
+        ) {
             ("online", _) => self.success,
-            ("offline", Some("offline" | "powered-off" | "stopped" | "host-down" | "installing")) => self.text_placeholder,
+            (
+                "offline",
+                Some("offline" | "powered-off" | "stopped" | "host-down" | "installing"),
+            ) => self.text_placeholder,
             ("offline", Some("refused" | "tailscale-off")) => self.warning,
             ("offline", _) => self.error,
             _ => self.text_placeholder,
@@ -191,7 +197,10 @@ impl Global for Appearance {}
 impl Appearance {
     /// `[ui]` in config.toml.
     pub fn load(path: Option<PathBuf>) -> Appearance {
-        let mut a: Appearance = path.as_deref().map(|p| crate::config::read_section(p, "ui")).unwrap_or_default();
+        let mut a: Appearance = path
+            .as_deref()
+            .map(|p| crate::config::read_section(p, "ui"))
+            .unwrap_or_default();
         a.path = path;
         a
     }
@@ -208,15 +217,26 @@ impl Appearance {
         match self.mode {
             Mode::Dark => true,
             Mode::Light => false,
-            Mode::System => matches!(system, WindowAppearance::Dark | WindowAppearance::VibrantDark),
+            Mode::System => matches!(
+                system,
+                WindowAppearance::Dark | WindowAppearance::VibrantDark
+            ),
         }
     }
 
     /// The theme to show given the system's light/dark appearance.
     pub fn resolve(&self, system: WindowAppearance) -> Theme {
         let dark = self.is_dark(system);
-        let (id, fallback) = if dark { (&self.dark, DEFAULT_DARK) } else { (&self.light, DEFAULT_LIGHT) };
-        themes::find(id).filter(|p| p.dark == dark).or_else(|| themes::find(fallback)).expect("default themes exist").theme()
+        let (id, fallback) = if dark {
+            (&self.dark, DEFAULT_DARK)
+        } else {
+            (&self.light, DEFAULT_LIGHT)
+        };
+        themes::find(id)
+            .filter(|p| p.dark == dark)
+            .or_else(|| themes::find(fallback))
+            .expect("default themes exist")
+            .theme()
     }
 }
 
@@ -226,7 +246,10 @@ pub fn apply(window: &Window, cx: &mut App) {
     let fonts = if theme.system_fonts {
         let mono = *SYSTEM_MONO.get_or_init(|| {
             let names = cx.text_system().all_font_names();
-            ["SF Mono", "Menlo"].into_iter().find(|f| names.iter().any(|n| n == f)).unwrap_or(MONO_FONT)
+            ["SF Mono", "Menlo"]
+                .into_iter()
+                .find(|f| names.iter().any(|n| n == f))
+                .unwrap_or(MONO_FONT)
         });
         (".SystemUIFont", mono)
     } else {
@@ -239,7 +262,11 @@ pub fn apply(window: &Window, cx: &mut App) {
     let style = super::kit::IconStyle::from_id(&cx.global::<Appearance>().icon_style);
     super::kit::set_look(super::kit::Look::new(style, &theme));
     #[cfg(windows)]
-    title_bar(window, cx.global::<Appearance>().is_dark(window.appearance()), &theme);
+    title_bar(
+        window,
+        cx.global::<Appearance>().is_dark(window.appearance()),
+        &theme,
+    );
     cx.set_global(theme);
 }
 
@@ -248,9 +275,15 @@ pub fn apply(window: &Window, cx: &mut App) {
 #[cfg(windows)]
 fn title_bar(window: &Window, dark: bool, theme: &Theme) {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    use windows_sys::Win32::Graphics::Dwm::{DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE, DwmSetWindowAttribute};
-    let Ok(handle) = HasWindowHandle::window_handle(window) else { return };
-    let RawWindowHandle::Win32(h) = handle.as_raw() else { return };
+    use windows_sys::Win32::Graphics::Dwm::{
+        DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE, DwmSetWindowAttribute,
+    };
+    let Ok(handle) = HasWindowHandle::window_handle(window) else {
+        return;
+    };
+    let RawWindowHandle::Win32(h) = handle.as_raw() else {
+        return;
+    };
     let hwnd = h.hwnd.get() as *mut std::ffi::c_void;
     // COLORREF: 0x00BBGGRR.
     let colorref = |c: gpui::Hsla| {
@@ -258,7 +291,12 @@ fn title_bar(window: &Window, dark: bool, theme: &Theme) {
         ((c.b * 255.) as u32) << 16 | ((c.g * 255.) as u32) << 8 | (c.r * 255.) as u32
     };
     let set = |attribute: i32, value: u32| unsafe {
-        DwmSetWindowAttribute(hwnd, attribute as u32, &value as *const u32 as *const std::ffi::c_void, 4);
+        DwmSetWindowAttribute(
+            hwnd,
+            attribute as u32,
+            &value as *const u32 as *const std::ffi::c_void,
+            4,
+        );
     };
     set(DWMWA_USE_IMMERSIVE_DARK_MODE as i32, dark as u32);
     set(DWMWA_CAPTION_COLOR as i32, colorref(theme.sidebar));
@@ -274,7 +312,8 @@ pub fn update_terminal(cx: &mut App, f: impl FnOnce(&mut Appearance)) {
     let mut appearance = cx.global::<Appearance>().clone();
     f(&mut appearance);
     appearance.terminal_font_size = appearance.terminal_font_size.round().clamp(8., 32.);
-    appearance.terminal_line_height = ((appearance.terminal_line_height * 20.).round() / 20.).clamp(1., 2.);
+    appearance.terminal_line_height =
+        ((appearance.terminal_line_height * 20.).round() / 20.).clamp(1., 2.);
     super::terminal::set_font(&appearance.terminal_font);
     appearance.save();
     cx.set_global(appearance);
@@ -303,7 +342,9 @@ pub fn save_sidebar_width(cx: &mut App, width: f32) {
 /// Makes `id` the theme for its kind (light or dark), switching to that kind
 /// when it isn't the one showing.
 pub fn choose_theme(a: &mut Appearance, id: &str, system: WindowAppearance) {
-    let Some(dark) = super::themes::find(id).map(|p| p.dark) else { return };
+    let Some(dark) = super::themes::find(id).map(|p| p.dark) else {
+        return;
+    };
     if dark {
         a.dark = id.into();
     } else {
@@ -312,7 +353,10 @@ pub fn choose_theme(a: &mut Appearance, id: &str, system: WindowAppearance) {
     let showing_dark = match a.mode {
         Mode::Dark => true,
         Mode::Light => false,
-        Mode::System => matches!(system, WindowAppearance::Dark | WindowAppearance::VibrantDark),
+        Mode::System => matches!(
+            system,
+            WindowAppearance::Dark | WindowAppearance::VibrantDark
+        ),
     };
     if showing_dark != dark {
         a.mode = if dark { Mode::Dark } else { Mode::Light };
@@ -326,7 +370,11 @@ pub fn preview_appearance(window: &mut Window, cx: &mut App, appearance: Appeara
     window.refresh();
 }
 
-pub fn update_appearance(window: &mut Window, cx: &mut App, f: impl FnOnce(&mut Appearance, WindowAppearance)) {
+pub fn update_appearance(
+    window: &mut Window,
+    cx: &mut App,
+    f: impl FnOnce(&mut Appearance, WindowAppearance),
+) {
     let system = window.appearance();
     let mut appearance = cx.global::<Appearance>().clone();
     f(&mut appearance, system);

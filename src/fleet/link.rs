@@ -114,7 +114,11 @@ impl Link {
                 self.pending.lock().unwrap().remove(&id);
                 // A slow request, or a dead connection? A quick ping tells; a
                 // dead one is dropped so the next request connects afresh.
-                if req["op"] != "ping" && Box::pin(self.request(json!({ "op": "ping" }), Duration::from_secs(3))).await.is_err() {
+                if req["op"] != "ping"
+                    && Box::pin(self.request(json!({ "op": "ping" }), Duration::from_secs(3)))
+                        .await
+                        .is_err()
+                {
                     self.shut();
                 }
                 if req["op"] == "ping" {
@@ -195,7 +199,13 @@ fn slots() -> &'static Mutex<HashMap<String, Slot>> {
 /// One connection attempt at a time per machine.
 fn gate(machine_id: &str) -> Arc<tokio::sync::Mutex<()>> {
     static GATES: OnceLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> = OnceLock::new();
-    GATES.get_or_init(Default::default).lock().unwrap().entry(machine_id.to_string()).or_default().clone()
+    GATES
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap()
+        .entry(machine_id.to_string())
+        .or_default()
+        .clone()
 }
 
 type OnConnect = Box<dyn Fn(Arc<Link>) + Send + Sync>;
@@ -231,7 +241,8 @@ pub async fn get(spec: &MachineSpec) -> Option<Arc<Link>> {
     if let Some(l) = current(&spec.id) {
         return Some(l);
     }
-    if matches!(slots().lock().unwrap().get(&spec.id), Some(Slot::Down(at)) if at.elapsed() < RETRY_AFTER) {
+    if matches!(slots().lock().unwrap().get(&spec.id), Some(Slot::Down(at)) if at.elapsed() < RETRY_AFTER)
+    {
         return None;
     }
     let gate = gate(&spec.id);
@@ -242,7 +253,10 @@ pub async fn get(spec: &MachineSpec) -> Option<Arc<Link>> {
     match connect(spec).await {
         Ok(link) => {
             tracing::debug!("linked to {} (agent {})", spec.name, link.version());
-            slots().lock().unwrap().insert(spec.id.clone(), Slot::Up(link.clone()));
+            slots()
+                .lock()
+                .unwrap()
+                .insert(spec.id.clone(), Slot::Up(link.clone()));
             if let Some(hook) = on_connect().lock().unwrap().as_ref() {
                 hook(link.clone());
             }
@@ -250,7 +264,10 @@ pub async fn get(spec: &MachineSpec) -> Option<Arc<Link>> {
         }
         Err(e) => {
             tracing::debug!("no link to {}: {e}", spec.name);
-            slots().lock().unwrap().insert(spec.id.clone(), Slot::Down(Instant::now()));
+            slots()
+                .lock()
+                .unwrap()
+                .insert(spec.id.clone(), Slot::Down(Instant::now()));
             None
         }
     }
@@ -259,7 +276,10 @@ pub async fn get(spec: &MachineSpec) -> Option<Arc<Link>> {
 /// Forget recent failures to connect, so the next use tries again right away
 /// (the network or Tailscale changed).
 pub fn retry_all() {
-    slots().lock().unwrap().retain(|_, slot| matches!(slot, Slot::Up(_)));
+    slots()
+        .lock()
+        .unwrap()
+        .retain(|_, slot| matches!(slot, Slot::Up(_)));
 }
 
 /// Drops the machine's link (a new agent was installed, the machine was
@@ -272,8 +292,15 @@ pub fn reset(machine_id: &str) {
 }
 
 fn local_agent() -> PathBuf {
-    let bin = dirs::home_dir().unwrap_or_default().join(".muxen").join("bin");
-    bin.join(if cfg!(windows) { "muxen-agent.exe" } else { "muxen-agent" })
+    let bin = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".muxen")
+        .join("bin");
+    bin.join(if cfg!(windows) {
+        "muxen-agent.exe"
+    } else {
+        "muxen-agent"
+    })
 }
 
 /// Directly when the machine is paired and reachable, else over ssh.
@@ -287,16 +314,33 @@ async fn connect(spec: &MachineSpec) -> Result<Arc<Link>, String> {
     connect_ssh(spec).await
 }
 
-async fn connect_direct(spec: &MachineSpec, paired: &super::direct::Paired) -> Result<Arc<Link>, String> {
+async fn connect_direct(
+    spec: &MachineSpec,
+    paired: &super::direct::Paired,
+) -> Result<Arc<Link>, String> {
     // Reached at an address of its own choosing (a forwarded port): that one only.
     let mut paired = paired.clone();
-    if let Some(address) = spec.direct_address.as_deref().map(str::trim).filter(|a| !a.is_empty()) {
+    if let Some(address) = spec
+        .direct_address
+        .as_deref()
+        .map(str::trim)
+        .filter(|a| !a.is_empty())
+    {
         let (host, port) = match address.rsplit_once(':').map(|(h, p)| (h, p.parse::<u16>())) {
             Some((h, Ok(p))) => (h.trim_matches(['[', ']']).to_string(), p),
             _ => (address.to_string(), paired.port),
         };
-        let ips: Vec<String> = tokio::net::lookup_host((host.as_str(), port)).await.map(|a| a.map(|s| s.ip().to_string()).collect()).unwrap_or_default();
-        paired = super::direct::Paired { lan: ips, tailnet: Vec::new(), host, port, ..paired };
+        let ips: Vec<String> = tokio::net::lookup_host((host.as_str(), port))
+            .await
+            .map(|a| a.map(|s| s.ip().to_string()).collect())
+            .unwrap_or_default();
+        paired = super::direct::Paired {
+            lan: ips,
+            tailnet: Vec::new(),
+            host,
+            port,
+            ..paired
+        };
     }
     let paired = &paired;
     let conn = super::direct::connect(&spec.id, paired).await?;
@@ -325,16 +369,27 @@ async fn connect_ssh(spec: &MachineSpec) -> Result<Arc<Link>, String> {
         c.arg(super::sessions::agent::command(spec, "link"));
         c
     };
-    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).kill_on_drop(true);
-    let mut child = cmd.spawn().map_err(|e| format!("couldn't start the link: {e}"))?;
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("couldn't start the link: {e}"))?;
     let stdin = child.stdin.take().ok_or("no stdin")?;
     let stdout = child.stdout.take().ok_or("no stdout")?;
     let link = start(spec, stdout, stdin, Holder::Ssh(child), "ssh").await?;
     // Where ssh goes, to say which network the machine is on.
     if spec.is_local() {
-        let _ = link.peer.set(std::net::SocketAddr::from(([127, 0, 0, 1], 0)));
+        let _ = link
+            .peer
+            .set(std::net::SocketAddr::from(([127, 0, 0, 1], 0)));
     } else if let Some(host) = super::direct::resolve_host(spec).await {
-        if let Some(addr) = tokio::net::lookup_host((host.as_str(), 22)).await.ok().and_then(|mut a| a.next()) {
+        if let Some(addr) = tokio::net::lookup_host((host.as_str(), 22))
+            .await
+            .ok()
+            .and_then(|mut a| a.next())
+        {
             let _ = link.peer.set(addr);
         }
     }
@@ -454,7 +509,9 @@ async fn start(
             }
             let Some(link) = weak.upgrade() else { break };
             if channel == CONTROL {
-                let Ok(msg) = serde_json::from_slice::<Value>(&payload) else { continue };
+                let Ok(msg) = serde_json::from_slice::<Value>(&payload) else {
+                    continue;
+                };
                 if let Some(id) = msg["id"].as_u64() {
                     if let Some(tx) = link.pending.lock().unwrap().remove(&id) {
                         let _ = tx.send(msg);

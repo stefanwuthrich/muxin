@@ -33,19 +33,33 @@ pub const EXTRAS: &[(&str, &str)] = &[
 /// The extras in groups, for choosing them: (group, ids).
 pub const GROUPS: &[(&str, &[&str])] = &[
     ("Tools", &["docker", "gh"]),
-    ("Languages", &["node", "python", "go", "rust", "php", "ruby", "java", "bun", "deno", "dotnet"]),
-    ("Agent CLIs", &["claude", "codex", "gemini", "opencode", "amp", "pi"]),
+    (
+        "Languages",
+        &[
+            "node", "python", "go", "rust", "php", "ruby", "java", "bun", "deno", "dotnet",
+        ],
+    ),
+    (
+        "Agent CLIs",
+        &["claude", "codex", "gemini", "opencode", "amp", "pi"],
+    ),
     ("Network", &["tailscale"]),
 ];
 
 /// An extra's name, by id.
 pub fn extra_name(id: &str) -> &'static str {
-    EXTRAS.iter().find(|(i, _)| *i == id).map(|(_, n)| *n).unwrap_or("")
+    EXTRAS
+        .iter()
+        .find(|(i, _)| *i == id)
+        .map(|(_, n)| *n)
+        .unwrap_or("")
 }
 
 /// The extras new machines come with unless the user picks otherwise.
 pub fn default_extras() -> Vec<String> {
-    ["docker", "gh", "node", "claude", "codex", "tailscale"].map(String::from).to_vec()
+    ["docker", "gh", "node", "claude", "codex", "tailscale"]
+        .map(String::from)
+        .to_vec()
 }
 
 /// npm packages of the agent CLIs (they need Node.js).
@@ -65,13 +79,25 @@ pub(crate) fn npm_package(id: &str) -> Option<&'static str> {
 /// The extras as they'll install: known ones only, in catalog order, with
 /// Node.js added when an agent CLI needs it.
 pub fn resolve(picked: &[String]) -> Vec<&'static str> {
-    let wants = |id: &str| picked.iter().any(|p| p == id) || (id == "node" && picked.iter().any(|p| npm_package(p).is_some()));
-    EXTRAS.iter().map(|(id, _)| *id).filter(|id| wants(id)).collect()
+    let wants = |id: &str| {
+        picked.iter().any(|p| p == id)
+            || (id == "node" && picked.iter().any(|p| npm_package(p).is_some()))
+    };
+    EXTRAS
+        .iter()
+        .map(|(id, _)| *id)
+        .filter(|id| wants(id))
+        .collect()
 }
 
 /// A Linux user name for `name` (this computer's user, usually).
 pub fn user_name(name: &str) -> String {
-    let clean: String = name.to_lowercase().chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-').take(32).collect();
+    let clean: String = name
+        .to_lowercase()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+        .take(32)
+        .collect();
     match clean.chars().next() {
         Some(c) if c.is_ascii_lowercase() || c == '_' => clean,
         _ => "muxen".into(),
@@ -230,12 +256,27 @@ mod tests {
         assert_eq!(user_name("Adib Hanna"), "adibhanna");
         assert_eq!(user_name("9lives"), "muxen");
         let langs = script("me", &["go", "rust", "php"].map(String::from));
-        assert!(langs.contains("go.dev/dl") && langs.contains("sh.rustup.rs") && langs.contains("getcomposer.org"));
-        assert!(GROUPS.iter().flat_map(|(_, ids)| ids.iter()).count() == EXTRAS.len(), "every extra is in a group");
+        assert!(
+            langs.contains("go.dev/dl")
+                && langs.contains("sh.rustup.rs")
+                && langs.contains("getcomposer.org")
+        );
+        assert!(
+            GROUPS.iter().flat_map(|(_, ids)| ids.iter()).count() == EXTRAS.len(),
+            "every extra is in a group"
+        );
         let picked: Vec<String> = ["codex", "tailscale", "bogus"].map(String::from).to_vec();
-        assert_eq!(resolve(&picked), vec!["node", "codex", "tailscale"], "an agent CLI brings Node.js; unknown ones are dropped");
+        assert_eq!(
+            resolve(&picked),
+            vec!["node", "codex", "tailscale"],
+            "an agent CLI brings Node.js; unknown ones are dropped"
+        );
         let all = script("me", &picked);
-        assert!(all.contains("@openai/codex") && all.contains("tailscale.com/install.sh") && all.contains("nodesource"));
+        assert!(
+            all.contains("@openai/codex")
+                && all.contains("tailscale.com/install.sh")
+                && all.contains("nodesource")
+        );
         assert!(!all.contains("get.docker.com") && !all.contains("claude-code"));
         let bare = script("me", &[]);
         assert!(bare.contains("install git") || bare.contains("installing git"));

@@ -65,43 +65,105 @@ impl LogSource {
 
     /// A file at `path`, to open by hand.
     pub fn file(path: &str) -> LogSource {
-        let name = path.trim_end_matches('/').rsplit('/').next().unwrap_or(path).to_string();
-        LogSource { kind: "file".into(), target: path.into(), name, detail: path.into(), ..Default::default() }
+        let name = path
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .unwrap_or(path)
+            .to_string();
+        LogSource {
+            kind: "file".into(),
+            target: path.into(),
+            name,
+            detail: path.into(),
+            ..Default::default()
+        }
     }
 }
 
 impl Engine {
     /// What there is to read on a machine.
     pub async fn log_sources(self: &Arc<Self>, machine_id: &str) -> Result<LogSources, String> {
-        let (spec, probe) = self.machine(machine_id).ok_or_else(|| format!("No machine called {machine_id}."))?;
+        let (spec, probe) = self
+            .machine(machine_id)
+            .ok_or_else(|| format!("No machine called {machine_id}."))?;
         if self.demo_world().is_some() {
             return Ok(demo_sources());
         }
         super::sessions::agent::ensure(&spec, probe.as_ref()).await?;
         let reply = super::sessions::agent::ctl(&spec, &json!({ "op": "log_sources" })).await?;
-        serde_json::from_value(reply).map_err(|_| format!("{} listed its logs in a way Muxin can't read.", spec.name))
+        serde_json::from_value(reply)
+            .map_err(|_| format!("{} listed its logs in a way Muxin can't read.", spec.name))
     }
 
     /// A log's last `lines` (holding `filter`, ignoring case, when given).
-    pub async fn read_logs(self: &Arc<Self>, machine_id: &str, source: &LogSource, lines: u64, filter: Option<&str>) -> Result<Vec<String>, String> {
-        let (spec, probe) = self.machine(machine_id).ok_or_else(|| format!("No machine called {machine_id}."))?;
+    pub async fn read_logs(
+        self: &Arc<Self>,
+        machine_id: &str,
+        source: &LogSource,
+        lines: u64,
+        filter: Option<&str>,
+    ) -> Result<Vec<String>, String> {
+        let (spec, probe) = self
+            .machine(machine_id)
+            .ok_or_else(|| format!("No machine called {machine_id}."))?;
         if self.demo_world().is_some() {
             return Ok(DEMO_LINES.iter().map(|l| l.to_string()).collect());
         }
         super::sessions::agent::ensure(&spec, probe.as_ref()).await?;
         let request = json!({ "op": "logs_read", "source": source.request(), "lines": lines, "filter": filter.unwrap_or("") });
         let reply = super::sessions::agent::ctl(&spec, &request).await?;
-        Ok(reply["lines"].as_array().map(|l| l.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default())
+        Ok(reply["lines"]
+            .as_array()
+            .map(|l| {
+                l.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default())
     }
 }
 
 fn demo_sources() -> LogSources {
-    let src = |kind: &str, target: &str, name: &str, detail: &str| LogSource { kind: kind.into(), target: target.into(), name: name.into(), detail: detail.into(), ..Default::default() };
+    let src = |kind: &str, target: &str, name: &str, detail: &str| LogSource {
+        kind: kind.into(),
+        target: target.into(),
+        name: name.into(),
+        detail: detail.into(),
+        ..Default::default()
+    };
     LogSources {
-        system: vec![src("system", "", "Everything", "The systemd journal"), src("kernel", "", "Kernel", "The kernel's messages")],
-        files: vec![src("file", "/var/log/syslog", "syslog", "/var/log/syslog"), src("file", "/srv/api/storage/logs/laravel.log", "laravel.log", "/srv/api/storage/logs/laravel.log")],
-        docker: vec![src("docker", "4f2a", "postgres", "postgres:17 · Up 3 days"), src("docker", "9c1e", "redis", "redis:8 · Up 3 days")],
-        services: vec![src("service", "nginx.service", "nginx", "A high performance web server"), src("service", "actions.runner.beacon-01.service", "actions.runner.beacon-01", "GitHub Actions Runner")],
+        system: vec![
+            src("system", "", "Everything", "The systemd journal"),
+            src("kernel", "", "Kernel", "The kernel's messages"),
+        ],
+        files: vec![
+            src("file", "/var/log/syslog", "syslog", "/var/log/syslog"),
+            src(
+                "file",
+                "/srv/api/storage/logs/laravel.log",
+                "laravel.log",
+                "/srv/api/storage/logs/laravel.log",
+            ),
+        ],
+        docker: vec![
+            src("docker", "4f2a", "postgres", "postgres:17 · Up 3 days"),
+            src("docker", "9c1e", "redis", "redis:8 · Up 3 days"),
+        ],
+        services: vec![
+            src(
+                "service",
+                "nginx.service",
+                "nginx",
+                "A high performance web server",
+            ),
+            src(
+                "service",
+                "actions.runner.beacon-01.service",
+                "actions.runner.beacon-01",
+                "GitHub Actions Runner",
+            ),
+        ],
         ..Default::default()
     }
 }

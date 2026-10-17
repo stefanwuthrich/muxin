@@ -31,7 +31,13 @@ pub struct Status {
 pub fn status() -> Status {
     let exe = match this_exe() {
         Ok(exe) => exe,
-        Err(e) => return Status { state: "unsupported", note: Some(e), ..Default::default() },
+        Err(e) => {
+            return Status {
+                state: "unsupported",
+                note: Some(e),
+                ..Default::default()
+            };
+        }
     };
     imp::status(&exe)
 }
@@ -55,7 +61,9 @@ fn this_exe() -> Result<PathBuf, String> {
     // An AppImage runs from a mount that's gone once it quits: the command
     // runs the AppImage file instead.
     if cfg!(target_os = "linux")
-        && let Some(file) = std::env::var_os("APPIMAGE").map(PathBuf::from).filter(|f| f.is_file())
+        && let Some(file) = std::env::var_os("APPIMAGE")
+            .map(PathBuf::from)
+            .filter(|f| f.is_file())
     {
         return Ok(std::fs::canonicalize(&file).unwrap_or(file));
     }
@@ -69,8 +77,15 @@ fn this_exe() -> Result<PathBuf, String> {
 #[cfg(unix)]
 fn is_ours(target: &Path) -> bool {
     let s = target.to_string_lossy();
-    let name = target.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
-    name == "muxin" || name == "muxen" || (name.starts_with("muxin") && name.ends_with(".appimage")) || s.contains("Muxin.app/") || s.contains("Muxen.app/")
+    let name = target
+        .file_name()
+        .map(|n| n.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    name == "muxin"
+        || name == "muxen"
+        || (name.starts_with("muxin") && name.ends_with(".appimage"))
+        || s.contains("Muxin.app/")
+        || s.contains("Muxen.app/")
 }
 
 #[cfg(unix)]
@@ -105,11 +120,23 @@ mod imp {
 
     fn managed_link(exe: &Path) -> Option<(PathBuf, Manager)> {
         let runs_this = |link: &Path| std::fs::canonicalize(link).is_ok_and(|r| r == exe);
-        if cfg!(target_os = "linux") && exe.starts_with("/usr/lib/muxin") && runs_this(Path::new("/usr/bin/muxin")) {
+        if cfg!(target_os = "linux")
+            && exe.starts_with("/usr/lib/muxin")
+            && runs_this(Path::new("/usr/bin/muxin"))
+        {
             return Some((PathBuf::from("/usr/bin/muxin"), Manager::Package));
         }
-        let prefixes = std::env::var_os("HOMEBREW_PREFIX").map(PathBuf::from).into_iter().chain(["/opt/homebrew", "/usr/local", "/home/linuxbrew/.linuxbrew"].map(PathBuf::from));
-        prefixes.filter(|p| p.join("Caskroom/muxin").is_dir()).map(|p| p.join("bin/muxin")).find(|link| runs_this(link)).map(|link| (link, Manager::Homebrew))
+        let prefixes = std::env::var_os("HOMEBREW_PREFIX")
+            .map(PathBuf::from)
+            .into_iter()
+            .chain(
+                ["/opt/homebrew", "/usr/local", "/home/linuxbrew/.linuxbrew"].map(PathBuf::from),
+            );
+        prefixes
+            .filter(|p| p.join("Caskroom/muxin").is_dir())
+            .map(|p| p.join("bin/muxin"))
+            .find(|link| runs_this(link))
+            .map(|link| (link, Manager::Homebrew))
     }
 
     pub fn status(exe: &Path) -> Status {
@@ -118,11 +145,22 @@ mod imp {
                 Manager::Homebrew => "Homebrew put it there with the app.",
                 Manager::Package => "Muxin's package put it there with the app.",
             });
-            return Status { state: "installed", path: link.display().to_string(), target: Some(exe.display().to_string()), note: note.map(Into::into), replaceable: false, managed: true };
+            return Status {
+                state: "installed",
+                path: link.display().to_string(),
+                target: Some(exe.display().to_string()),
+                note: note.map(Into::into),
+                replaceable: false,
+                managed: true,
+            };
         }
         match link_path() {
             Ok(link) => status_at(&link, exe),
-            Err(e) => Status { state: "unsupported", note: Some(e), ..Default::default() },
+            Err(e) => Status {
+                state: "unsupported",
+                note: Some(e),
+                ..Default::default()
+            },
         }
     }
 
@@ -130,29 +168,69 @@ mod imp {
         let link = link.to_path_buf();
         let path = link.display().to_string();
         let Ok(meta) = std::fs::symlink_metadata(&link) else {
-            return Status { state: "missing", path, ..Default::default() };
+            return Status {
+                state: "missing",
+                path,
+                ..Default::default()
+            };
         };
         if !meta.file_type().is_symlink() {
-            return Status { state: "other", path, note: Some("A different program called muxin is there; Muxin leaves it alone.".into()), ..Default::default() };
+            return Status {
+                state: "other",
+                path,
+                note: Some(
+                    "A different program called muxin is there; Muxin leaves it alone.".into(),
+                ),
+                ..Default::default()
+            };
         }
         let target = std::fs::read_link(&link).ok();
         let resolved = std::fs::canonicalize(&link).ok();
         let shown = target.as_ref().map(|t| t.display().to_string());
         let ours = target.as_deref().is_some_and(is_ours);
-        let other = |note: &str, replaceable| Status { state: "other", path: path.clone(), target: shown.clone(), note: Some(note.into()), replaceable, managed: false };
+        let other = |note: &str, replaceable| Status {
+            state: "other",
+            path: path.clone(),
+            target: shown.clone(),
+            note: Some(note.into()),
+            replaceable,
+            managed: false,
+        };
         match resolved {
             Some(r) if r == exe => {
                 // The old name still runs another copy: offer to point it here too.
                 let alias = alias_of(&link);
-                let alias_elsewhere = std::fs::read_link(&alias).is_ok_and(|t| is_ours(&t)) && std::fs::canonicalize(&alias).ok().as_deref() != Some(exe);
+                let alias_elsewhere = std::fs::read_link(&alias).is_ok_and(|t| is_ours(&t))
+                    && std::fs::canonicalize(&alias).ok().as_deref() != Some(exe);
                 if alias_elsewhere {
-                    let target = std::fs::read_link(&alias).ok().map(|t| t.display().to_string());
-                    return Status { state: "other", path: alias.display().to_string(), target, note: Some("It runs another copy of Muxin.".into()), replaceable: true, managed: false };
+                    let target = std::fs::read_link(&alias)
+                        .ok()
+                        .map(|t| t.display().to_string());
+                    return Status {
+                        state: "other",
+                        path: alias.display().to_string(),
+                        target,
+                        note: Some("It runs another copy of Muxin.".into()),
+                        replaceable: true,
+                        managed: false,
+                    };
                 }
-                Status { state: "installed", path: path.clone(), target: shown.clone(), note: in_path_note(&link), ..Default::default() }
+                Status {
+                    state: "installed",
+                    path: path.clone(),
+                    target: shown.clone(),
+                    note: in_path_note(&link),
+                    ..Default::default()
+                }
             }
-            _ if !ours => other("It links to a different program called muxin; Muxin leaves it alone.", false),
-            None => other("It points to a copy of Muxin that isn't there anymore.", true),
+            _ if !ours => other(
+                "It links to a different program called muxin; Muxin leaves it alone.",
+                false,
+            ),
+            None => other(
+                "It points to a copy of Muxin that isn't there anymore.",
+                true,
+            ),
             Some(_) => other("It runs another copy of Muxin.", true),
         }
     }
@@ -164,7 +242,8 @@ mod imp {
             return None;
         }
         let dir = link.parent()?;
-        let in_path = std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d == dir));
+        let in_path =
+            std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d == dir));
         (!in_path).then(|| format!("{} isn't in your PATH yet. It usually is after you log in again; or add it in your shell's profile.", dir.display()))
     }
 
@@ -179,12 +258,28 @@ mod imp {
     pub(super) fn install_at(link: &Path, exe: &Path) -> Result<(), String> {
         refuse_others(link)?;
         let alias = alias_of(link);
-        let links: Vec<&Path> = if refuse_others(&alias).is_ok() { vec![link, &alias] } else { vec![link] };
+        let links: Vec<&Path> = if refuse_others(&alias).is_ok() {
+            vec![link, &alias]
+        } else {
+            vec![link]
+        };
         match links.iter().try_for_each(|l| link_here(l, exe)) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == ErrorKind::PermissionDenied && cfg!(target_os = "macos") => {
-                let dir = link.parent().map(|d| d.display().to_string()).unwrap_or_default();
-                let lns: Vec<String> = links.iter().map(|l| format!("ln -sfn {} {}", sh(&exe.display().to_string()), sh(&l.display().to_string()))).collect();
+                let dir = link
+                    .parent()
+                    .map(|d| d.display().to_string())
+                    .unwrap_or_default();
+                let lns: Vec<String> = links
+                    .iter()
+                    .map(|l| {
+                        format!(
+                            "ln -sfn {} {}",
+                            sh(&exe.display().to_string()),
+                            sh(&l.display().to_string())
+                        )
+                    })
+                    .collect();
                 as_admin(&format!("mkdir -p {} && {}", sh(&dir), lns.join(" && ")))
             }
             Err(e) => Err(format!("Couldn't create {}: {e}", link.display())),
@@ -202,16 +297,28 @@ mod imp {
 
     /// The link, and `muxen` beside it when that's ours too.
     pub(super) fn remove_at(link: &Path) -> Result<(), String> {
-        let ours = |l: &Path| std::fs::symlink_metadata(l).is_ok_and(|m| m.file_type().is_symlink()) && std::fs::read_link(l).is_ok_and(|t| is_ours(&t));
+        let ours = |l: &Path| {
+            std::fs::symlink_metadata(l).is_ok_and(|m| m.file_type().is_symlink())
+                && std::fs::read_link(l).is_ok_and(|t| is_ours(&t))
+        };
         if std::fs::symlink_metadata(link).is_ok() && !ours(link) {
-            return Err(format!("{} isn't a link to Muxin, so Muxin leaves it alone.", link.display()));
+            return Err(format!(
+                "{} isn't a link to Muxin, so Muxin leaves it alone.",
+                link.display()
+            ));
         }
-        let links: Vec<PathBuf> = [link.to_path_buf(), alias_of(link)].into_iter().filter(|l| ours(l)).collect();
+        let links: Vec<PathBuf> = [link.to_path_buf(), alias_of(link)]
+            .into_iter()
+            .filter(|l| ours(l))
+            .collect();
         for l in &links {
             match std::fs::remove_file(l) {
                 Ok(()) => {}
                 Err(e) if e.kind() == ErrorKind::PermissionDenied && cfg!(target_os = "macos") => {
-                    let rms: Vec<String> = links.iter().map(|l| format!("rm -f {}", sh(&l.display().to_string()))).collect();
+                    let rms: Vec<String> = links
+                        .iter()
+                        .map(|l| format!("rm -f {}", sh(&l.display().to_string())))
+                        .collect();
                     return as_admin(&rms.join(" && "));
                 }
                 Err(e) => return Err(format!("Couldn't remove {}: {e}", l.display())),
@@ -223,10 +330,14 @@ mod imp {
     /// Only ever replace a link to Muxin, never someone else's file.
     fn refuse_others(link: &Path) -> Result<(), String> {
         match std::fs::symlink_metadata(link) {
-            Ok(m) if !m.file_type().is_symlink() => Err(format!("There's already a file at {} that isn't a link to Muxin. Remove it first if you don't need it.", link.display())),
-            Ok(_) if !std::fs::read_link(link).is_ok_and(|t| is_ours(&t)) => {
-                Err(format!("{} already links to another program. Remove it first if you don't need it.", link.display()))
-            }
+            Ok(m) if !m.file_type().is_symlink() => Err(format!(
+                "There's already a file at {} that isn't a link to Muxin. Remove it first if you don't need it.",
+                link.display()
+            )),
+            Ok(_) if !std::fs::read_link(link).is_ok_and(|t| is_ours(&t)) => Err(format!(
+                "{} already links to another program. Remove it first if you don't need it.",
+                link.display()
+            )),
             _ => Ok(()),
         }
     }
@@ -243,8 +354,15 @@ mod imp {
 
     /// Runs a shell command as an administrator; macOS asks for the password.
     fn as_admin(command: &str) -> Result<(), String> {
-        let applescript = format!("do shell script \"{}\" with administrator privileges", command.replace('\\', "\\\\").replace('"', "\\\""));
-        let out = std::process::Command::new("osascript").arg("-e").arg(applescript).output().map_err(|e| format!("Couldn't ask for an administrator's password: {e}"))?;
+        let applescript = format!(
+            "do shell script \"{}\" with administrator privileges",
+            command.replace('\\', "\\\\").replace('"', "\\\"")
+        );
+        let out = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(applescript)
+            .output()
+            .map_err(|e| format!("Couldn't ask for an administrator's password: {e}"))?;
         if out.status.success() {
             return Ok(());
         }
@@ -289,37 +407,83 @@ $k.SetValue('Path', ($parts -join ';'), $kind)
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         let mut cmd = std::process::Command::new("powershell.exe");
-        cmd.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script]).creation_flags(CREATE_NO_WINDOW);
+        cmd.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ])
+        .creation_flags(CREATE_NO_WINDOW);
         for (k, v) in env {
             cmd.env(k, v);
         }
-        let out = cmd.output().map_err(|e| format!("Couldn't run PowerShell: {e}"))?;
+        let out = cmd
+            .output()
+            .map_err(|e| format!("Couldn't run PowerShell: {e}"))?;
         if !out.status.success() {
-            return Err(format!("PowerShell: {}", String::from_utf8_lossy(&out.stderr).trim()));
+            return Err(format!(
+                "PowerShell: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
         }
         Ok(String::from_utf8_lossy(&out.stdout).to_string())
     }
 
     fn dir_of(exe: &Path) -> Result<String, String> {
-        let dir = exe.parent().ok_or("Couldn't tell which folder Muxin is in.")?.display().to_string();
+        let dir = exe
+            .parent()
+            .ok_or("Couldn't tell which folder Muxin is in.")?
+            .display()
+            .to_string();
         // canonicalize gives \\?\C:\...; PATH wants C:\...
         Ok(dir.strip_prefix(r"\\?\").unwrap_or(&dir).to_string())
     }
 
     fn same(a: &str, b: &str) -> bool {
-        a.trim_end_matches('\\').eq_ignore_ascii_case(b.trim_end_matches('\\'))
+        a.trim_end_matches('\\')
+            .eq_ignore_ascii_case(b.trim_end_matches('\\'))
     }
 
     pub fn status(exe: &Path) -> Status {
         let dir = match dir_of(exe) {
             Ok(d) => d,
-            Err(e) => return Status { state: "unsupported", note: Some(e), ..Default::default() },
+            Err(e) => {
+                return Status {
+                    state: "unsupported",
+                    note: Some(e),
+                    ..Default::default()
+                };
+            }
         };
-        let target = Some(exe.display().to_string().trim_start_matches(r"\\?\").to_string());
+        let target = Some(
+            exe.display()
+                .to_string()
+                .trim_start_matches(r"\\?\")
+                .to_string(),
+        );
         match powershell(READ, &[]) {
-            Ok(path) if path.split(';').any(|p| same(p, &dir)) => Status { state: "installed", path: dir, target, note: Some("Open a new terminal to use it.".into()), ..Default::default() },
-            Ok(_) => Status { state: "missing", path: dir, target, ..Default::default() },
-            Err(e) => Status { state: "unsupported", path: dir, target, note: Some(e), ..Default::default() },
+            Ok(path) if path.split(';').any(|p| same(p, &dir)) => Status {
+                state: "installed",
+                path: dir,
+                target,
+                note: Some("Open a new terminal to use it.".into()),
+                ..Default::default()
+            },
+            Ok(_) => Status {
+                state: "missing",
+                path: dir,
+                target,
+                ..Default::default()
+            },
+            Err(e) => Status {
+                state: "unsupported",
+                path: dir,
+                target,
+                note: Some(e),
+                ..Default::default()
+            },
         }
     }
 
@@ -339,10 +503,16 @@ mod tests {
 
     #[test]
     fn knows_its_own_links() {
-        assert!(is_ours(Path::new("/Applications/Muxin.app/Contents/MacOS/muxin")));
-        assert!(is_ours(Path::new("/Applications/Muxen.app/Contents/MacOS/muxen")));
+        assert!(is_ours(Path::new(
+            "/Applications/Muxin.app/Contents/MacOS/muxin"
+        )));
+        assert!(is_ours(Path::new(
+            "/Applications/Muxen.app/Contents/MacOS/muxen"
+        )));
         assert!(is_ours(Path::new("/home/me/.cargo/bin/muxin")));
-        assert!(is_ours(Path::new("/home/me/Applications/Muxin-0.5.2-linux-x86_64.AppImage")));
+        assert!(is_ours(Path::new(
+            "/home/me/Applications/Muxin-0.5.2-linux-x86_64.AppImage"
+        )));
         assert!(!is_ours(Path::new("/usr/bin/python3")));
     }
 
@@ -360,7 +530,11 @@ mod tests {
         assert_eq!(imp::status_at(&link, &exe).state, "missing");
         imp::install_at(&link, &exe).unwrap();
         assert_eq!(imp::status_at(&link, &exe).state, "installed");
-        assert_eq!(std::fs::canonicalize(&alias).unwrap(), exe, "muxen runs it too");
+        assert_eq!(
+            std::fs::canonicalize(&alias).unwrap(),
+            exe,
+            "muxen runs it too"
+        );
         // Again: replaces its own link.
         imp::install_at(&link, &exe).unwrap();
         assert_eq!(imp::status_at(&link, &exe).state, "installed");
@@ -370,19 +544,31 @@ mod tests {
         std::fs::write(&old, "").unwrap();
         std::fs::remove_file(&link).unwrap();
         std::os::unix::fs::symlink(&old, &link).unwrap();
-        assert_eq!((imp::status_at(&link, &exe).state, imp::status_at(&link, &exe).replaceable), ("other", true));
+        assert_eq!(
+            (
+                imp::status_at(&link, &exe).state,
+                imp::status_at(&link, &exe).replaceable
+            ),
+            ("other", true)
+        );
         imp::install_at(&link, &exe).unwrap();
         assert_eq!(imp::status_at(&link, &exe).state, "installed");
         // Only the old name runs the old copy: that's "other" too, until it's replaced.
         std::fs::remove_file(&alias).unwrap();
         std::os::unix::fs::symlink(&old, &alias).unwrap();
         let s = imp::status_at(&link, &exe);
-        assert_eq!((s.state, s.replaceable, s.path), ("other", true, alias.display().to_string()));
+        assert_eq!(
+            (s.state, s.replaceable, s.path),
+            ("other", true, alias.display().to_string())
+        );
         imp::install_at(&link, &exe).unwrap();
         assert_eq!(imp::status_at(&link, &exe).state, "installed");
         imp::remove_at(&link).unwrap();
         assert_eq!(imp::status_at(&link, &exe).state, "missing");
-        assert!(std::fs::symlink_metadata(&alias).is_err(), "muxen goes with it");
+        assert!(
+            std::fs::symlink_metadata(&alias).is_err(),
+            "muxen goes with it"
+        );
 
         // Someone else's muxen: muxin goes in, muxen stays theirs.
         std::fs::write(&alias, "#!/bin/sh").unwrap();
@@ -399,7 +585,13 @@ mod tests {
         assert!(imp::remove_at(&link).is_err());
         std::fs::remove_file(&link).unwrap();
         std::os::unix::fs::symlink("/usr/bin/env", &link).unwrap();
-        assert_eq!((imp::status_at(&link, &exe).state, imp::status_at(&link, &exe).replaceable), ("other", false));
+        assert_eq!(
+            (
+                imp::status_at(&link, &exe).state,
+                imp::status_at(&link, &exe).replaceable
+            ),
+            ("other", false)
+        );
         assert!(imp::install_at(&link, &exe).is_err());
         assert!(imp::remove_at(&link).is_err());
         let _ = std::fs::remove_dir_all(&tmp);

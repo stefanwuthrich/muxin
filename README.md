@@ -16,7 +16,7 @@ Point it at the machines you own (a Mac Studio under the desk, a NUC, a Linux bo
 
 - **Agent sessions:** Claude Code, Codex, OpenCode, Gemini CLI, Amp, Pi or a shell on any machine, in a real terminal, still running after you close the app.
 - **Desktops:** see a Linux machine's screen live and use it, beside an agent's terminal or in its own window.
-- **Files and clipboard:** copy files and folders between any two machines, and copy on your Mac to paste on a machine (and back).
+- **Files and clipboard:** copy files and folders between any two machines, and copy on this computer to paste on a machine (and back).
 - **GitHub:** your inbox, repositories, issues and pull requests, with one click to hand an issue to an agent on the machine you pick.
 - **Self-hosted runners:** which runners are working, idle or offline, which jobs no runner can take, and installing, starting, stopping or removing runners.
 - **Health:** CPU, memory, disk and uptime, and a plain answer when a machine is offline or unreachable.
@@ -509,7 +509,7 @@ muxin cp beelink:~/build/app.tar.gz adibs-macbook-pro:~/Downloads
 muxin cp adibs-macbook-pro:~/Projects/site beelink:~/www --no-wait
 ```
 
-**Shared clipboard.** Text you copy on your Mac can be pasted on your Linux desktops and other Macs, and what you copy there lands on your Mac (and on the other machines). Passwords copied from password managers (marked private on the clipboard) stay on your Mac. Turn it off in Settings › Clipboard.
+**Shared clipboard.** Text you copy on this computer can be pasted on your other machines, and what you copy there lands here (and on the others). On a Mac, passwords copied from password managers (marked private on the clipboard) stay on that Mac. Turn it off in Settings › Clipboard.
 
 ## Cloud machines
 

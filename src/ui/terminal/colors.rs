@@ -31,19 +31,34 @@ impl Palette {
         let dark = theme.canvas.l < 0.5;
         let mut ansi = (if dark { DARK } else { LIGHT }).map(hex);
         // The theme's own status colors, so the terminal matches the rest of the app.
-        for (i, c) in [(1, theme.error), (2, theme.success), (3, theme.warning), (4, theme.info)] {
+        for (i, c) in [
+            (1, theme.error),
+            (2, theme.success),
+            (3, theme.warning),
+            (4, theme.info),
+        ] {
             ansi[i] = c;
             ansi[i + 8] = shift(c, if dark { 0.08 } else { -0.06 });
         }
-        Palette { fg: theme.text, bg: theme.canvas, cursor: theme.accent, selection: theme.selection, ansi }
+        Palette {
+            fg: theme.text,
+            bg: theme.canvas,
+            cursor: theme.accent,
+            selection: theme.selection,
+            ansi,
+        }
     }
 
     /// Resolves a cell color, honoring colors the program changed (OSC 4/10/11).
     pub fn resolve(&self, color: Color, overrides: &Colors) -> Hsla {
         match color {
             Color::Spec(rgb) => from_rgb(rgb),
-            Color::Indexed(i) => overrides[i as usize].map(from_rgb).unwrap_or_else(|| self.indexed(i)),
-            Color::Named(n) => overrides[n as usize].map(from_rgb).unwrap_or_else(|| self.named(n)),
+            Color::Indexed(i) => overrides[i as usize]
+                .map(from_rgb)
+                .unwrap_or_else(|| self.indexed(i)),
+            Color::Named(n) => overrides[n as usize]
+                .map(from_rgb)
+                .unwrap_or_else(|| self.named(n)),
         }
     }
 
@@ -85,7 +100,11 @@ impl Palette {
             _ => self.fg,
         };
         let r = Rgba::from(c);
-        Rgb { r: (r.r * 255.) as u8, g: (r.g * 255.) as u8, b: (r.b * 255.) as u8 }
+        Rgb {
+            r: (r.r * 255.) as u8,
+            g: (r.g * 255.) as u8,
+            b: (r.b * 255.) as u8,
+        }
     }
 }
 
@@ -94,7 +113,10 @@ pub fn dim(c: Hsla) -> Hsla {
 }
 
 fn shift(c: Hsla, by: f32) -> Hsla {
-    Hsla { l: (c.l + by).clamp(0., 1.), ..c }
+    Hsla {
+        l: (c.l + by).clamp(0., 1.),
+        ..c
+    }
 }
 
 fn hex(v: u32) -> Hsla {

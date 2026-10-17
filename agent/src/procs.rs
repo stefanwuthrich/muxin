@@ -31,19 +31,31 @@ pub fn list() -> Value {
             }
         }
         let total = procs.len();
-        procs.sort_by(|a, b| b["cpu"].as_f64().unwrap_or(0.).total_cmp(&a["cpu"].as_f64().unwrap_or(0.)).then(b["memory"].as_u64().cmp(&a["memory"].as_u64())));
+        procs.sort_by(|a, b| {
+            b["cpu"]
+                .as_f64()
+                .unwrap_or(0.)
+                .total_cmp(&a["cpu"].as_f64().unwrap_or(0.))
+                .then(b["memory"].as_u64().cmp(&a["memory"].as_u64()))
+        });
         procs.truncate(MOST);
-        let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+        let cores = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
         return json!({ "ok": true, "processes": procs, "total": total, "cores": cores, "gpus": gpus() });
     }
     #[allow(unreachable_code)]
-    let me = std::env::var("USER").or_else(|_| std::env::var("LOGNAME")).unwrap_or_default();
+    let me = std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        .unwrap_or_default();
     let gpu_mem = nvidia_apps();
     let mut procs = ps();
     let total = procs.len();
     procs.sort_by(|a, b| b.cpu.total_cmp(&a.cpu).then(b.rss.cmp(&a.rss)));
     procs.truncate(MOST);
-    let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
     let list: Vec<Value> = procs
         .iter()
         .map(|p| {
@@ -72,7 +84,11 @@ struct Proc {
 /// name (a Mac's may have spaces in its path).
 fn ps() -> Vec<Proc> {
     let mac = cfg!(target_os = "macos");
-    let fields = if mac { "pid=,ppid=,user=,pcpu=,rss=,etime=,args=" } else { "pid=,ppid=,user=,pcpu=,rss=,etimes=,args=" };
+    let fields = if mac {
+        "pid=,ppid=,user=,pcpu=,rss=,etime=,args="
+    } else {
+        "pid=,ppid=,user=,pcpu=,rss=,etimes=,args="
+    };
     let all = if mac { "-axo" } else { "-eo" };
     let names: HashMap<u32, String> = quick("ps", &[all, "pid=,comm="])
         .unwrap_or_default()
@@ -81,10 +97,17 @@ fn ps() -> Vec<Proc> {
             let l = l.trim_start();
             let (pid, comm) = l.split_once(char::is_whitespace)?;
             let comm = comm.trim();
-            Some((pid.parse().ok()?, comm.rsplit('/').next().unwrap_or(comm).to_string()))
+            Some((
+                pid.parse().ok()?,
+                comm.rsplit('/').next().unwrap_or(comm).to_string(),
+            ))
         })
         .collect();
-    quick("ps", &[all, fields]).unwrap_or_default().lines().filter_map(|l| parse_ps(l, &names, mac)).collect()
+    quick("ps", &[all, fields])
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| parse_ps(l, &names, mac))
+        .collect()
 }
 
 fn parse_ps(line: &str, names: &HashMap<u32, String>, mac: bool) -> Option<Proc> {
@@ -95,10 +118,33 @@ fn parse_ps(line: &str, names: &HashMap<u32, String>, mac: bool) -> Option<Proc>
     let cpu: f64 = it.next()?.parse().ok()?;
     let rss: u64 = it.next()?.parse().ok()?;
     let when = it.next()?;
-    let seconds = if mac { etime(when)? } else { when.parse().ok()? };
+    let seconds = if mac {
+        etime(when)?
+    } else {
+        when.parse().ok()?
+    };
     let command = it.collect::<Vec<_>>().join(" ");
-    let name = names.get(&pid).cloned().unwrap_or_else(|| command.split_whitespace().next().unwrap_or("").rsplit('/').next().unwrap_or("").trim_matches(['[', ']']).to_string());
-    Some(Proc { pid, ppid, user, cpu, rss, seconds, name, command })
+    let name = names.get(&pid).cloned().unwrap_or_else(|| {
+        command
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .rsplit('/')
+            .next()
+            .unwrap_or("")
+            .trim_matches(['[', ']'])
+            .to_string()
+    });
+    Some(Proc {
+        pid,
+        ppid,
+        user,
+        cpu,
+        rss,
+        seconds,
+        name,
+        command,
+    })
 }
 
 /// "1-02:03:04", "02:03:04", "03:04" as seconds.
@@ -107,7 +153,10 @@ fn etime(s: &str) -> Option<u64> {
         Some((d, r)) => (d.parse::<u64>().ok()?, r),
         None => (0, s),
     };
-    let parts: Vec<u64> = rest.split(':').map(|p| p.parse().ok()).collect::<Option<_>>()?;
+    let parts: Vec<u64> = rest
+        .split(':')
+        .map(|p| p.parse().ok())
+        .collect::<Option<_>>()?;
     let (h, m, sec) = match parts[..] {
         [h, m, s] => (h, m, s),
         [m, s] => (0, m, s),
@@ -118,15 +167,26 @@ fn etime(s: &str) -> Option<u64> {
 
 /// NVIDIA's processes' GPU memory, by pid (bytes).
 fn nvidia_apps() -> HashMap<u32, u64> {
-    let Some(smi) = tool("nvidia-smi") else { return HashMap::new() };
-    quick(&smi, &["--query-compute-apps=pid,used_memory", "--format=csv,noheader,nounits"])
-        .unwrap_or_default()
-        .lines()
-        .filter_map(|l| {
-            let (pid, mem) = l.split_once(',')?;
-            Some((pid.trim().parse().ok()?, mem.trim().parse::<u64>().ok()? * 1024 * 1024))
-        })
-        .collect()
+    let Some(smi) = tool("nvidia-smi") else {
+        return HashMap::new();
+    };
+    quick(
+        &smi,
+        &[
+            "--query-compute-apps=pid,used_memory",
+            "--format=csv,noheader,nounits",
+        ],
+    )
+    .unwrap_or_default()
+    .lines()
+    .filter_map(|l| {
+        let (pid, mem) = l.split_once(',')?;
+        Some((
+            pid.trim().parse().ok()?,
+            mem.trim().parse::<u64>().ok()? * 1024 * 1024,
+        ))
+    })
+    .collect()
 }
 
 /// The machine's GPUs: name, how busy (%), memory used and total (bytes),
@@ -154,7 +214,9 @@ pub fn gpus() -> Vec<Value> {
 
 /// AMD GPUs on Linux: amdgpu's counters in sysfs.
 fn amd() -> Vec<Value> {
-    let Ok(cards) = std::fs::read_dir("/sys/class/drm") else { return Vec::new() };
+    let Ok(cards) = std::fs::read_dir("/sys/class/drm") else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
     for c in cards.flatten() {
         let name = c.file_name().to_string_lossy().to_string();
@@ -162,14 +224,25 @@ fn amd() -> Vec<Value> {
             continue;
         }
         let dev = c.path().join("device");
-        let read = |f: &str| std::fs::read_to_string(dev.join(f)).ok().map(|s| s.trim().to_string());
+        let read = |f: &str| {
+            std::fs::read_to_string(dev.join(f))
+                .ok()
+                .map(|s| s.trim().to_string())
+        };
         if read("vendor").as_deref() != Some("0x1002") {
             continue;
         }
-        let Some(busy) = read("gpu_busy_percent").and_then(|b| b.parse::<f64>().ok()) else { continue };
+        let Some(busy) = read("gpu_busy_percent").and_then(|b| b.parse::<f64>().ok()) else {
+            continue;
+        };
         // Its name: lspci's, by its PCI slot ("…[Radeon 840M / 860M Graphics]").
-        let slot = read("uevent").and_then(|u| u.lines().find_map(|l| l.strip_prefix("PCI_SLOT_NAME=").map(str::to_string)));
-        let pretty = slot.and_then(|s| quick("lspci", &["-s", &s])).and_then(|l| pci_name(l.lines().next()?));
+        let slot = read("uevent").and_then(|u| {
+            u.lines()
+                .find_map(|l| l.strip_prefix("PCI_SLOT_NAME=").map(str::to_string))
+        });
+        let pretty = slot
+            .and_then(|s| quick("lspci", &["-s", &s]))
+            .and_then(|l| pci_name(l.lines().next()?));
         let num = |f: &str| read(f).and_then(|v| v.parse::<u64>().ok());
         out.push(json!({ "vendor": "amd", "name": format!("AMD {}", pretty.unwrap_or_else(|| "Radeon".into())), "busy": busy, "memory_used": num("mem_info_vram_used"), "memory_total": num("mem_info_vram_total") }));
     }
@@ -188,11 +261,26 @@ fn pci_name(line: &str) -> Option<String> {
 
 /// A Mac's GPU: how busy, and the unified memory it holds.
 fn apple() -> Vec<Value> {
-    let text = quick("ioreg", &["-r", "-d", "1", "-w", "0", "-c", "IOAccelerator"]).unwrap_or_default();
-    let num = |key: &str| text.split(&format!("\"{key}\"=")).nth(1).and_then(|r| r.split(|c: char| !c.is_ascii_digit()).next()).and_then(|n| n.parse::<u64>().ok());
-    let Some(busy) = num("Device Utilization %") else { return Vec::new() };
-    let chip = quick("sysctl", &["-n", "machdep.cpu.brand_string"]).map(|s| s.trim().to_string()).unwrap_or_else(|| "Apple".into());
-    vec![json!({ "vendor": "apple", "name": format!("{chip} GPU"), "busy": busy as f64, "memory_used": num("In use system memory"), "memory_total": Value::Null })]
+    let text = quick(
+        "ioreg",
+        &["-r", "-d", "1", "-w", "0", "-c", "IOAccelerator"],
+    )
+    .unwrap_or_default();
+    let num = |key: &str| {
+        text.split(&format!("\"{key}\"="))
+            .nth(1)
+            .and_then(|r| r.split(|c: char| !c.is_ascii_digit()).next())
+            .and_then(|n| n.parse::<u64>().ok())
+    };
+    let Some(busy) = num("Device Utilization %") else {
+        return Vec::new();
+    };
+    let chip = quick("sysctl", &["-n", "machdep.cpu.brand_string"])
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "Apple".into());
+    vec![
+        json!({ "vendor": "apple", "name": format!("{chip} GPU"), "busy": busy as f64, "memory_used": num("In use system memory"), "memory_total": Value::Null }),
+    ]
 }
 
 /// `{"op": "process_signal", "pid", "signal": "TERM"|"KILL", "password"?}`.
@@ -206,12 +294,23 @@ pub fn signal(req: &Value) -> Value {
     #[cfg(windows)]
     {
         // Windows has no polite stop for a program without a window: both end it.
-        let out = crate::sys::no_window(std::process::Command::new("taskkill").args(["/F", "/PID", &pid.to_string()])).output();
+        let out = crate::sys::no_window(std::process::Command::new("taskkill").args([
+            "/F",
+            "/PID",
+            &pid.to_string(),
+        ]))
+        .output();
         return match out {
             Ok(o) if o.status.success() => json!({ "ok": true }),
             Ok(o) => {
                 let text = String::from_utf8_lossy(&o.stderr).trim().to_string();
-                let error = if text.contains("not found") { "It has already ended.".to_string() } else if text.is_empty() { "Windows didn't end it.".to_string() } else { text };
+                let error = if text.contains("not found") {
+                    "It has already ended.".to_string()
+                } else if text.is_empty() {
+                    "Windows didn't end it.".to_string()
+                } else {
+                    text
+                };
                 json!({ "ok": false, "error": error })
             }
             Err(e) => json!({ "ok": false, "error": e.to_string() }),
@@ -233,7 +332,11 @@ fn signal_unix(req: &Value, pid: i32) -> Value {
     match std::io::Error::last_os_error().raw_os_error() {
         Some(libc::ESRCH) => json!({ "ok": false, "error": "It has already ended." }),
         // Another user's: as root.
-        Some(libc::EPERM) => match as_root("exec kill -s \"$1\" \"$2\"", &[name, &pid.to_string()], req["password"].as_str().filter(|p| !p.is_empty())) {
+        Some(libc::EPERM) => match as_root(
+            "exec kill -s \"$1\" \"$2\"",
+            &[name, &pid.to_string()],
+            req["password"].as_str().filter(|p| !p.is_empty()),
+        ) {
             Ok(()) => json!({ "ok": true }),
             Err(e) => json!({ "ok": false, "error": e }),
         },
@@ -247,12 +350,35 @@ mod tests {
 
     #[test]
     fn reads_ps() {
-        let names: HashMap<u32, String> = [(812, "node".to_string()), (90, "Google Chrome Helper".to_string())].into();
-        let p = parse_ps("  812     1 adib      12.5  204800    3600 node /srv/app/server.js --port 3000", &names, false).unwrap();
-        assert_eq!((p.pid, p.ppid, p.user.as_str(), p.cpu, p.rss, p.seconds, p.name.as_str()), (812, 1, "adib", 12.5, 204_800, 3600, "node"));
+        let names: HashMap<u32, String> = [
+            (812, "node".to_string()),
+            (90, "Google Chrome Helper".to_string()),
+        ]
+        .into();
+        let p = parse_ps(
+            "  812     1 adib      12.5  204800    3600 node /srv/app/server.js --port 3000",
+            &names,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            (
+                p.pid,
+                p.ppid,
+                p.user.as_str(),
+                p.cpu,
+                p.rss,
+                p.seconds,
+                p.name.as_str()
+            ),
+            (812, 1, "adib", 12.5, 204_800, 3600, "node")
+        );
         assert_eq!(p.command, "node /srv/app/server.js --port 3000");
         let mac = parse_ps("90 1 adib 3.0 1024 1-02:03:04 /Applications/Google Chrome.app/Contents/Frameworks/Helper --type=renderer", &names, true).unwrap();
-        assert_eq!((mac.seconds, mac.name.as_str()), (93_784, "Google Chrome Helper"));
+        assert_eq!(
+            (mac.seconds, mac.name.as_str()),
+            (93_784, "Google Chrome Helper")
+        );
         let kernel = parse_ps("2 0 root 0.0 0 99 [kthreadd]", &HashMap::new(), false).unwrap();
         assert_eq!(kernel.name, "kthreadd");
     }
@@ -260,7 +386,10 @@ mod tests {
     #[test]
     fn names_a_gpu() {
         assert_eq!(pci_name("64:00.0 Display controller: Advanced Micro Devices, Inc. [AMD/ATI] Krackan [Radeon 840M / 860M Graphics] (rev c2)").as_deref(), Some("Radeon 840M / 860M Graphics"));
-        assert_eq!(pci_name("00:02.0 VGA compatible controller: Intel Corporation Device 7d55").as_deref(), Some("Intel Corporation Device 7d55"));
+        assert_eq!(
+            pci_name("00:02.0 VGA compatible controller: Intel Corporation Device 7d55").as_deref(),
+            Some("Intel Corporation Device 7d55")
+        );
     }
 
     #[test]

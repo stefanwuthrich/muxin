@@ -60,7 +60,7 @@ These are facts about the checkout, not promises of a release.
 
 - `Cargo.toml` names the repository `https://github.com/stefanwuthrich/muxin`. Version `0.5.6`, edition 2024. The workspace members are this crate and `agent` (`muxen-agent`).
 - The Homebrew cask line in the README is still `brew install --cask lumarylabsllc/tap/muxin`. `scripts/homebrew.sh` still clones `LumaryLabsLLC/homebrew-tap`. The cask download URL points at `stefanwuthrich/muxin`.
-- Wayland clipboard writes go through GPUI 0.2.2. On GNOME a click does not update the key-press serial GPUI was sending, so the compositor drops the write. This checkout patches that crate at compile time: `.cargo/config.toml` sets `rustc-wrapper` to `scripts/ensure-gpui-patch.sh`, which copies `patches/gpui-0.2.2/.../serial.rs` into the cargo registry before `rustc` runs. That is a build fix for this tree. It is not a setting in the app.
+- A click that copies through GPUI (Connect an agent, for example) writes the Wayland clipboard with GPUI 0.2.2. On GNOME a click does not update the key-press serial GPUI was sending, so the compositor drops the write. This checkout patches that crate at compile time: `.cargo/config.toml` sets `rustc-wrapper` to `scripts/ensure-gpui-patch.sh`, which copies `patches/gpui-0.2.2/.../serial.rs` into the cargo registry before `rustc` runs. That is a build fix for this tree. It is not a setting in the app. Sharing the clipboard does not use that path on Linux: the window and `muxen-agent clip` own the X11 `CLIPBOARD` selection (GNOME Wayland bridges it) or `ext-data-control` / `wlr-data-control` when the compositor offers one.
 
 ## Related
 

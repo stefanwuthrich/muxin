@@ -5,9 +5,11 @@
 use gpui::{App, KeyBinding, Keystroke};
 
 use super::root::{
-    AddMachine, CheckNow, CommandPalette, FocusFilter, GoBack, GoForward, GoToMachine1, GoToMachine2, GoToMachine3, GoToMachine4, GoToMachine5, GoToMachine6,
-    GoToMachine7, GoToMachine8, GoToMachine9, NewSession, NextPane, OpenSettings, PreviousPane, ShowGithub, ShowJobs, ShowRun, ShowSchedules, ShowUsage, ShowOverview, ShowWorkspaces,
-    SplitDown, SplitRight, SyncGitHub, QuickOpen, ToggleActivity, ToggleSidebar,
+    AddMachine, CheckNow, CommandPalette, FocusFilter, GoBack, GoForward, GoToMachine1,
+    GoToMachine2, GoToMachine3, GoToMachine4, GoToMachine5, GoToMachine6, GoToMachine7,
+    GoToMachine8, GoToMachine9, NewSession, NextPane, OpenSettings, PreviousPane, QuickOpen,
+    ShowGithub, ShowJobs, ShowOverview, ShowRun, ShowSchedules, ShowUsage, ShowWorkspaces,
+    SplitDown, SplitRight, SyncGitHub, ToggleActivity, ToggleSidebar,
 };
 use super::theme::Appearance;
 
@@ -22,39 +24,98 @@ pub struct Shortcut {
 
 macro_rules! shortcut {
     ($id:literal, $label:literal, $default:expr, $action:expr) => {
-        Shortcut { id: $id, label: $label, default: $default, bind: |keys| KeyBinding::new(keys, $action, None) }
+        Shortcut {
+            id: $id,
+            label: $label,
+            default: $default,
+            bind: |keys| KeyBinding::new(keys, $action, None),
+        }
     };
 }
 
 /// The pages: ⌃1…⌃4 on a Mac (⌘1…⌘9 are the machines); Alt elsewhere, where
 /// Ctrl is what ⌘ is on a Mac.
 const fn page(mac: &'static str, other: &'static str) -> &'static str {
-    if cfg!(target_os = "macos") { mac } else { other }
+    if cfg!(target_os = "macos") {
+        mac
+    } else {
+        other
+    }
 }
 
 /// In the order Settings lists them.
 pub const ALL: &[Shortcut] = &[
-    shortcut!("quick-open", "Go to a machine, session or desktop", "secondary-p", QuickOpen),
-    shortcut!("commands", "Command palette", "secondary-shift-p", CommandPalette),
-    shortcut!("overview", "Overview", page("ctrl-1", "alt-1"), ShowOverview),
+    shortcut!(
+        "quick-open",
+        "Go to a machine, session or desktop",
+        "secondary-p",
+        QuickOpen
+    ),
+    shortcut!(
+        "commands",
+        "Command palette",
+        "secondary-shift-p",
+        CommandPalette
+    ),
+    shortcut!(
+        "overview",
+        "Overview",
+        page("ctrl-1", "alt-1"),
+        ShowOverview
+    ),
     shortcut!("jobs", "Jobs", page("ctrl-2", "alt-2"), ShowJobs),
-    shortcut!("workspaces", "Workspaces", page("ctrl-3", "alt-3"), ShowWorkspaces),
+    shortcut!(
+        "workspaces",
+        "Workspaces",
+        page("ctrl-3", "alt-3"),
+        ShowWorkspaces
+    ),
     shortcut!("github", "GitHub", page("ctrl-4", "alt-4"), ShowGithub),
     shortcut!("usage", "Usage", page("ctrl-5", "alt-5"), ShowUsage),
     shortcut!("run", "Run on machines", page("ctrl-6", "alt-6"), ShowRun),
-    shortcut!("schedules", "Schedules", page("ctrl-7", "alt-7"), ShowSchedules),
+    shortcut!(
+        "schedules",
+        "Schedules",
+        page("ctrl-7", "alt-7"),
+        ShowSchedules
+    ),
     shortcut!("activity", "Activity", "secondary-j", ToggleActivity),
     shortcut!("settings", "Settings", "secondary-,", OpenSettings),
     shortcut!("check", "Refresh all machines", "secondary-r", CheckNow),
     shortcut!("sync", "Sync GitHub", "secondary-shift-r", SyncGitHub),
     shortcut!("add-machine", "Add machine", "secondary-n", AddMachine),
     shortcut!("new-session", "New session", "secondary-t", NewSession),
-    shortcut!("split-right", "Split the terminal right", "secondary-d", SplitRight),
-    shortcut!("split-down", "Split the terminal down", "secondary-shift-d", SplitDown),
+    shortcut!(
+        "split-right",
+        "Split the terminal right",
+        "secondary-d",
+        SplitRight
+    ),
+    shortcut!(
+        "split-down",
+        "Split the terminal down",
+        "secondary-shift-d",
+        SplitDown
+    ),
     shortcut!("next-pane", "Next pane", "secondary-alt-right", NextPane),
-    shortcut!("previous-pane", "Previous pane", "secondary-alt-left", PreviousPane),
-    shortcut!("filter", "Search machines and sessions", "secondary-f", FocusFilter),
-    shortcut!("sidebar", "Hide or show the sidebar", "secondary-b", ToggleSidebar),
+    shortcut!(
+        "previous-pane",
+        "Previous pane",
+        "secondary-alt-left",
+        PreviousPane
+    ),
+    shortcut!(
+        "filter",
+        "Search machines and sessions",
+        "secondary-f",
+        FocusFilter
+    ),
+    shortcut!(
+        "sidebar",
+        "Hide or show the sidebar",
+        "secondary-b",
+        ToggleSidebar
+    ),
     shortcut!("back", "Back", "secondary-[", GoBack),
     shortcut!("forward", "Forward", "secondary-]", GoForward),
 ];
@@ -78,7 +139,11 @@ pub fn keys(cx: &App, id: &str) -> String {
     match a.shortcuts.get(id) {
         Some(k) => k.clone(),
         None if id == MACHINES => MACHINES_DEFAULT.into(),
-        None => ALL.iter().find(|s| s.id == id).map(|s| s.default.to_string()).unwrap_or_default(),
+        None => ALL
+            .iter()
+            .find(|s| s.id == id)
+            .map(|s| s.default.to_string())
+            .unwrap_or_default(),
     }
 }
 
@@ -106,11 +171,16 @@ pub fn machine_keys(cx: &App, n: usize) -> Option<String> {
 pub fn used_by(cx: &App, keys_: &str, except: &str) -> Option<(&'static str, String)> {
     let k = normalize(keys_)?;
     if except != MACHINES {
-        if let Some(n) = (1..=9).find(|n| machine_keys(cx, *n).and_then(|m| normalize(&m)).as_deref() == Some(k.as_str())) {
+        if let Some(n) = (1..=9).find(|n| {
+            machine_keys(cx, *n).and_then(|m| normalize(&m)).as_deref() == Some(k.as_str())
+        }) {
             return Some((MACHINES, format!("Machine {n}")));
         }
     }
-    ALL.iter().filter(|s| s.id != except).find(|s| normalize(&keys(cx, s.id)).as_deref() == Some(k.as_str())).map(|s| (s.id, s.label.to_string()))
+    ALL.iter()
+        .filter(|s| s.id != except)
+        .find(|s| normalize(&keys(cx, s.id)).as_deref() == Some(k.as_str()))
+        .map(|s| (s.id, s.label.to_string()))
 }
 
 /// Sets a shortcut's keys ("" for none), keeping only what differs from the default.
@@ -118,7 +188,11 @@ pub fn set(cx: &mut App, id: &str, keys_: &str) {
     let same = if id == MACHINES {
         modifier(keys_) == modifier(MACHINES_DEFAULT)
     } else {
-        normalize(keys_) == ALL.iter().find(|s| s.id == id).and_then(|s| normalize(s.default))
+        normalize(keys_)
+            == ALL
+                .iter()
+                .find(|s| s.id == id)
+                .and_then(|s| normalize(s.default))
     };
     super::theme::remember(cx, |a| {
         if same {
@@ -136,13 +210,19 @@ pub fn changed(cx: &App, id: &str) -> bool {
 
 /// A comparable form of a key combination ("secondary-r" and "cmd-r" are the same on a Mac).
 fn normalize(keys: &str) -> Option<String> {
-    let parts: Option<Vec<String>> = keys.split_whitespace().map(|p| Keystroke::parse(p).ok().map(|k| k.unparse())).collect();
+    let parts: Option<Vec<String>> = keys
+        .split_whitespace()
+        .map(|p| Keystroke::parse(p).ok().map(|k| k.unparse()))
+        .collect();
     parts.filter(|p| !p.is_empty()).map(|p| p.join(" "))
 }
 
 /// Every shortcut, bound as the user has them. Keys that don't parse are skipped.
 pub fn bindings(cx: &App) -> Vec<KeyBinding> {
-    let mut out: Vec<KeyBinding> = ALL.iter().filter_map(|s| normalize(&keys(cx, s.id)).map(|k| (s.bind)(&k))).collect();
+    let mut out: Vec<KeyBinding> = ALL
+        .iter()
+        .filter_map(|s| normalize(&keys(cx, s.id)).map(|k| (s.bind)(&k)))
+        .collect();
     let machines: [fn(&str) -> KeyBinding; 9] = [
         |k| KeyBinding::new(k, GoToMachine1, None),
         |k| KeyBinding::new(k, GoToMachine2, None),
@@ -165,7 +245,10 @@ pub fn bindings(cx: &App) -> Vec<KeyBinding> {
 /// Every shortcut that uses Ctrl (Linux and Windows hand these to terminals
 /// and remote desktops, where Ctrl keys mean something).
 pub fn ctrl_keys(cx: &App) -> Vec<String> {
-    let mut keys: Vec<String> = ALL.iter().filter_map(|s| normalize(&keys(cx, s.id))).collect();
+    let mut keys: Vec<String> = ALL
+        .iter()
+        .filter_map(|s| normalize(&keys(cx, s.id)))
+        .collect();
     keys.extend((1..=9).filter_map(|n| machine_keys(cx, n).and_then(|k| normalize(&k))));
     keys.retain(|k| k.split('-').any(|p| p == "ctrl"));
     keys
@@ -184,7 +267,11 @@ pub fn apply(cx: &mut App) {
 
 /// How a key combination reads: "⌥⌘1" on a Mac, "Ctrl+Alt+1" elsewhere.
 pub fn label(keys: &str) -> String {
-    keys.split_whitespace().filter_map(|p| Keystroke::parse(p).ok()).map(|k| one(&k)).collect::<Vec<_>>().join(" ")
+    keys.split_whitespace()
+        .filter_map(|p| Keystroke::parse(p).ok())
+        .map(|k| one(&k))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn one(k: &Keystroke) -> String {
@@ -203,12 +290,20 @@ fn one(k: &Keystroke) -> String {
         other if other.chars().count() == 1 => other.to_uppercase(),
         other => {
             let mut c = other.chars();
-            c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
+            c.next()
+                .map(|f| f.to_uppercase().collect::<String>() + c.as_str())
+                .unwrap_or_default()
         }
     };
     if cfg!(target_os = "macos") {
         let mut s = String::new();
-        for (on, sym) in [(m.control, "⌃"), (m.alt, "⌥"), (m.shift, "⇧"), (m.platform, "⌘"), (m.function, "fn ")] {
+        for (on, sym) in [
+            (m.control, "⌃"),
+            (m.alt, "⌥"),
+            (m.shift, "⇧"),
+            (m.platform, "⌘"),
+            (m.function, "fn "),
+        ] {
             if on {
                 s.push_str(sym);
             }
@@ -216,7 +311,13 @@ fn one(k: &Keystroke) -> String {
         s + &key
     } else {
         let mut parts: Vec<&str> = Vec::new();
-        for (on, name) in [(m.control, "Ctrl"), (m.alt, "Alt"), (m.shift, "Shift"), (m.platform, "Super"), (m.function, "Fn")] {
+        for (on, name) in [
+            (m.control, "Ctrl"),
+            (m.alt, "Alt"),
+            (m.shift, "Shift"),
+            (m.platform, "Super"),
+            (m.function, "Fn"),
+        ] {
             if on {
                 parts.push(name);
             }
@@ -235,7 +336,8 @@ pub fn label_for(cx: &App, id: &str) -> String {
 /// can't be a shortcut (no ⌘, ⌃ or ⌥, so it would type instead).
 pub fn from_press(k: &Keystroke) -> Option<String> {
     let m = &k.modifiers;
-    let function_key = k.key.len() > 1 && k.key.starts_with('f') && k.key[1..].parse::<u8>().is_ok();
+    let function_key =
+        k.key.len() > 1 && k.key.starts_with('f') && k.key[1..].parse::<u8>().is_ok();
     if !(m.platform || m.control || m.alt || function_key) || k.key.is_empty() {
         return None;
     }
@@ -256,7 +358,14 @@ mod tests {
         } else {
             assert_eq!(label("secondary-shift-r"), "Ctrl+Shift+R");
         }
-        assert_eq!(normalize("secondary-r"), normalize(if cfg!(target_os = "macos") { "cmd-r" } else { "ctrl-r" }));
+        assert_eq!(
+            normalize("secondary-r"),
+            normalize(if cfg!(target_os = "macos") {
+                "cmd-r"
+            } else {
+                "ctrl-r"
+            })
+        );
         assert_eq!(normalize(""), None);
     }
 

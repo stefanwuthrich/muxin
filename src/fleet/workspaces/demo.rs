@@ -42,7 +42,13 @@ fn demo_path(platform: &str, id: &str) -> String {
 
 /// Files a fresh checkout of `repo` gets.
 fn template(repo: Option<&str>) -> Vec<(&'static str, String)> {
-    let name = repo.map(|r| r.rsplit('/').next().unwrap_or(r).trim_end_matches(".git").to_string());
+    let name = repo.map(|r| {
+        r.rsplit('/')
+            .next()
+            .unwrap_or(r)
+            .trim_end_matches(".git")
+            .to_string()
+    });
     match name.as_deref() {
         None => Vec::new(),
         Some("api") => vec![
@@ -68,11 +74,27 @@ fn template(repo: Option<&str>) -> Vec<(&'static str, String)> {
 }
 
 fn tree_for(repo: Option<&str>, branch: &str) -> DemoTree {
-    let files: BTreeMap<String, String> = template(repo).into_iter().map(|(k, v)| (k.to_string(), v)).collect();
-    DemoTree { original: files.keys().cloned().collect(), files, changed: BTreeSet::new(), branch: branch.to_string(), git: repo.is_some() }
+    let files: BTreeMap<String, String> = template(repo)
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+    DemoTree {
+        original: files.keys().cloned().collect(),
+        files,
+        changed: BTreeSet::new(),
+        branch: branch.to_string(),
+        git: repo.is_some(),
+    }
 }
 
-fn command(cmd: &str, exit: i32, ago_secs: i64, ms: u64, tail: &[&str], by: &str) -> WorkspaceCommand {
+fn command(
+    cmd: &str,
+    exit: i32,
+    ago_secs: i64,
+    ms: u64,
+    tail: &[&str],
+    by: &str,
+) -> WorkspaceCommand {
     WorkspaceCommand {
         command: cmd.into(),
         exit_code: Some(exit),
@@ -125,8 +147,28 @@ pub(super) fn seed(world: &World) -> Vec<WorkspaceRecord> {
         last_used_at: now - chrono::Duration::minutes(4),
         commands: 4,
         history: vec![
-            command("git status", 0, 6900, 41, &["On branch fix/flaky-e2e", "nothing to commit, working tree clean"], "claude-code"),
-            command("npm ci", 0, 6840, 9120, &["added 412 packages, and audited 413 packages in 9s", "found 0 vulnerabilities"], "claude-code"),
+            command(
+                "git status",
+                0,
+                6900,
+                41,
+                &[
+                    "On branch fix/flaky-e2e",
+                    "nothing to commit, working tree clean",
+                ],
+                "claude-code",
+            ),
+            command(
+                "npm ci",
+                0,
+                6840,
+                9120,
+                &[
+                    "added 412 packages, and audited 413 packages in 9s",
+                    "found 0 vulnerabilities",
+                ],
+                "claude-code",
+            ),
             command(
                 "npm test -- e2e/checkout.spec.ts",
                 1,
@@ -145,7 +187,11 @@ pub(super) fn seed(world: &World) -> Vec<WorkspaceRecord> {
                 0,
                 250,
                 11840,
-                &[" ✓ e2e/checkout.spec.ts (12 tests) 9.42s", " Test Files  1 passed (1)", "      Tests  12 passed (12)"],
+                &[
+                    " ✓ e2e/checkout.spec.ts (12 tests) 9.42s",
+                    " Test Files  1 passed (1)",
+                    "      Tests  12 passed (12)",
+                ],
                 "claude-code",
             ),
         ],
@@ -174,13 +220,23 @@ pub(super) fn seed(world: &World) -> Vec<WorkspaceRecord> {
         last_used_at: now - chrono::Duration::hours(3),
         commands: 2,
         history: vec![
-            command("swift build", 0, 11200, 48200, &["Building for debugging...", "Build complete! (48.20s)"], "codex"),
+            command(
+                "swift build",
+                0,
+                11200,
+                48200,
+                &["Building for debugging...", "Build complete! (48.20s)"],
+                "codex",
+            ),
             command(
                 "swift test",
                 0,
                 10900,
                 31800,
-                &["Test Suite 'All tests' passed at 2026-10-07 13:22:41.118.", "\t Executed 58 tests, with 0 failures (0 unexpected) in 4.211 seconds"],
+                &[
+                    "Test Suite 'All tests' passed at 2026-10-07 13:22:41.118.",
+                    "\t Executed 58 tests, with 0 failures (0 unexpected) in 4.211 seconds",
+                ],
                 "codex",
             ),
         ],
@@ -210,8 +266,29 @@ pub(super) fn seed(world: &World) -> Vec<WorkspaceRecord> {
         commands: 3,
         history: vec![
             command("node -v", 0, 2900, 180, &["v22.11.0"], "claude-code"),
-            command("npm ci", 0, 2840, 21400, &["added 655 packages, and audited 656 packages in 21s", "found 0 vulnerabilities"], "claude-code"),
-            command("npm run build", 0, 720, 38900, &["vite v6.0.3 building for production...", "✓ 1342 modules transformed.", "✓ built in 37.62s"], "claude-code"),
+            command(
+                "npm ci",
+                0,
+                2840,
+                21400,
+                &[
+                    "added 655 packages, and audited 656 packages in 21s",
+                    "found 0 vulnerabilities",
+                ],
+                "claude-code",
+            ),
+            command(
+                "npm run build",
+                0,
+                720,
+                38900,
+                &[
+                    "vite v6.0.3 building for production...",
+                    "✓ 1342 modules transformed.",
+                    "✓ built in 37.62s",
+                ],
+                "claude-code",
+            ),
         ],
         shell: String::new(),
         isolation: "docker".into(),
@@ -239,8 +316,22 @@ pub(super) fn seed(world: &World) -> Vec<WorkspaceRecord> {
         last_used_at: now - chrono::Duration::hours(3),
         commands: 2,
         history: vec![
-            command("xcodebuild test -scheme App -destination 'platform=iOS Simulator,name=iPhone 17'", 0, 260, 96400, &["** TEST SUCCEEDED **"], "codex"),
-            command("gh pr create --fill", 0, 200, 2100, &["https://github.com/acme/ios-app/pull/77"], "codex"),
+            command(
+                "xcodebuild test -scheme App -destination 'platform=iOS Simulator,name=iPhone 17'",
+                0,
+                260,
+                96400,
+                &["** TEST SUCCEEDED **"],
+                "codex",
+            ),
+            command(
+                "gh pr create --fill",
+                0,
+                200,
+                2100,
+                &["https://github.com/acme/ios-app/pull/77"],
+                "codex",
+            ),
         ],
         shell: String::new(),
         isolation: "host".into(),
@@ -250,22 +341,62 @@ pub(super) fn seed(world: &World) -> Vec<WorkspaceRecord> {
         git: None,
     };
     vec![
-        WorkspaceRecord { info: ios, background_pids: Vec::new(), windows: false, next_log: 1, docker_socket: false },
-        WorkspaceRecord { info: api, background_pids: Vec::new(), windows: false, next_log: 1, docker_socket: false },
-        WorkspaceRecord { info: desk, background_pids: Vec::new(), windows: false, next_log: 1, docker_socket: false },
-        WorkspaceRecord { info: web, background_pids: Vec::new(), windows: false, next_log: 1, docker_socket: false },
+        WorkspaceRecord {
+            info: ios,
+            background_pids: Vec::new(),
+            windows: false,
+            next_log: 1,
+            docker_socket: false,
+        },
+        WorkspaceRecord {
+            info: api,
+            background_pids: Vec::new(),
+            windows: false,
+            next_log: 1,
+            docker_socket: false,
+        },
+        WorkspaceRecord {
+            info: desk,
+            background_pids: Vec::new(),
+            windows: false,
+            next_log: 1,
+            docker_socket: false,
+        },
+        WorkspaceRecord {
+            info: web,
+            background_pids: Vec::new(),
+            windows: false,
+            next_log: 1,
+            docker_socket: false,
+        },
     ]
 }
 
-pub(super) async fn create(engine: &Arc<Engine>, op: u64, rec: &WorkspaceRecord, repo: Option<&str>) -> Result<String, String> {
+pub(super) async fn create(
+    engine: &Arc<Engine>,
+    op: u64,
+    rec: &WorkspaceRecord,
+    repo: Option<&str>,
+) -> Result<String, String> {
     let w = engine.demo_world().cloned().ok_or("not in demo mode")?;
     let info = &rec.info;
-    engine.op_log(op, format!("▸ Creating {} on {} ({})", info.id, info.machine_name, info.host));
+    engine.op_log(
+        op,
+        format!(
+            "▸ Creating {} on {} ({})",
+            info.id, info.machine_name, info.host
+        ),
+    );
     pause(300).await;
-    w.reachable(&info.machine_id, &info.host).map_err(|e| format!("{} is unreachable: {e}", info.machine_name))?;
+    w.reachable(&info.machine_id, &info.host)
+        .map_err(|e| format!("{} is unreachable: {e}", info.machine_name))?;
     let path = demo_path(&info.platform, &info.id);
     engine.op_log(op, format!("Folder: {path}"));
-    let branch = info.branch.clone().or_else(|| info.git_ref.clone()).unwrap_or_else(|| "main".into());
+    let branch = info
+        .branch
+        .clone()
+        .or_else(|| info.git_ref.clone())
+        .unwrap_or_else(|| "main".into());
     if let Some(r) = repo {
         engine.op_log(op, format!("Cloning {r}"));
         for line in [
@@ -286,7 +417,10 @@ pub(super) async fn create(engine: &Arc<Engine>, op: u64, rec: &WorkspaceRecord,
     }
     if let (Some(image), Some(container)) = (&info.image, &info.container) {
         engine.op_log(op, format!("Pulling {image}"));
-        for line in [format!("Digest: sha256:4f6e1b2a9c0d…"), format!("Status: Downloaded newer image for {image}")] {
+        for line in [
+            format!("Digest: sha256:4f6e1b2a9c0d…"),
+            format!("Status: Downloaded newer image for {image}"),
+        ] {
             pause(250).await;
             engine.op_log(op, line);
         }
@@ -294,13 +428,23 @@ pub(super) async fn create(engine: &Arc<Engine>, op: u64, rec: &WorkspaceRecord,
         pause(300).await;
         engine.op_log(op, format!("Container {container} is running"));
     }
-    w.workspace_files.lock().unwrap().insert(info.id.clone(), tree_for(repo, &branch));
+    w.workspace_files
+        .lock()
+        .unwrap()
+        .insert(info.id.clone(), tree_for(repo, &branch));
     Ok(path)
 }
 
-pub(super) async fn exec(engine: &Arc<Engine>, rec: &WorkspaceRecord, cmd: &str, cwd: &str, background: bool) -> Result<ExecResult, String> {
+pub(super) async fn exec(
+    engine: &Arc<Engine>,
+    rec: &WorkspaceRecord,
+    cmd: &str,
+    cwd: &str,
+    background: bool,
+) -> Result<ExecResult, String> {
     let w = engine.demo_world().cloned().ok_or("not in demo mode")?;
-    w.reachable(&rec.info.machine_id, &rec.info.host).map_err(|e| format!("{} is unreachable: {e}", rec.info.machine_name))?;
+    w.reachable(&rec.info.machine_id, &rec.info.host)
+        .map_err(|e| format!("{} is unreachable: {e}", rec.info.machine_name))?;
     if background {
         let n = engine
             .update_workspaces(|list| {
@@ -314,7 +458,10 @@ pub(super) async fn exec(engine: &Arc<Engine>, rec: &WorkspaceRecord, cmd: &str,
         let log = format!(".muxen/logs/{n}.log");
         let mut files = w.workspace_files.lock().unwrap();
         let tree = files.entry(rec.info.id.clone()).or_default();
-        tree.files.insert(log.clone(), format!("$ {cmd}\n> ready on http://localhost:3000\n"));
+        tree.files.insert(
+            log.clone(),
+            format!("$ {cmd}\n> ready on http://localhost:3000\n"),
+        );
         let pid = 40_000 + (cmd.len() as u32 * 37 + n * 101) % 20_000;
         return Ok(ExecResult {
             exit_code: None,
@@ -344,9 +491,23 @@ pub(super) async fn exec(engine: &Arc<Engine>, rec: &WorkspaceRecord, cmd: &str,
 /// Canned output for the commands agents run most.
 async fn respond(w: &World, info: &WorkspaceInfo, cmd: &str, cwd: &str) -> (String, String, i32) {
     let ok = |s: &str| (s.to_string(), String::new(), 0);
-    let tree = w.workspace_files.lock().unwrap().get(&info.id).cloned().unwrap_or_default();
-    let root = if info.container.is_some() { "/workspace".to_string() } else { info.path.clone() };
-    let here = if cwd.is_empty() { root } else { format!("{root}/{cwd}") };
+    let tree = w
+        .workspace_files
+        .lock()
+        .unwrap()
+        .get(&info.id)
+        .cloned()
+        .unwrap_or_default();
+    let root = if info.container.is_some() {
+        "/workspace".to_string()
+    } else {
+        info.path.clone()
+    };
+    let here = if cwd.is_empty() {
+        root
+    } else {
+        format!("{root}/{cwd}")
+    };
     let linux = !info.platform.starts_with("darwin");
     let first = cmd.split_whitespace().next().unwrap_or("");
     match cmd {
@@ -359,7 +520,13 @@ async fn respond(w: &World, info: &WorkspaceInfo, cmd: &str, cwd: &str) -> (Stri
         "npm -v" | "npm --version" => return ok("10.9.0"),
         "cargo --version" => return ok("cargo 1.91.0 (ea2d97820 2025-10-10)"),
         "rustc --version" => return ok("rustc 1.91.0 (f8297e351 2025-10-28)"),
-        "go version" => return ok(if linux { "go version go1.25.3 linux/amd64" } else { "go version go1.25.3 darwin/arm64" }),
+        "go version" => {
+            return ok(if linux {
+                "go version go1.25.3 linux/amd64"
+            } else {
+                "go version go1.25.3 darwin/arm64"
+            });
+        }
         "python3 --version" | "python --version" => return ok("Python 3.12.3"),
         "uname" => return ok(if linux { "Linux" } else { "Darwin" }),
         "uname -a" => {
@@ -367,16 +534,29 @@ async fn respond(w: &World, info: &WorkspaceInfo, cmd: &str, cwd: &str) -> (Stri
                 "Linux beacon 6.8.0-45-generic #45-Ubuntu SMP PREEMPT_DYNAMIC x86_64 x86_64 x86_64 GNU/Linux"
             } else {
                 "Darwin forge.local 25.1.0 Darwin Kernel Version 25.1.0 arm64"
-            })
+            });
         }
-        "env" | "printenv" => return ok(&format!("HOME=/home/ci\nSHELL=/bin/bash\nMUXEN_WORKSPACE={}\nNO_COLOR=1\nPWD={here}", info.id)),
+        "env" | "printenv" => {
+            return ok(&format!(
+                "HOME=/home/ci\nSHELL=/bin/bash\nMUXEN_WORKSPACE={}\nNO_COLOR=1\nPWD={here}",
+                info.id
+            ));
+        }
         _ => {}
     }
     if first == "ls" {
         let long = cmd.contains("-l");
-        let prefix = if cwd.is_empty() { String::new() } else { format!("{cwd}/") };
+        let prefix = if cwd.is_empty() {
+            String::new()
+        } else {
+            format!("{cwd}/")
+        };
         let mut names: BTreeSet<String> = BTreeSet::new();
-        for path in tree.files.keys().filter(|p| p.starts_with(&prefix) && !p.starts_with(".muxen")) {
+        for path in tree
+            .files
+            .keys()
+            .filter(|p| p.starts_with(&prefix) && !p.starts_with(".muxen"))
+        {
             if let Some(name) = path[prefix.len()..].split('/').next() {
                 names.insert(name.to_string());
             }
@@ -386,9 +566,19 @@ async fn respond(w: &World, info: &WorkspaceInfo, cmd: &str, cwd: &str) -> (Stri
             .filter(|n| cmd.contains("-a") || !n.starts_with('.'))
             .map(|n| {
                 if long {
-                    let dir = tree.files.keys().any(|p| p.starts_with(&format!("{prefix}{n}/")));
-                    let size = tree.files.get(&format!("{prefix}{n}")).map(|c| c.len()).unwrap_or(4096);
-                    format!("{} 1 ci ci {size:>6} Oct  8 10:12 {n}", if dir { "drwxr-xr-x" } else { "-rw-r--r--" })
+                    let dir = tree
+                        .files
+                        .keys()
+                        .any(|p| p.starts_with(&format!("{prefix}{n}/")));
+                    let size = tree
+                        .files
+                        .get(&format!("{prefix}{n}"))
+                        .map(|c| c.len())
+                        .unwrap_or(4096);
+                    format!(
+                        "{} 1 ci ci {size:>6} Oct  8 10:12 {n}",
+                        if dir { "drwxr-xr-x" } else { "-rw-r--r--" }
+                    )
                 } else {
                     n.clone()
                 }
@@ -399,7 +589,11 @@ async fn respond(w: &World, info: &WorkspaceInfo, cmd: &str, cwd: &str) -> (Stri
     if let Some(rest) = cmd.strip_prefix("cat ") {
         let mut out = String::new();
         for f in rest.split_whitespace() {
-            let key = if cwd.is_empty() { f.to_string() } else { format!("{cwd}/{f}") };
+            let key = if cwd.is_empty() {
+                f.to_string()
+            } else {
+                format!("{cwd}/{f}")
+            };
             match tree.files.get(key.trim_start_matches("./")) {
                 Some(c) => out.push_str(c),
                 None => return (out, format!("cat: {f}: No such file or directory"), 1),
@@ -420,7 +614,11 @@ async fn respond(w: &World, info: &WorkspaceInfo, cmd: &str, cwd: &str) -> (Stri
     }
     if cmd.starts_with("git ") {
         if !tree.git {
-            return (String::new(), "fatal: not a git repository (or any of the parent directories): .git".into(), 128);
+            return (
+                String::new(),
+                "fatal: not a git repository (or any of the parent directories): .git".into(),
+                128,
+            );
         }
         if cmd.starts_with("git status") {
             return ok(&status_text(&tree, false));
@@ -441,21 +639,40 @@ async fn respond(w: &World, info: &WorkspaceInfo, cmd: &str, cwd: &str) -> (Stri
         }
         return ok("");
     }
-    let test = ["npm test", "npm run test", "pnpm test", "yarn test", "bun test", "npx vitest", "npx playwright test"];
+    let test = [
+        "npm test",
+        "npm run test",
+        "pnpm test",
+        "yarn test",
+        "bun test",
+        "npx vitest",
+        "npx playwright test",
+    ];
     if test.iter().any(|t| cmd.starts_with(t)) {
-        return ok(" ✓ src/routes/checkout.test.ts (9 tests) 212ms\n ✓ e2e/checkout.spec.ts (12 tests) 9.42s\n\n Test Files  2 passed (2)\n      Tests  21 passed (21)\n   Start at  10:41:07\n   Duration  10.31s");
+        return ok(
+            " ✓ src/routes/checkout.test.ts (9 tests) 212ms\n ✓ e2e/checkout.spec.ts (12 tests) 9.42s\n\n Test Files  2 passed (2)\n      Tests  21 passed (21)\n   Start at  10:41:07\n   Duration  10.31s",
+        );
     }
-    if cmd.starts_with("npm ci") || cmd.starts_with("npm install") || cmd.starts_with("pnpm install") {
-        return ok("added 412 packages, and audited 413 packages in 9s\n\n68 packages are looking for funding\n  run `npm fund` for details\n\nfound 0 vulnerabilities");
+    if cmd.starts_with("npm ci")
+        || cmd.starts_with("npm install")
+        || cmd.starts_with("pnpm install")
+    {
+        return ok(
+            "added 412 packages, and audited 413 packages in 9s\n\n68 packages are looking for funding\n  run `npm fund` for details\n\nfound 0 vulnerabilities",
+        );
     }
     if cmd.starts_with("cargo test") {
-        return ok("running 42 tests\ntest result: ok. 42 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.84s");
+        return ok(
+            "running 42 tests\ntest result: ok. 42 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.84s",
+        );
     }
     if cmd.starts_with("cargo build") {
         return (String::new(), "   Compiling acme v0.1.0\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.40s".into(), 0);
     }
     if cmd.starts_with("swift test") {
-        return ok("Test Suite 'All tests' passed.\n\t Executed 58 tests, with 0 failures (0 unexpected) in 4.211 seconds");
+        return ok(
+            "Test Suite 'All tests' passed.\n\t Executed 58 tests, with 0 failures (0 unexpected) in 4.211 seconds",
+        );
     }
     if cmd.starts_with("swift build") {
         return ok("Building for debugging...\nBuild complete! (41.07s)");
@@ -468,7 +685,14 @@ fn status_text(tree: &DemoTree, short: bool) -> String {
     if short {
         lines.push(format!("## {}", tree.branch));
         for f in &tree.changed {
-            lines.push(format!("{} {f}", if tree.original.contains(f) { " M" } else { "??" }));
+            lines.push(format!(
+                "{} {f}",
+                if tree.original.contains(f) {
+                    " M"
+                } else {
+                    "??"
+                }
+            ));
         }
         return lines.join("\n");
     }
@@ -477,8 +701,16 @@ fn status_text(tree: &DemoTree, short: bool) -> String {
         lines.push("nothing to commit, working tree clean".into());
         return lines.join("\n");
     }
-    let modified: Vec<&String> = tree.changed.iter().filter(|f| tree.original.contains(*f)).collect();
-    let untracked: Vec<&String> = tree.changed.iter().filter(|f| !tree.original.contains(*f)).collect();
+    let modified: Vec<&String> = tree
+        .changed
+        .iter()
+        .filter(|f| tree.original.contains(*f))
+        .collect();
+    let untracked: Vec<&String> = tree
+        .changed
+        .iter()
+        .filter(|f| !tree.original.contains(*f))
+        .collect();
     if !modified.is_empty() {
         lines.push("Changes not staged for commit:".into());
         lines.extend(modified.iter().map(|f| format!("\tmodified:   {f}")));
@@ -495,14 +727,26 @@ fn diff_text(tree: &DemoTree) -> String {
         .iter()
         .filter(|f| tree.original.contains(*f))
         .map(|f| {
-            let body: Vec<String> = tree.files.get(f).map(|c| c.lines().take(6).map(|l| format!("+{l}")).collect()).unwrap_or_default();
-            format!("diff --git a/{f} b/{f}\n--- a/{f}\n+++ b/{f}\n@@ -1,5 +1,6 @@\n{}", body.join("\n"))
+            let body: Vec<String> = tree
+                .files
+                .get(f)
+                .map(|c| c.lines().take(6).map(|l| format!("+{l}")).collect())
+                .unwrap_or_default();
+            format!(
+                "diff --git a/{f} b/{f}\n--- a/{f}\n+++ b/{f}\n@@ -1,5 +1,6 @@\n{}",
+                body.join("\n")
+            )
         })
         .collect::<Vec<_>>()
         .join("\n")
 }
 
-pub(super) fn read(w: &World, rec: &WorkspaceRecord, rel: &str, max: usize) -> Result<FileContent, String> {
+pub(super) fn read(
+    w: &World,
+    rec: &WorkspaceRecord,
+    rel: &str,
+    max: usize,
+) -> Result<FileContent, String> {
     let files = w.workspace_files.lock().unwrap();
     let tree = files.get(&rec.info.id).cloned().unwrap_or_default();
     match tree.files.get(rel) {
@@ -511,12 +755,20 @@ pub(super) fn read(w: &World, rec: &WorkspaceRecord, rel: &str, max: usize) -> R
             let cut = bytes[..bytes.len().min(max)].to_vec();
             Ok(file_content(rel.to_string(), cut, bytes.len() as u64, max))
         }
-        None if tree.files.keys().any(|p| p.starts_with(&format!("{rel}/"))) => Err(format!("{rel} is a folder")),
+        None if tree.files.keys().any(|p| p.starts_with(&format!("{rel}/"))) => {
+            Err(format!("{rel} is a folder"))
+        }
         None => Err(format!("File {rel} not found in the workspace.")),
     }
 }
 
-pub(super) fn write(w: &World, rec: &WorkspaceRecord, rel: &str, content: &str, append: bool) -> u64 {
+pub(super) fn write(
+    w: &World,
+    rec: &WorkspaceRecord,
+    rel: &str,
+    content: &str,
+    append: bool,
+) -> u64 {
     let mut files = w.workspace_files.lock().unwrap();
     let tree = files.entry(rec.info.id.clone()).or_default();
     let entry = tree.files.entry(rel.to_string()).or_default();
@@ -530,15 +782,28 @@ pub(super) fn write(w: &World, rec: &WorkspaceRecord, rel: &str, content: &str, 
     size
 }
 
-pub(super) fn list(w: &World, rec: &WorkspaceRecord, rel: &str, depth: u32) -> Result<Vec<FileEntry>, String> {
+pub(super) fn list(
+    w: &World,
+    rec: &WorkspaceRecord,
+    rel: &str,
+    depth: u32,
+) -> Result<Vec<FileEntry>, String> {
     let files = w.workspace_files.lock().unwrap();
     let tree = files.get(&rec.info.id).cloned().unwrap_or_default();
-    let prefix = if rel.is_empty() { String::new() } else { format!("{rel}/") };
+    let prefix = if rel.is_empty() {
+        String::new()
+    } else {
+        format!("{rel}/")
+    };
     if !rel.is_empty() && !tree.files.keys().any(|p| p.starts_with(&prefix)) {
         return Err(format!("Folder {rel} not found in the workspace."));
     }
     let mut entries: BTreeMap<String, FileEntry> = BTreeMap::new();
-    for (path, content) in tree.files.iter().filter(|(p, _)| p.starts_with(&prefix) && !p.starts_with(".muxen")) {
+    for (path, content) in tree
+        .files
+        .iter()
+        .filter(|(p, _)| p.starts_with(&prefix) && !p.starts_with(".muxen"))
+    {
         let parts: Vec<&str> = path[prefix.len()..].split('/').collect();
         for i in 0..parts.len().min(depth as usize) {
             let sub = format!("{prefix}{}", parts[..=i].join("/"));
@@ -559,14 +824,30 @@ pub(super) fn changes(w: &World, rec: &WorkspaceRecord) -> String {
     if !tree.git {
         return "This workspace isn't a git checkout, so there's nothing to diff.".into();
     }
-    format!("## git status\n{}\n\n## git diff\n{}", status_text(&tree, true), diff_text(&tree))
+    format!(
+        "## git status\n{}\n\n## git diff\n{}",
+        status_text(&tree, true),
+        diff_text(&tree)
+    )
 }
 
-pub(super) async fn destroy(engine: &Arc<Engine>, op: u64, rec: &WorkspaceRecord, keep: bool) -> Result<(), String> {
+pub(super) async fn destroy(
+    engine: &Arc<Engine>,
+    op: u64,
+    rec: &WorkspaceRecord,
+    keep: bool,
+) -> Result<(), String> {
     let w = engine.demo_world().cloned().ok_or("not in demo mode")?;
-    engine.op_log(op, format!("▸ Cleaning up on {} ({})", rec.info.machine_name, rec.info.host));
+    engine.op_log(
+        op,
+        format!(
+            "▸ Cleaning up on {} ({})",
+            rec.info.machine_name, rec.info.host
+        ),
+    );
     pause(300).await;
-    w.reachable(&rec.info.machine_id, &rec.info.host).map_err(|e| format!("{} is unreachable: {e}", rec.info.machine_name))?;
+    w.reachable(&rec.info.machine_id, &rec.info.host)
+        .map_err(|e| format!("{} is unreachable: {e}", rec.info.machine_name))?;
     for pid in &rec.background_pids {
         engine.op_log(op, format!("Stopped background process {pid}"));
     }
@@ -579,11 +860,22 @@ pub(super) async fn destroy(engine: &Arc<Engine>, op: u64, rec: &WorkspaceRecord
     Ok(())
 }
 
-pub(super) async fn sync(rec: &WorkspaceRecord, local: &Path, direction: SyncDirection, delete: bool) -> String {
+pub(super) async fn sync(
+    rec: &WorkspaceRecord,
+    local: &Path,
+    direction: SyncDirection,
+    delete: bool,
+) -> String {
     pause(600).await;
     let (from, to) = match direction {
-        SyncDirection::Push => (local.display().to_string(), format!("{}:{}", rec.info.host, rec.info.path)),
-        SyncDirection::Pull => (format!("{}:{}", rec.info.host, rec.info.path), local.display().to_string()),
+        SyncDirection::Push => (
+            local.display().to_string(),
+            format!("{}:{}", rec.info.host, rec.info.path),
+        ),
+        SyncDirection::Pull => (
+            format!("{}:{}", rec.info.host, rec.info.path),
+            local.display().to_string(),
+        ),
     };
     format!(
         "(demo) {from}/ → {to}/{}\nNumber of files: 214 (reg: 187, dir: 27)\nNumber of regular files transferred: 12\nTotal file size: 2.31M bytes\nTotal transferred file size: 48.20K bytes\nsent 51.02K bytes  received 1.18K bytes  34.80K bytes/sec",

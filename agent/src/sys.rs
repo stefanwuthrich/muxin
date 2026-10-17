@@ -91,7 +91,10 @@ pub fn own_group(cmd: &mut Command) -> &mut Command {
 pub fn kill_tree(pid: u32, gently: bool) {
     #[cfg(unix)]
     unsafe {
-        libc::kill(-(pid as i32), if gently { libc::SIGTERM } else { libc::SIGKILL });
+        libc::kill(
+            -(pid as i32),
+            if gently { libc::SIGTERM } else { libc::SIGKILL },
+        );
     }
     #[cfg(windows)]
     {
@@ -108,7 +111,10 @@ pub fn kill_tree(pid: u32, gently: bool) {
 pub fn kill_one(pid: u32, gently: bool) {
     #[cfg(unix)]
     unsafe {
-        libc::kill(pid as i32, if gently { libc::SIGTERM } else { libc::SIGKILL });
+        libc::kill(
+            pid as i32,
+            if gently { libc::SIGTERM } else { libc::SIGKILL },
+        );
     }
     #[cfg(windows)]
     {
@@ -130,9 +136,16 @@ pub fn spawn_background(args: &[&str], log: PathBuf) -> io::Result<()> {
     #[cfg(unix)]
     {
         use std::process::Stdio;
-        let log = std::fs::OpenOptions::new().create(true).append(true).open(log)?;
+        let log = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log)?;
         let mut cmd = Command::new(exe);
-        cmd.args(args).stdin(Stdio::null()).stdout(log.try_clone()?).stderr(log).current_dir(home);
+        cmd.args(args)
+            .stdin(Stdio::null())
+            .stdout(log.try_clone()?)
+            .stderr(log)
+            .current_dir(home);
         own_group(&mut cmd).spawn().map(|_| ())
     }
     #[cfg(windows)]
@@ -156,19 +169,34 @@ pub fn spawn_background(args: &[&str], log: PathBuf) -> io::Result<()> {
             return Ok(());
         }
         let quote = |s: &str| s.replace('\'', "''");
-        let line = std::iter::once(format!("\"{}\"", exe.display())).chain(args.iter().map(|a| a.to_string())).collect::<Vec<_>>().join(" ");
+        let line = std::iter::once(format!("\"{}\"", exe.display()))
+            .chain(args.iter().map(|a| a.to_string()))
+            .collect::<Vec<_>>()
+            .join(" ");
         // Hidden (ShowWindow 0), should this be a desktop session.
         let script = format!(
             "$startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{{ ShowWindow = [uint16]0 }}; $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{{ CommandLine = '{}'; CurrentDirectory = '{}'; ProcessStartupInformation = $startup }}; exit $r.ReturnValue",
             quote(&line),
             quote(&home.display().to_string())
         );
-        let status = no_window(Command::new("powershell").args(["-NoProfile", "-NonInteractive", "-Command", &script]))
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()?;
-        if status.success() { Ok(()) } else { Err(io::Error::other(format!("Windows didn't start it ({:?})", status.code()))) }
+        let status = no_window(Command::new("powershell").args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            &script,
+        ]))
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(io::Error::other(format!(
+                "Windows didn't start it ({:?})",
+                status.code()
+            )))
+        }
     }
 }
 
@@ -189,8 +217,13 @@ pub fn connect() -> io::Result<Stream> {
     {
         use std::io::Write;
         let text = std::fs::read_to_string(port_file())?;
-        let (port, token) = text.trim().split_once(' ').ok_or_else(|| io::Error::other("agent.port is damaged"))?;
-        let port: u16 = port.parse().map_err(|_| io::Error::other("agent.port is damaged"))?;
+        let (port, token) = text
+            .trim()
+            .split_once(' ')
+            .ok_or_else(|| io::Error::other("agent.port is damaged"))?;
+        let port: u16 = port
+            .parse()
+            .map_err(|_| io::Error::other("agent.port is damaged"))?;
         let mut s = Stream::connect(("127.0.0.1", port))?;
         s.write_all(format!("{token}\n").as_bytes())?;
         Ok(s)
@@ -230,7 +263,9 @@ impl Listener {
             let inner = std::net::TcpListener::bind(("127.0.0.1", 0))?;
             let port = inner.local_addr()?.port();
             let mut bytes = [0u8; 24];
-            ring::rand::SystemRandom::new().fill(&mut bytes).map_err(|_| io::Error::other("no randomness"))?;
+            ring::rand::SystemRandom::new()
+                .fill(&mut bytes)
+                .map_err(|_| io::Error::other("no randomness"))?;
             let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
             let tmp = port_file().with_extension(format!("port.{}", std::process::id()));
             std::fs::write(&tmp, format!("{port} {token}"))?;

@@ -4,9 +4,9 @@
 use std::fmt::Write;
 
 use crate::api::{
-    ActionResponse, AddMachineResponse, ApiError, CommandOut, FileOut, FilesOut, JobOut, JobsResponse, MachineDetail,
-    MachineSummary, RunnerOut, ScopesResponse, SettingsOut, StatusResponse, WorkspaceCreated, WorkspaceOut,
-    WorkspacesResponse,
+    ActionResponse, AddMachineResponse, ApiError, CommandOut, FileOut, FilesOut, JobOut,
+    JobsResponse, MachineDetail, MachineSummary, RunnerOut, ScopesResponse, SettingsOut,
+    StatusResponse, WorkspaceCreated, WorkspaceOut, WorkspacesResponse,
 };
 use crate::util;
 
@@ -22,7 +22,14 @@ pub fn status(s: &StatusResponse) -> String {
     } else {
         "not watching any org".to_string()
     };
-    let _ = writeln!(out, "GitHub: {gh}{}", g.login.as_ref().map(|l| format!(" (as {l})")).unwrap_or_default());
+    let _ = writeln!(
+        out,
+        "GitHub: {gh}{}",
+        g.login
+            .as_ref()
+            .map(|l| format!(" (as {l})"))
+            .unwrap_or_default()
+    );
     if let Some(h) = &g.hint {
         let _ = writeln!(out, "  hint: {h}");
     }
@@ -50,7 +57,8 @@ pub fn status(s: &StatusResponse) -> String {
 
 pub fn machines(list: &[MachineSummary]) -> String {
     if list.is_empty() {
-        return "No machines. Add one with `muxin add-machine --name <name> --host <ssh-host>`.\n".into();
+        return "No machines. Add one with `muxin add-machine --name <name> --host <ssh-host>`.\n"
+            .into();
     }
     let rows: Vec<Vec<String>> = list
         .iter()
@@ -60,8 +68,12 @@ pub fn machines(list: &[MachineSummary]) -> String {
                 m.status.clone(),
                 dash(&m.platform),
                 m.runners.clone(),
-                m.cpu_pct.map(|v| format!("{v:.0}%")).unwrap_or_else(|| "—".into()),
-                m.mem_pct.map(|v| format!("{v:.0}%")).unwrap_or_else(|| "—".into()),
+                m.cpu_pct
+                    .map(|v| format!("{v:.0}%"))
+                    .unwrap_or_else(|| "—".into()),
+                m.mem_pct
+                    .map(|v| format!("{v:.0}%"))
+                    .unwrap_or_else(|| "—".into()),
                 m.disk_free.clone().unwrap_or_else(|| "—".into()),
                 m.uptime.clone().unwrap_or_else(|| "—".into()),
                 match (m.problems, m.worst.as_deref()) {
@@ -72,7 +84,20 @@ pub fn machines(list: &[MachineSummary]) -> String {
             ]
         })
         .collect();
-    table(&["MACHINE", "STATUS", "PLATFORM", "RUNNERS", "CPU", "MEM", "DISK FREE", "UPTIME", "HEALTH"], &rows)
+    table(
+        &[
+            "MACHINE",
+            "STATUS",
+            "PLATFORM",
+            "RUNNERS",
+            "CPU",
+            "MEM",
+            "DISK FREE",
+            "UPTIME",
+            "HEALTH",
+        ],
+        &rows,
+    )
 }
 
 pub fn machine(m: &MachineDetail) -> String {
@@ -82,9 +107,16 @@ pub fn machine(m: &MachineDetail) -> String {
     let _ = writeln!(
         out,
         "{}  ·  {}{}",
-        if s.host.is_empty() { "no host" } else { &s.host },
+        if s.host.is_empty() {
+            "no host"
+        } else {
+            &s.host
+        },
         dash(&s.platform),
-        m.os_version.as_ref().map(|v| format!("  ·  {v}")).unwrap_or_default()
+        m.os_version
+            .as_ref()
+            .map(|v| format!("  ·  {v}"))
+            .unwrap_or_default()
     );
     match (&s.unreachable, &s.error) {
         (Some(u), _) => {
@@ -106,8 +138,12 @@ pub fn machine(m: &MachineDetail) -> String {
         let _ = writeln!(
             out,
             "cpu {}  mem {}  disk free {}  up {}",
-            s.cpu_pct.map(|v| format!("{v:.0}%")).unwrap_or_else(|| "—".into()),
-            s.mem_pct.map(|v| format!("{v:.0}%")).unwrap_or_else(|| "—".into()),
+            s.cpu_pct
+                .map(|v| format!("{v:.0}%"))
+                .unwrap_or_else(|| "—".into()),
+            s.mem_pct
+                .map(|v| format!("{v:.0}%"))
+                .unwrap_or_else(|| "—".into()),
             s.disk_free.clone().unwrap_or_else(|| "—".into()),
             s.uptime.clone().unwrap_or_else(|| "—".into())
         );
@@ -115,7 +151,11 @@ pub fn machine(m: &MachineDetail) -> String {
     out.push('\n');
     out.push_str(&runners(&m.runners));
     // Being unreachable is explained above.
-    let diags: Vec<_> = m.diagnostics.iter().filter(|d| d.code != "unreachable" || s.unreachable.is_none()).collect();
+    let diags: Vec<_> = m
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != "unreachable" || s.unreachable.is_none())
+        .collect();
     if !diags.is_empty() {
         let _ = writeln!(out, "\nDiagnostics:");
         for d in diags {
@@ -131,7 +171,13 @@ pub fn machine(m: &MachineDetail) -> String {
 pub fn added_machine(r: &AddMachineResponse) -> String {
     let mut out = format!("Added {}", r.machine_id);
     if let Some(m) = &r.machine {
-        let _ = write!(out, ": {}  {}  {}", m.summary.status, dash(&m.summary.platform), m.summary.runners);
+        let _ = write!(
+            out,
+            ": {}  {}  {}",
+            m.summary.status,
+            dash(&m.summary.platform),
+            m.summary.runners
+        );
         match (&m.summary.unreachable, &m.summary.error) {
             (Some(u), _) => {
                 let _ = write!(out, "\n  {}. {}", u.title, u.detail);
@@ -166,11 +212,17 @@ pub fn runners(list: &[RunnerOut]) -> String {
                 },
                 r.version.clone().unwrap_or_else(|| "—".into()),
                 r.service_state.clone().unwrap_or_else(|| "—".into()),
-                r.job.as_ref().map(|j| format!("{} ({})", j.name, j.repo)).unwrap_or_default(),
+                r.job
+                    .as_ref()
+                    .map(|j| format!("{} ({})", j.name, j.repo))
+                    .unwrap_or_default(),
             ]
         })
         .collect();
-    table(&["RUNNER", "STATE", "SOURCE", "VERSION", "SERVICE", "JOB"], &rows)
+    table(
+        &["RUNNER", "STATE", "SOURCE", "VERSION", "SERVICE", "JOB"],
+        &rows,
+    )
 }
 
 pub fn jobs(j: &JobsResponse) -> String {
@@ -185,7 +237,11 @@ pub fn jobs(j: &JobsResponse) -> String {
             job.repo,
             job.workflow,
             job.labels.join(", "),
-            if running { format!("running {age}") } else { format!("waiting {age}") },
+            if running {
+                format!("running {age}")
+            } else {
+                format!("waiting {age}")
+            },
             match (&job.runner_id, running) {
                 (Some(r), true) => format!(" on {r}"),
                 (_, false) if job.matching_online == 0 => " — no online runner matches".into(),
@@ -207,10 +263,18 @@ pub fn jobs(j: &JobsResponse) -> String {
 
 pub fn cloud_usage(u: &crate::cloud::usage::CloudUsage) -> String {
     let mut out = String::new();
-    let _ = writeln!(out, "Now ${:.3}/h · this month ${:.2} · by the month's end ${:.2} if kept", u.hourly_now, u.this_month, u.month_if_kept);
+    let _ = writeln!(
+        out,
+        "Now ${:.3}/h · this month ${:.2} · by the month's end ${:.2} if kept",
+        u.hourly_now, u.this_month, u.month_if_kept
+    );
     match (&u.account, &u.account_error) {
         (Some(b), _) => {
-            let _ = writeln!(out, "DigitalOcean bill this month: ${:.2} (balance ${:.2})", b.month_to_date_usage, b.month_to_date_balance);
+            let _ = writeln!(
+                out,
+                "DigitalOcean bill this month: ${:.2} (balance ${:.2})",
+                b.month_to_date_usage, b.month_to_date_balance
+            );
         }
         (None, Some(e)) => {
             let _ = writeln!(out, "DigitalOcean bill: {e}");
@@ -218,7 +282,11 @@ pub fn cloud_usage(u: &crate::cloud::usage::CloudUsage) -> String {
         _ => {}
     }
     if !u.machines.is_empty() {
-        let _ = writeln!(out, "\n{:<20} {:<10} {:<6} {:<16} {:>9} {:>7} {:>11} {:>10}", "MACHINE", "POWER", "REGION", "SIZE", "RATE", "CAP", "THIS MONTH", "SINCE NEW");
+        let _ = writeln!(
+            out,
+            "\n{:<20} {:<10} {:<6} {:<16} {:>9} {:>7} {:>11} {:>10}",
+            "MACHINE", "POWER", "REGION", "SIZE", "RATE", "CAP", "THIS MONTH", "SINCE NEW"
+        );
         for m in &u.machines {
             let _ = writeln!(
                 out,
@@ -253,17 +321,30 @@ pub fn schedules(list: &Vec<crate::fleet::schedules::MachineSchedules>) -> Strin
         }
         for s in &m.schedules {
             let what = match s.what.kind.as_str() {
-                "agent" => format!("{}: {}", s.what.agent.clone().unwrap_or_default(), s.what.prompt.clone().unwrap_or_default()),
+                "agent" => format!(
+                    "{}: {}",
+                    s.what.agent.clone().unwrap_or_default(),
+                    s.what.prompt.clone().unwrap_or_default()
+                ),
                 _ => s.what.command.clone().unwrap_or_default(),
             };
             let last = match &s.last_run {
                 _ if s.running => "running now".to_string(),
                 Some(r) if r.ok => format!("last ok {}", ago_secs(r.started)),
-                Some(r) => format!("last failed {}{}", ago_secs(r.started), r.exit_code.map(|c| format!(" (exit {c})")).unwrap_or_default()),
+                Some(r) => format!(
+                    "last failed {}{}",
+                    ago_secs(r.started),
+                    r.exit_code
+                        .map(|c| format!(" (exit {c})"))
+                        .unwrap_or_default()
+                ),
                 None => "not run yet".to_string(),
             };
             let off = if s.enabled { "" } else { " (off)" };
-            out.push_str(&format!("  {:<10} {:<22} {:<24} {last}{off}\n    {what}\n", s.id, s.name, s.when_text));
+            out.push_str(&format!(
+                "  {:<10} {:<22} {:<24} {last}{off}\n    {what}\n",
+                s.id, s.name, s.when_text
+            ));
         }
     }
     if out.is_empty() {
@@ -278,9 +359,20 @@ pub fn schedule_log(l: &crate::fleet::schedules::ScheduleLog) -> String {
         let how = match (&r.session, r.ok) {
             (Some(s), _) => format!("started session {s}"),
             (None, true) => "ok".into(),
-            (None, false) => r.error.clone().unwrap_or_else(|| format!("failed{}", r.exit_code.map(|c| format!(" (exit {c})")).unwrap_or_default())),
+            (None, false) => r.error.clone().unwrap_or_else(|| {
+                format!(
+                    "failed{}",
+                    r.exit_code
+                        .map(|c| format!(" (exit {c})"))
+                        .unwrap_or_default()
+                )
+            }),
         };
-        out.push_str(&format!("{}  {how}{}\n", ago_secs(r.started), r.seconds.map(|s| format!(" in {s}s")).unwrap_or_default()));
+        out.push_str(&format!(
+            "{}  {how}{}\n",
+            ago_secs(r.started),
+            r.seconds.map(|s| format!(" in {s}s")).unwrap_or_default()
+        ));
     }
     if !l.output.is_empty() {
         out.push_str("\n── newest run ──\n");
@@ -304,14 +396,23 @@ fn ago_secs(t: i64) -> String {
 pub fn vm_options(o: &crate::ops::vm::VmOptions) -> String {
     let mut out = String::from("Machines:\n");
     for h in &o.hosts {
-        let can = if h.systems.is_empty() { h.reason.clone().unwrap_or_else(|| "can't run VMs".into()) } else if h.systems.iter().any(|s| s.starts_with("windows")) { "Windows and Linux".into() } else { "Linux".into() };
+        let can = if h.systems.is_empty() {
+            h.reason.clone().unwrap_or_else(|| "can't run VMs".into())
+        } else if h.systems.iter().any(|s| s.starts_with("windows")) {
+            "Windows and Linux".into()
+        } else {
+            "Linux".into()
+        };
         out.push_str(&format!("  {:<20} {can}\n", h.machine_id));
     }
     out.push_str("Systems:\n");
     for s in &o.systems {
         out.push_str(&format!("  {:<22} {}\n", s.id, s.name));
     }
-    out.push_str(&format!("Defaults: {} CPUs, {} GB memory, {} GB disk (Windows)\n", o.default_cpus, o.default_memory_gb, o.default_disk_gb));
+    out.push_str(&format!(
+        "Defaults: {} CPUs, {} GB memory, {} GB disk (Windows)\n",
+        o.default_cpus, o.default_memory_gb, o.default_disk_gb
+    ));
     out
 }
 
@@ -331,7 +432,15 @@ pub fn cloud_options(o: &crate::cloud::CloudOptions) -> String {
         out.push_str(&format!("  {e}\n"));
     }
     if !o.regions.is_empty() {
-        out.push_str(&format!("Regions: {} (default {})\n", o.regions.iter().map(|r| r.slug.as_str()).collect::<Vec<_>>().join(", "), o.default_region));
+        out.push_str(&format!(
+            "Regions: {} (default {})\n",
+            o.regions
+                .iter()
+                .map(|r| r.slug.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
+            o.default_region
+        ));
     }
     if !o.sizes.is_empty() {
         out.push_str("Sizes:\n");
@@ -362,7 +471,12 @@ pub fn action(r: &ActionResponse) -> String {
             let _ = writeln!(out, "… {} is still running (operation {})", o.title, o.id);
         }
         _ => {
-            let _ = writeln!(out, "✖ {} failed: {}", o.title, o.error.clone().unwrap_or_default());
+            let _ = writeln!(
+                out,
+                "✖ {} failed: {}",
+                o.title,
+                o.error.clone().unwrap_or_default()
+            );
         }
     }
     // The log already streamed to stderr while we waited; logs are the exception people want on stdout.
@@ -395,8 +509,20 @@ pub fn scopes(r: &ScopesResponse) -> String {
             let _ = writeln!(out, "  hint: {h}");
         }
     }
-    let watching: Vec<String> = r.watching.iter().map(|w| format!("{} ({})", w.name, w.runners)).collect();
-    let _ = writeln!(out, "Watching: {}", if watching.is_empty() { "nothing".into() } else { watching.join(", ") });
+    let watching: Vec<String> = r
+        .watching
+        .iter()
+        .map(|w| format!("{} ({})", w.name, w.runners))
+        .collect();
+    let _ = writeln!(
+        out,
+        "Watching: {}",
+        if watching.is_empty() {
+            "nothing".into()
+        } else {
+            watching.join(", ")
+        }
+    );
     out
 }
 
@@ -407,7 +533,11 @@ pub fn settings(s: &SettingsOut) -> String {
         dash(&s.github_repos.join(", ")),
         s.github_poll_seconds,
         s.scan_repos,
-        if s.check_interval_minutes == 0 { "off".to_string() } else { format!("{}m", s.check_interval_minutes) },
+        if s.check_interval_minutes == 0 {
+            "off".to_string()
+        } else {
+            format!("{}m", s.check_interval_minutes)
+        },
         s.api_url,
         s.config_dir,
         s.inventory
@@ -417,7 +547,9 @@ pub fn settings(s: &SettingsOut) -> String {
 pub fn workspaces(r: &WorkspacesResponse) -> String {
     let mut out = format!("{}\n", r.summary);
     if r.workspaces.is_empty() {
-        out.push_str("Create one with `muxin workspace create [--machine <id>] [--repo owner/repo]`.\n");
+        out.push_str(
+            "Create one with `muxin workspace create [--machine <id>] [--repo owner/repo]`.\n",
+        );
         return out;
     }
     out.push('\n');
@@ -430,18 +562,37 @@ pub fn workspaces(r: &WorkspacesResponse) -> String {
                 w.name.clone(),
                 w.status.clone(),
                 w.machine_id.clone(),
-                w.repo.clone().map(|r| match w.branch.as_ref().or(w.git_ref.as_ref()) {
-                    Some(at) => format!("{r}@{at}"),
-                    None => r,
-                }).unwrap_or_else(|| "—".into()),
-                w.git.as_ref().map(|g| g.short()).unwrap_or_else(|| "—".into()),
+                w.repo
+                    .clone()
+                    .map(|r| match w.branch.as_ref().or(w.git_ref.as_ref()) {
+                        Some(at) => format!("{r}@{at}"),
+                        None => r,
+                    })
+                    .unwrap_or_else(|| "—".into()),
+                w.git
+                    .as_ref()
+                    .map(|g| g.short())
+                    .unwrap_or_else(|| "—".into()),
                 w.owner.clone().unwrap_or_else(|| "—".into()),
                 format!("{}", w.commands),
                 ago(w.last_used_at),
             ]
         })
         .collect();
-    out.push_str(&table(&["WORKSPACE", "NAME", "STATUS", "MACHINE", "REPO", "GIT", "OWNER", "CMDS", "USED"], &rows));
+    out.push_str(&table(
+        &[
+            "WORKSPACE",
+            "NAME",
+            "STATUS",
+            "MACHINE",
+            "REPO",
+            "GIT",
+            "OWNER",
+            "CMDS",
+            "USED",
+        ],
+        &rows,
+    ));
     out
 }
 
@@ -456,9 +607,21 @@ pub fn workspace_created(r: &WorkspaceCreated) -> String {
 pub fn workspace(w: &WorkspaceOut) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "{} ({})  {}", w.name, w.id, w.status);
-    let _ = writeln!(out, "{} ({})  ·  {}  ·  {}", w.machine_name, w.machine_id, dash(&w.platform), w.path);
+    let _ = writeln!(
+        out,
+        "{} ({})  ·  {}  ·  {}",
+        w.machine_name,
+        w.machine_id,
+        dash(&w.platform),
+        w.path
+    );
     if let Some(repo) = &w.repo {
-        let at = w.branch.as_ref().or(w.git_ref.as_ref()).map(|r| format!(" @ {r}")).unwrap_or_default();
+        let at = w
+            .branch
+            .as_ref()
+            .or(w.git_ref.as_ref())
+            .map(|r| format!(" @ {r}"))
+            .unwrap_or_default();
         let _ = writeln!(out, "repo {repo}{at}");
     }
     let _ = writeln!(
@@ -494,14 +657,21 @@ fn exit_mark(c: &CommandOut) -> String {
 
 pub fn file(f: &FileOut) -> String {
     if f.binary {
-        return format!("{} is a binary file ({} bytes); not shown.\n", f.path, f.size);
+        return format!(
+            "{} is a binary file ({} bytes); not shown.\n",
+            f.path, f.size
+        );
     }
     let mut out = f.content.clone();
     if f.truncated {
         if !out.ends_with('\n') {
             out.push('\n');
         }
-        out.push_str(&format!("[truncated: {} of {} bytes shown]\n", f.content.len(), f.size));
+        out.push_str(&format!(
+            "[truncated: {} of {} bytes shown]\n",
+            f.content.len(),
+            f.size
+        ));
     }
     out
 }
@@ -513,14 +683,31 @@ pub fn files(f: &FilesOut) -> String {
     let rows: Vec<Vec<String>> = f
         .entries
         .iter()
-        .map(|e| vec![if e.kind == "dir" { format!("{}/", e.path) } else { e.path.clone() }, if e.kind == "file" { util::bytes(e.size) } else { e.kind.clone() }])
+        .map(|e| {
+            vec![
+                if e.kind == "dir" {
+                    format!("{}/", e.path)
+                } else {
+                    e.path.clone()
+                },
+                if e.kind == "file" {
+                    util::bytes(e.size)
+                } else {
+                    e.kind.clone()
+                },
+            ]
+        })
         .collect();
     table(&["PATH", "SIZE"], &rows)
 }
 
 fn ago(t: chrono::DateTime<chrono::Utc>) -> String {
     let secs = (chrono::Utc::now() - t).num_seconds().max(0) as u64;
-    if secs < 10 { "just now".into() } else { format!("{} ago", util::short_duration(secs)) }
+    if secs < 10 {
+        "just now".into()
+    } else {
+        format!("{} ago", util::short_duration(secs))
+    }
 }
 
 pub fn error(e: &ApiError) -> String {
@@ -532,7 +719,11 @@ pub fn error(e: &ApiError) -> String {
 }
 
 fn dash(s: &str) -> String {
-    if s.is_empty() { "—".into() } else { s.to_string() }
+    if s.is_empty() {
+        "—".into()
+    } else {
+        s.to_string()
+    }
 }
 
 fn table(headers: &[&str], rows: &[Vec<String>]) -> String {
@@ -543,7 +734,11 @@ fn table(headers: &[&str], rows: &[Vec<String>]) -> String {
         }
     }
     let fmt = |cells: Vec<String>| -> String {
-        let line: Vec<String> = cells.iter().enumerate().map(|(i, c)| format!("{c:<w$}", w = widths[i])).collect();
+        let line: Vec<String> = cells
+            .iter()
+            .enumerate()
+            .map(|(i, c)| format!("{c:<w$}", w = widths[i]))
+            .collect();
         format!("{}\n", line.join("  ").trim_end())
     };
     let mut out = fmt(headers.iter().map(|h| h.to_string()).collect());
@@ -563,14 +758,32 @@ pub fn sessions(r: &crate::api::SessionsOut) -> String {
             .iter()
             .map(|s| {
                 let state = match (s.status.as_str(), s.busy) {
-                    ("exited", _) => format!("exited ({})", s.exit_code.map(|c| c.to_string()).unwrap_or_else(|| "?".into())),
+                    ("exited", _) => format!(
+                        "exited ({})",
+                        s.exit_code
+                            .map(|c| c.to_string())
+                            .unwrap_or_else(|| "?".into())
+                    ),
                     (_, true) => "working".into(),
                     _ => "idle".into(),
                 };
-                vec![s.id.clone(), s.agent_name.clone(), state, s.cwd.clone(), s.git.as_ref().map(|g| g.short()).unwrap_or_else(|| "—".into()), s.created_at.map(ago).unwrap_or_else(|| "—".into())]
+                vec![
+                    s.id.clone(),
+                    s.agent_name.clone(),
+                    state,
+                    s.cwd.clone(),
+                    s.git
+                        .as_ref()
+                        .map(|g| g.short())
+                        .unwrap_or_else(|| "—".into()),
+                    s.created_at.map(ago).unwrap_or_else(|| "—".into()),
+                ]
             })
             .collect();
-        out.push_str(&table(&["SESSION", "AGENT", "STATE", "FOLDER", "GIT", "STARTED"], &rows));
+        out.push_str(&table(
+            &["SESSION", "AGENT", "STATE", "FOLDER", "GIT", "STARTED"],
+            &rows,
+        ));
     }
     out.push('\n');
     for m in &r.machines {
@@ -596,18 +809,34 @@ fn item_rows(items: &[crate::github::hub::Item]) -> Vec<Vec<String>> {
     items
         .iter()
         .map(|i| {
-            let kind = if i.pull_request { if i.draft { "draft PR" } else { "PR" } } else { "issue" };
-            vec![format!("{}#{}", i.repo, i.number), kind.into(), i.title.clone(), ago(i.updated_at)]
+            let kind = if i.pull_request {
+                if i.draft { "draft PR" } else { "PR" }
+            } else {
+                "issue"
+            };
+            vec![
+                format!("{}#{}", i.repo, i.number),
+                kind.into(),
+                i.title.clone(),
+                ago(i.updated_at),
+            ]
         })
         .collect()
 }
 
 pub fn github_inbox(r: &crate::github::hub::Inbox) -> String {
     let mut out = format!("Signed in as {}\n", r.viewer.login);
-    for (title, items) in [("Waiting for your review", &r.review_requests), ("Assigned to you", &r.assigned), ("Your pull requests", &r.authored)] {
+    for (title, items) in [
+        ("Waiting for your review", &r.review_requests),
+        ("Assigned to you", &r.assigned),
+        ("Your pull requests", &r.authored),
+    ] {
         out.push_str(&format!("\n{title} ({})\n", items.len()));
         if !items.is_empty() {
-            out.push_str(&table(&["ITEM", "KIND", "TITLE", "UPDATED"], &item_rows(items)));
+            out.push_str(&table(
+                &["ITEM", "KIND", "TITLE", "UPDATED"],
+                &item_rows(items),
+            ));
         }
     }
     out
@@ -618,8 +847,16 @@ pub fn github_repos(r: &[crate::github::hub::Repo]) -> String {
         .iter()
         .map(|x| {
             vec![
-                if x.favorite { format!("★ {}", x.full_name) } else { x.full_name.clone() },
-                if x.private { "private".into() } else { "public".into() },
+                if x.favorite {
+                    format!("★ {}", x.full_name)
+                } else {
+                    x.full_name.clone()
+                },
+                if x.private {
+                    "private".into()
+                } else {
+                    "public".into()
+                },
                 x.open_issues.to_string(),
                 x.pushed_at.map(ago).unwrap_or_else(|| "—".into()),
             ]
@@ -630,7 +867,11 @@ pub fn github_repos(r: &[crate::github::hub::Repo]) -> String {
 
 pub fn github_accounts(a: &crate::api::AccountsOut) -> String {
     let mut out = match (&a.using, a.token_source.as_str()) {
-        (Some(l), "gh") => match a.machines.iter().find(|m| Some(&m.machine_id) == a.machine_id.as_ref()) {
+        (Some(l), "gh") => match a
+            .machines
+            .iter()
+            .find(|m| Some(&m.machine_id) == a.machine_id.as_ref())
+        {
             Some(m) => format!("Muxin uses {l} (the GitHub CLI login on {}).\n", m.machine),
             None => format!("Muxin uses {l}.\n"),
         },
@@ -642,11 +883,18 @@ pub fn github_accounts(a: &crate::api::AccountsOut) -> String {
             .accounts
             .iter()
             .map(|x| {
-                let using = a.machine_id.is_none() && a.using.as_deref().is_some_and(|u| u.eq_ignore_ascii_case(&x.login));
+                let using = a.machine_id.is_none()
+                    && a.using
+                        .as_deref()
+                        .is_some_and(|u| u.eq_ignore_ascii_case(&x.login));
                 vec![
                     format!("{} {}", if using { "*" } else { " " }, x.login),
                     if x.gh_active { "yes".into() } else { "".into() },
-                    if x.ok { "ok".into() } else { "needs `gh auth login`".into() },
+                    if x.ok {
+                        "ok".into()
+                    } else {
+                        "needs `gh auth login`".into()
+                    },
                 ]
             })
             .collect();
@@ -659,7 +907,11 @@ pub fn github_accounts(a: &crate::api::AccountsOut) -> String {
             .iter()
             .map(|m| {
                 let using = a.machine_id.as_deref() == Some(m.machine_id.as_str());
-                vec![format!("{} {}", if using { "*" } else { " " }, m.login), m.machine.clone(), m.machine_id.clone()]
+                vec![
+                    format!("{} {}", if using { "*" } else { " " }, m.login),
+                    m.machine.clone(),
+                    m.machine_id.clone(),
+                ]
             })
             .collect();
         out.push_str("\nOn your machines\n");
@@ -675,15 +927,31 @@ pub fn github_favorites(f: &crate::api::FavoritesOut) -> String {
     if f.favorites.is_empty() {
         return "No favorite repositories.\n".into();
     }
-    format!("Favorites:\n{}", f.favorites.iter().map(|r| format!("  ★ {r}\n")).collect::<String>())
+    format!(
+        "Favorites:\n{}",
+        f.favorites
+            .iter()
+            .map(|r| format!("  ★ {r}\n"))
+            .collect::<String>()
+    )
 }
 
 pub fn github_repo(r: &crate::api::RepoOut) -> String {
-    let mut out = format!("{} · {}\n", r.repo.full_name, r.repo.description.clone().unwrap_or_default());
+    let mut out = format!(
+        "{} · {}\n",
+        r.repo.full_name,
+        r.repo.description.clone().unwrap_or_default()
+    );
     out.push_str(&format!("\nIssues ({})\n", r.issues.len()));
-    out.push_str(&table(&["ITEM", "KIND", "TITLE", "UPDATED"], &item_rows(&r.issues)));
+    out.push_str(&table(
+        &["ITEM", "KIND", "TITLE", "UPDATED"],
+        &item_rows(&r.issues),
+    ));
     out.push_str(&format!("\nPull requests ({})\n", r.pulls.len()));
-    out.push_str(&table(&["ITEM", "KIND", "TITLE", "UPDATED"], &item_rows(&r.pulls)));
+    out.push_str(&table(
+        &["ITEM", "KIND", "TITLE", "UPDATED"],
+        &item_rows(&r.pulls),
+    ));
     if !r.checkouts.is_empty() {
         out.push_str("\nOn your machines\n");
         out.push_str(&checkouts(&r.checkouts));
@@ -693,15 +961,41 @@ pub fn github_repo(r: &crate::api::RepoOut) -> String {
 
 pub fn github_item(d: &crate::github::hub::Detail) -> String {
     let i = &d.item;
-    let mut out = format!("{}#{} {}\n{} · {} · by {}\n{}\n\n{}\n", i.repo, i.number, i.title, if i.pull_request { "pull request" } else { "issue" }, i.state, i.author, i.html_url, d.body.trim());
+    let mut out = format!(
+        "{}#{} {}\n{} · {} · by {}\n{}\n\n{}\n",
+        i.repo,
+        i.number,
+        i.title,
+        if i.pull_request {
+            "pull request"
+        } else {
+            "issue"
+        },
+        i.state,
+        i.author,
+        i.html_url,
+        d.body.trim()
+    );
     if let Some(p) = &d.pull {
         out.push_str(&format!(
             "\n{} → {} · +{} −{} in {} files · checks: {} passed, {} failed, {} pending\n",
-            p.head, p.base, p.additions, p.deletions, p.changed_files, p.checks.passed, p.checks.failed, p.checks.pending
+            p.head,
+            p.base,
+            p.additions,
+            p.deletions,
+            p.changed_files,
+            p.checks.passed,
+            p.checks.failed,
+            p.checks.pending
         ));
     }
     for c in &d.comments {
-        out.push_str(&format!("\n— {} ({}):\n{}\n", c.author, ago(c.created_at), c.body.trim()));
+        out.push_str(&format!(
+            "\n— {} ({}):\n{}\n",
+            c.author,
+            ago(c.created_at),
+            c.body.trim()
+        ));
     }
     out
 }
@@ -730,7 +1024,10 @@ pub fn connection(c: &crate::fleet::connection::Connection) -> String {
         out.push_str(&format!("  note            {n}\n"));
     }
     if !c.direct {
-        out.push_str(&format!("\nConnect directly with `muxin connection {} --direct on`.\n", c.machine_id));
+        out.push_str(&format!(
+            "\nConnect directly with `muxin connection {} --direct on`.\n",
+            c.machine_id
+        ));
     }
     out
 }
@@ -744,11 +1041,26 @@ pub fn git_setup(g: &crate::api::GitSetupOut) -> String {
         _ => "not set: commits will fail".into(),
     };
     let push = match g.push.as_str() {
-        "gh" => format!("through the GitHub CLI (@{})", g.gh_account.clone().unwrap_or_default()),
-        "other" => format!("through {} (may or may not have a GitHub login)", g.setup.helpers.iter().chain(g.setup.ssh_keys.iter()).cloned().collect::<Vec<_>>().join(", ")),
+        "gh" => format!(
+            "through the GitHub CLI (@{})",
+            g.gh_account.clone().unwrap_or_default()
+        ),
+        "other" => format!(
+            "through {} (may or may not have a GitHub login)",
+            g.setup
+                .helpers
+                .iter()
+                .chain(g.setup.ssh_keys.iter())
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         _ => "no GitHub login: pushes will fail".into(),
     };
-    let mut out = format!("git {version} on {}\n  commits as  {identity}\n  pushes      {push}\n", g.machine_id);
+    let mut out = format!(
+        "git {version} on {}\n  commits as  {identity}\n  pushes      {push}\n",
+        g.machine_id
+    );
     let mut fixes = Vec::new();
     if !g.can_commit {
         let who = match (&g.suggested_name, &g.suggested_email) {
@@ -760,11 +1072,17 @@ pub fn git_setup(g: &crate::api::GitSetupOut) -> String {
     if g.push != "gh" {
         fixes.push(match &g.gh_account {
             Some(_) => format!("muxin git setup {} --credentials", g.machine_id),
-            None => format!("sign in to gh on {} (gh auth login), then: muxin git setup {} --credentials", g.machine_id, g.machine_id),
+            None => format!(
+                "sign in to gh on {} (gh auth login), then: muxin git setup {} --credentials",
+                g.machine_id, g.machine_id
+            ),
         });
     }
     if !fixes.is_empty() {
-        out.push_str(&format!("\nTo fix:\n{}", fixes.iter().map(|f| format!("  {f}\n")).collect::<String>()));
+        out.push_str(&format!(
+            "\nTo fix:\n{}",
+            fixes.iter().map(|f| format!("  {f}\n")).collect::<String>()
+        ));
     }
     out
 }
@@ -784,12 +1102,30 @@ pub fn checkouts(r: &[crate::fleet::model::Checkout]) -> String {
                 c.path.clone(),
                 c.repo.clone().unwrap_or_else(|| "—".into()),
                 c.branch.clone(),
-                if c.upstream.is_some() { sync } else { "no upstream".into() },
-                if c.dirty == 0 { "clean".into() } else { format!("{} changed", c.dirty) },
+                if c.upstream.is_some() {
+                    sync
+                } else {
+                    "no upstream".into()
+                },
+                if c.dirty == 0 {
+                    "clean".into()
+                } else {
+                    format!("{} changed", c.dirty)
+                },
             ]
         })
         .collect();
-    table(&["MACHINE", "FOLDER", "REPOSITORY", "BRANCH", "SYNC", "CHANGES"], &rows)
+    table(
+        &[
+            "MACHINE",
+            "FOLDER",
+            "REPOSITORY",
+            "BRANCH",
+            "SYNC",
+            "CHANGES",
+        ],
+        &rows,
+    )
 }
 
 pub fn listing(l: &crate::fleet::files::Listing) -> String {
@@ -806,8 +1142,22 @@ pub fn listing(l: &crate::fleet::files::Listing) -> String {
         .entries
         .iter()
         .map(|e| {
-            let name = if e.folder { format!("{}/", e.name) } else if e.kind == "link" { format!("{}@", e.name) } else { e.name.clone() };
-            let modified = e.modified.and_then(|t| chrono::DateTime::from_timestamp(t, 0)).map(|t| t.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M").to_string()).unwrap_or_default();
+            let name = if e.folder {
+                format!("{}/", e.name)
+            } else if e.kind == "link" {
+                format!("{}@", e.name)
+            } else {
+                e.name.clone()
+            };
+            let modified = e
+                .modified
+                .and_then(|t| chrono::DateTime::from_timestamp(t, 0))
+                .map(|t| {
+                    t.with_timezone(&chrono::Local)
+                        .format("%Y-%m-%d %H:%M")
+                        .to_string()
+                })
+                .unwrap_or_default();
             vec![name, e.size.map(util::bytes).unwrap_or_default(), modified]
         })
         .collect();
@@ -835,7 +1185,10 @@ pub fn copied(r: &crate::api::CopyFilesResponse) -> String {
 pub fn log_sources(s: &crate::fleet::logs::LogSources) -> String {
     use crate::fleet::logs::LogSource;
     let mut out = String::new();
-    let mut section = |title: &str, list: &[LogSource], note: &Option<String>, flag: &dyn Fn(&LogSource) -> String| {
+    let mut section = |title: &str,
+                       list: &[LogSource],
+                       note: &Option<String>,
+                       flag: &dyn Fn(&LogSource) -> String| {
         if list.is_empty() && note.is_none() {
             return;
         }
@@ -851,17 +1204,32 @@ pub fn log_sources(s: &crate::fleet::logs::LogSources) -> String {
             out.push_str(&format!("  {:<44} {detail}\n", flag(x)));
         }
     };
-    section("System", &s.system, &s.system_note, &|x| if x.kind == "kernel" { "--kernel".into() } else { "(default)".into() });
-    section("Files", &s.files, &None, &|x| format!("--file {}", x.detail));
-    section("Containers", &s.docker, &s.docker_note, &|x| format!("--container {}", x.name));
-    section("Services", &s.services, &s.services_note, &|x| format!("--unit {}{}", x.name, if x.user { " --user" } else { "" }));
+    section("System", &s.system, &s.system_note, &|x| {
+        if x.kind == "kernel" {
+            "--kernel".into()
+        } else {
+            "(default)".into()
+        }
+    });
+    section("Files", &s.files, &None, &|x| {
+        format!("--file {}", x.detail)
+    });
+    section("Containers", &s.docker, &s.docker_note, &|x| {
+        format!("--container {}", x.name)
+    });
+    section("Services", &s.services, &s.services_note, &|x| {
+        format!("--unit {}{}", x.name, if x.user { " --user" } else { "" })
+    });
     out
 }
 
 /// A machine's services and containers, failed first.
 pub fn services(l: &crate::fleet::services::ServiceList) -> String {
     let mut out = String::new();
-    for (title, list, note) in [("Services", &l.services, &l.services_note), ("Containers", &l.containers, &l.containers_note)] {
+    for (title, list, note) in [
+        ("Services", &l.services, &l.services_note),
+        ("Containers", &l.containers, &l.containers_note),
+    ] {
         if list.is_empty() && note.is_none() {
             continue;
         }
@@ -870,13 +1238,24 @@ pub fn services(l: &crate::fleet::services::ServiceList) -> String {
             out.push_str(&format!("  ({n})\n"));
         }
         for s in list {
-            let state = if s.kind == "docker" { s.status.clone() } else { s.state.clone() };
+            let state = if s.kind == "docker" {
+                s.status.clone()
+            } else {
+                s.state.clone()
+            };
             let boot = match s.at_boot.as_str() {
                 "enabled" => " · at boot",
                 _ => "",
             };
-            let yours = if s.user && s.kind == "service" { " (yours)" } else { "" };
-            out.push_str(&format!("  {:<36} {:<24} {}{boot}{yours}\n", s.name, state, s.detail));
+            let yours = if s.user && s.kind == "service" {
+                " (yours)"
+            } else {
+                ""
+            };
+            out.push_str(&format!(
+                "  {:<36} {:<24} {}{boot}{yours}\n",
+                s.name, state, s.detail
+            ));
         }
     }
     out
@@ -889,11 +1268,18 @@ pub fn ports(list: &[crate::fleet::ports::ListeningPort]) -> String {
     }
     let mut out = String::new();
     for p in list {
-        let what = [Some(p.name()), p.container.clone().filter(|c| Some(c) != p.title.as_ref()).map(|c| format!("container {c}")), (!p.process.is_empty() && p.title.is_some()).then(|| p.process.clone())]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join(" · ");
+        let what = [
+            Some(p.name()),
+            p.container
+                .clone()
+                .filter(|c| Some(c) != p.title.as_ref())
+                .map(|c| format!("container {c}")),
+            (!p.process.is_empty() && p.title.is_some()).then(|| p.process.clone()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" · ");
         let web = match p.status {
             Some(s) if p.web => format!("http {s}"),
             _ => String::new(),
@@ -916,26 +1302,53 @@ pub fn usage(u: &crate::api::UsageOut) -> String {
     if u.models.is_empty() {
         return format!("No agent use in the last {} days.\n", u.days);
     }
-    let mut out = format!("Last {} days: ${:.2} at API prices ({})\n\n", u.days, u.total_cost, u.prices_as_of);
-    out.push_str(&format!("  {:<24} {:<12} {:>9} {:>9} {:>11} {:>10}\n", "model", "agent", "requests", "output", "all tokens", "cost"));
+    let mut out = format!(
+        "Last {} days: ${:.2} at API prices ({})\n\n",
+        u.days, u.total_cost, u.prices_as_of
+    );
+    out.push_str(&format!(
+        "  {:<24} {:<12} {:>9} {:>9} {:>11} {:>10}\n",
+        "model", "agent", "requests", "output", "all tokens", "cost"
+    ));
     for m in &u.models {
         let agent = match m.tool.as_str() {
             "claude" => "Claude Code",
             "codex" => "Codex",
             t => t,
         };
-        let cost = m.cost.map(|c| format!("${c:.2}")).unwrap_or_else(|| "no price".into());
-        out.push_str(&format!("  {:<24} {:<12} {:>9} {:>9} {:>11} {:>10}\n", m.model, agent, m.tokens.requests, short(m.tokens.output), short(m.tokens.total()), cost));
+        let cost = m
+            .cost
+            .map(|c| format!("${c:.2}"))
+            .unwrap_or_else(|| "no price".into());
+        out.push_str(&format!(
+            "  {:<24} {:<12} {:>9} {:>9} {:>11} {:>10}\n",
+            m.model,
+            agent,
+            m.tokens.requests,
+            short(m.tokens.output),
+            short(m.tokens.total()),
+            cost
+        ));
     }
     for e in &u.errors {
-        out.push_str(&format!("\n  {}: {}\n", e["machine_id"].as_str().unwrap_or(""), e["error"].as_str().unwrap_or("")));
+        out.push_str(&format!(
+            "\n  {}: {}\n",
+            e["machine_id"].as_str().unwrap_or(""),
+            e["error"].as_str().unwrap_or("")
+        ));
     }
     out
 }
 
 /// A machine's GPUs, then its busiest processes.
 pub fn processes(l: &crate::fleet::procs::ProcessList, n: usize) -> String {
-    let mb = |b: u64| if b >= 1 << 30 { format!("{:.1} GB", b as f64 / (1u64 << 30) as f64) } else { format!("{} MB", b >> 20) };
+    let mb = |b: u64| {
+        if b >= 1 << 30 {
+            format!("{:.1} GB", b as f64 / (1u64 << 30) as f64)
+        } else {
+            format!("{} MB", b >> 20)
+        }
+    };
     let mut out = String::new();
     for g in &l.gpus {
         let mem = match (g.memory_used, g.memory_total) {
@@ -943,15 +1356,29 @@ pub fn processes(l: &crate::fleet::procs::ProcessList, n: usize) -> String {
             (Some(u), None) => format!("{} in use", mb(u)),
             _ => String::new(),
         };
-        out.push_str(&format!("GPU  {}  {:.0}% busy  {mem}\n", g.name, g.busy.unwrap_or(0.)));
+        out.push_str(&format!(
+            "GPU  {}  {:.0}% busy  {mem}\n",
+            g.name,
+            g.busy.unwrap_or(0.)
+        ));
     }
     if !l.gpus.is_empty() {
         out.push('\n');
     }
-    out.push_str(&format!("  {:>7} {:<10} {:>7} {:>9}  {}\n", "pid", "user", "cpu", "memory", "command"));
+    out.push_str(&format!(
+        "  {:>7} {:<10} {:>7} {:>9}  {}\n",
+        "pid", "user", "cpu", "memory", "command"
+    ));
     for p in l.processes.iter().take(n) {
         let cmd: String = p.command.chars().take(80).collect();
-        out.push_str(&format!("  {:>7} {:<10} {:>6.1}% {:>9}  {}\n", p.pid, p.user.chars().take(10).collect::<String>(), p.cpu, mb(p.memory), cmd));
+        out.push_str(&format!(
+            "  {:>7} {:<10} {:>6.1}% {:>9}  {}\n",
+            p.pid,
+            p.user.chars().take(10).collect::<String>(),
+            p.cpu,
+            mb(p.memory),
+            cmd
+        ));
     }
     out.push_str(&format!("\n{} processes, {} cores.\n", l.total, l.cores));
     out

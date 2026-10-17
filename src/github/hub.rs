@@ -360,7 +360,14 @@ fn item(repo: &str, raw: RawIssue) -> Item {
         state: raw.state,
         author: raw.user.map(|u| u.login).unwrap_or_default(),
         assignees: raw.assignees.into_iter().map(|u| u.login).collect(),
-        labels: raw.labels.into_iter().map(|l| Label { name: l.name, color: l.color }).collect(),
+        labels: raw
+            .labels
+            .into_iter()
+            .map(|l| Label {
+                name: l.name,
+                color: l.color,
+            })
+            .collect(),
         comments: raw.comments,
         created_at: raw.created_at,
         updated_at: raw.updated_at,
@@ -408,7 +415,11 @@ pub fn repo_name(input: &str) -> Option<String> {
     };
     let mut parts = path.split('/').filter(|p| !p.is_empty());
     let (owner, name) = (parts.next()?, parts.next()?);
-    let ok = |p: &str| !p.is_empty() && p.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c));
+    let ok = |p: &str| {
+        !p.is_empty()
+            && p.chars()
+                .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
+    };
     (ok(owner) && ok(name)).then(|| format!("{owner}/{name}"))
 }
 
@@ -421,7 +432,9 @@ pub fn issue_ref(input: &str) -> Option<(String, u64)> {
     let tail = s.split("github.com/").nth(1)?;
     let parts: Vec<&str> = tail.split('/').collect();
     match parts.as_slice() {
-        [owner, name, "issues" | "pull", num, ..] => Some((format!("{owner}/{name}"), num.parse().ok()?)),
+        [owner, name, "issues" | "pull", num, ..] => {
+            Some((format!("{owner}/{name}"), num.parse().ok()?))
+        }
         _ => None,
     }
 }
@@ -429,17 +442,36 @@ pub fn issue_ref(input: &str) -> Option<(String, u64)> {
 impl Client {
     /// A name and private email to commit as `login`: their profile name and
     /// GitHub's noreply address (commits still count as theirs).
-    pub async fn commit_identity(&self, settings: &GitHubSettings, login: &str) -> Result<(String, String), String> {
+    pub async fn commit_identity(
+        &self,
+        settings: &GitHubSettings,
+        login: &str,
+    ) -> Result<(String, String), String> {
         self.configure(settings);
-        let u: RawUser = self.get(&format!("/users/{login}")).await.map_err(|e| e.message)?;
-        let name = u.name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| u.login.clone());
-        Ok((name, format!("{}+{}@users.noreply.github.com", u.id, u.login)))
+        let u: RawUser = self
+            .get(&format!("/users/{login}"))
+            .await
+            .map_err(|e| e.message)?;
+        let name = u
+            .name
+            .filter(|n| !n.trim().is_empty())
+            .unwrap_or_else(|| u.login.clone());
+        Ok((
+            name,
+            format!("{}+{}@users.noreply.github.com", u.id, u.login),
+        ))
     }
 
     pub async fn viewer(&self, settings: &GitHubSettings) -> Result<Viewer, String> {
         self.configure(settings);
         let u: RawUser = self.get("/user").await.map_err(|e| e.message)?;
-        Ok(Viewer { html_url: u.html_url.unwrap_or_else(|| format!("https://github.com/{}", u.login)), login: u.login, name: u.name })
+        Ok(Viewer {
+            html_url: u
+                .html_url
+                .unwrap_or_else(|| format!("https://github.com/{}", u.login)),
+            login: u.login,
+            name: u.name,
+        })
     }
 
     /// Repositories you own, collaborate on, or reach through an org, most recently pushed first.
@@ -454,7 +486,10 @@ impl Client {
 
     pub async fn repo(&self, settings: &GitHubSettings, full_name: &str) -> Result<Repo, String> {
         self.configure(settings);
-        let raw: RawRepo = self.get(&format!("/repos/{full_name}")).await.map_err(|e| e.message)?;
+        let raw: RawRepo = self
+            .get(&format!("/repos/{full_name}"))
+            .await
+            .map_err(|e| e.message)?;
         Ok(repo(raw))
     }
 
@@ -463,8 +498,13 @@ impl Client {
         self.configure(settings);
         let viewer = self.viewer(settings).await?;
         let search = |q: &'static str| async move {
-            let path = format!("/search/issues?q={}&sort=updated&order=desc&per_page=40", q.replace(' ', "+"));
-            self.get::<RawSearch>(&path).await.map(|r| r.items.into_iter().map(|i| item("", i)).collect::<Vec<_>>())
+            let path = format!(
+                "/search/issues?q={}&sort=updated&order=desc&per_page=40",
+                q.replace(' ', "+")
+            );
+            self.get::<RawSearch>(&path)
+                .await
+                .map(|r| r.items.into_iter().map(|i| item("", i)).collect::<Vec<_>>())
         };
         let (reviews, assigned, authored) = futures::join!(
             search("is:open is:pr review-requested:@me archived:false"),
@@ -480,38 +520,79 @@ impl Client {
     }
 
     /// Open issues and pull requests, most recently updated first.
-    pub async fn repo_items(&self, settings: &GitHubSettings, full_name: &str) -> Result<RepoItems, String> {
+    pub async fn repo_items(
+        &self,
+        settings: &GitHubSettings,
+        full_name: &str,
+    ) -> Result<RepoItems, String> {
         self.configure(settings);
         let pages: Vec<Vec<RawIssue>> = self
-            .get_all(&format!("/repos/{full_name}/issues?state=open&sort=updated&per_page=100"), 3)
+            .get_all(
+                &format!("/repos/{full_name}/issues?state=open&sort=updated&per_page=100"),
+                3,
+            )
             .await
             .map_err(|e| e.message)?;
-        let (pulls, issues): (Vec<Item>, Vec<Item>) = pages.into_iter().flatten().map(|i| item(full_name, i)).partition(|i| i.pull_request);
+        let (pulls, issues): (Vec<Item>, Vec<Item>) = pages
+            .into_iter()
+            .flatten()
+            .map(|i| item(full_name, i))
+            .partition(|i| i.pull_request);
         Ok(RepoItems { issues, pulls })
     }
 
     /// An issue or pull request with its conversation (and for pull requests,
     /// branches, size, checks and reviews).
-    pub async fn detail(&self, settings: &GitHubSettings, full_name: &str, number: u64) -> Result<Detail, String> {
+    pub async fn detail(
+        &self,
+        settings: &GitHubSettings,
+        full_name: &str,
+        number: u64,
+    ) -> Result<Detail, String> {
         self.configure(settings);
-        let raw: RawIssue = self.get(&format!("/repos/{full_name}/issues/{number}")).await.map_err(|e| e.message)?;
+        let raw: RawIssue = self
+            .get(&format!("/repos/{full_name}/issues/{number}"))
+            .await
+            .map_err(|e| e.message)?;
         let body = raw.body.clone().unwrap_or_default();
         let is_pr = raw.pull_request.is_some();
         let comments_path = format!("/repos/{full_name}/issues/{number}/comments?per_page=100");
         let comments: Vec<RawComment> = self.get(&comments_path).await.unwrap_or_default();
         let comments = comments
             .into_iter()
-            .map(|c| Comment { author: c.user.map(|u| u.login).unwrap_or_default(), body: c.body.unwrap_or_default(), created_at: c.created_at })
+            .map(|c| Comment {
+                author: c.user.map(|u| u.login).unwrap_or_default(),
+                body: c.body.unwrap_or_default(),
+                created_at: c.created_at,
+            })
             .collect();
-        let pull = if is_pr { Some(self.pull_info(full_name, number).await?) } else { None };
-        Ok(Detail { item: item(full_name, raw), body, comments, pull })
+        let pull = if is_pr {
+            Some(self.pull_info(full_name, number).await?)
+        } else {
+            None
+        };
+        Ok(Detail {
+            item: item(full_name, raw),
+            body,
+            comments,
+            pull,
+        })
     }
 
     async fn pull_info(&self, full_name: &str, number: u64) -> Result<PullInfo, String> {
-        let p: RawPull = self.get(&format!("/repos/{full_name}/pulls/{number}")).await.map_err(|e| e.message)?;
+        let p: RawPull = self
+            .get(&format!("/repos/{full_name}/pulls/{number}"))
+            .await
+            .map_err(|e| e.message)?;
         let reviews_path = format!("/repos/{full_name}/pulls/{number}/reviews?per_page=100");
-        let checks_path = format!("/repos/{full_name}/commits/{}/check-runs?per_page=100", p.head.sha);
-        let (reviews, runs) = futures::join!(self.get::<Vec<RawReview>>(&reviews_path), self.get::<RawCheckRuns>(&checks_path));
+        let checks_path = format!(
+            "/repos/{full_name}/commits/{}/check-runs?per_page=100",
+            p.head.sha
+        );
+        let (reviews, runs) = futures::join!(
+            self.get::<Vec<RawReview>>(&reviews_path),
+            self.get::<RawCheckRuns>(&checks_path)
+        );
         // The latest review per person is what counts.
         let mut latest: Vec<Review> = Vec::new();
         for r in reviews.unwrap_or_default() {
@@ -520,7 +601,10 @@ impl Client {
                 continue;
             }
             latest.retain(|x| x.author != author);
-            latest.push(Review { author, state: r.state });
+            latest.push(Review {
+                author,
+                state: r.state,
+            });
         }
         let checks = checks_of(runs.map(|r| r.check_runs).unwrap_or_default());
         Ok(PullInfo {
@@ -538,26 +622,55 @@ impl Client {
 
     /// The pull request for a branch of a repository (the newest, open or not),
     /// with its checks; None when the branch has none.
-    pub async fn branch_pull(&self, settings: &GitHubSettings, full_name: &str, branch: &str) -> Result<Option<BranchPull>, String> {
+    pub async fn branch_pull(
+        &self,
+        settings: &GitHubSettings,
+        full_name: &str,
+        branch: &str,
+    ) -> Result<Option<BranchPull>, String> {
         self.configure(settings);
         let owner = full_name.split('/').next().unwrap_or_default();
-        let path = format!("/repos/{full_name}/pulls?state=all&per_page=1&head={owner}:{}", query_value(branch));
+        let path = format!(
+            "/repos/{full_name}/pulls?state=all&per_page=1&head={owner}:{}",
+            query_value(branch)
+        );
         let found: Vec<RawPullItem> = self.get(&path).await.map_err(|e| e.message)?;
-        let Some(p) = found.into_iter().next() else { return Ok(None) };
-        let runs: Option<RawCheckRuns> = self.get(&format!("/repos/{full_name}/commits/{}/check-runs?per_page=100", p.head.sha)).await.ok();
+        let Some(p) = found.into_iter().next() else {
+            return Ok(None);
+        };
+        let runs: Option<RawCheckRuns> = self
+            .get(&format!(
+                "/repos/{full_name}/commits/{}/check-runs?per_page=100",
+                p.head.sha
+            ))
+            .await
+            .ok();
         let state = match (&p.merged_at, p.state.as_str(), p.draft) {
             (Some(_), _, _) => "merged",
             (None, "closed", _) => "closed",
             (None, _, true) => "draft",
             _ => "open",
         };
-        Ok(Some(BranchPull { number: p.number, title: p.title, state: state.into(), url: p.html_url, checks: checks_of(runs.map(|r| r.check_runs).unwrap_or_default()) }))
+        Ok(Some(BranchPull {
+            number: p.number,
+            title: p.title,
+            state: state.into(),
+            url: p.html_url,
+            checks: checks_of(runs.map(|r| r.check_runs).unwrap_or_default()),
+        }))
     }
 
     /// Recent GitHub Actions runs.
-    pub async fn repo_runs(&self, settings: &GitHubSettings, full_name: &str) -> Result<Vec<Run>, String> {
+    pub async fn repo_runs(
+        &self,
+        settings: &GitHubSettings,
+        full_name: &str,
+    ) -> Result<Vec<Run>, String> {
         self.configure(settings);
-        let raw: RawRuns = self.get(&format!("/repos/{full_name}/actions/runs?per_page=20")).await.map_err(|e| e.message)?;
+        let raw: RawRuns = self
+            .get(&format!("/repos/{full_name}/actions/runs?per_page=20"))
+            .await
+            .map_err(|e| e.message)?;
         Ok(raw
             .workflow_runs
             .into_iter()
@@ -588,14 +701,33 @@ mod tests {
 
     #[test]
     fn parses_repo_and_issue_refs() {
-        assert_eq!(repo_name("git@github.com:stefanwuthrich/muxin.git").as_deref(), Some("stefanwuthrich/muxin"));
-        assert_eq!(repo_name("https://github.com/zennotes/zennotes").as_deref(), Some("zennotes/zennotes"));
+        assert_eq!(
+            repo_name("git@github.com:stefanwuthrich/muxin.git").as_deref(),
+            Some("stefanwuthrich/muxin")
+        );
+        assert_eq!(
+            repo_name("https://github.com/zennotes/zennotes").as_deref(),
+            Some("zennotes/zennotes")
+        );
         assert_eq!(repo_name("acme/api").as_deref(), Some("acme/api"));
         assert_eq!(repo_name("https://gitlab.com/x/y"), None);
-        assert_eq!(repo_name("git@github.com-contractorhub:ContractorHUB-dev/ContractorHUB.git").as_deref(), Some("ContractorHUB-dev/ContractorHUB"));
-        assert_eq!(repo_name("ssh://git@ssh.github.com:443/acme/api.git").as_deref(), Some("acme/api"));
-        assert_eq!(issue_ref("https://github.com/acme/api/issues/42"), Some(("acme/api".into(), 42)));
-        assert_eq!(issue_ref("https://github.com/acme/api/pull/7/files"), Some(("acme/api".into(), 7)));
+        assert_eq!(
+            repo_name("git@github.com-contractorhub:ContractorHUB-dev/ContractorHUB.git")
+                .as_deref(),
+            Some("ContractorHUB-dev/ContractorHUB")
+        );
+        assert_eq!(
+            repo_name("ssh://git@ssh.github.com:443/acme/api.git").as_deref(),
+            Some("acme/api")
+        );
+        assert_eq!(
+            issue_ref("https://github.com/acme/api/issues/42"),
+            Some(("acme/api".into(), 42))
+        );
+        assert_eq!(
+            issue_ref("https://github.com/acme/api/pull/7/files"),
+            Some(("acme/api".into(), 7))
+        );
         assert_eq!(issue_ref("acme/api#12"), Some(("acme/api".into(), 12)));
     }
 }

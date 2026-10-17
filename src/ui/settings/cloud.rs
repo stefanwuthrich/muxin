@@ -24,22 +24,47 @@ pub(super) struct CloudState {
 }
 
 impl CloudState {
-    pub(super) fn new(window: &mut Window, cx: &mut Context<SettingsPage>) -> (CloudState, Vec<gpui::Subscription>) {
+    pub(super) fn new(
+        window: &mut Window,
+        cx: &mut Context<SettingsPage>,
+    ) -> (CloudState, Vec<gpui::Subscription>) {
         let token = cx.new(|cx| TextInput::new(cx, "dop_v1_…").mono().secret());
-        let tailscale_key = cx.new(|cx| TextInput::new(cx, "tskey-auth-… (optional)").mono().secret());
+        let tailscale_key = cx.new(|cx| {
+            TextInput::new(cx, "tskey-auth-… (optional)")
+                .mono()
+                .secret()
+        });
         let subs = vec![
-            cx.subscribe_in(&token, window, |this: &mut SettingsPage, _, e: &InputEvent, _, cx| {
-                if *e == InputEvent::Submit {
-                    this.cloud_connect("token", cx);
-                }
-            }),
-            cx.subscribe_in(&tailscale_key, window, |this: &mut SettingsPage, _, e: &InputEvent, _, cx| {
-                if *e == InputEvent::Submit {
-                    this.save_tailscale_key(cx);
-                }
-            }),
+            cx.subscribe_in(
+                &token,
+                window,
+                |this: &mut SettingsPage, _, e: &InputEvent, _, cx| {
+                    if *e == InputEvent::Submit {
+                        this.cloud_connect("token", cx);
+                    }
+                },
+            ),
+            cx.subscribe_in(
+                &tailscale_key,
+                window,
+                |this: &mut SettingsPage, _, e: &InputEvent, _, cx| {
+                    if *e == InputEvent::Submit {
+                        this.save_tailscale_key(cx);
+                    }
+                },
+            ),
         ];
-        (CloudState { options: None, usage: None, token, tailscale_key, busy: false, message: None }, subs)
+        (
+            CloudState {
+                options: None,
+                usage: None,
+                token,
+                tailscale_key,
+                busy: false,
+                message: None,
+            },
+            subs,
+        )
     }
 }
 
@@ -79,7 +104,16 @@ impl SettingsPage {
     /// and the account's bill when Muxin may read it.
     pub(super) fn cloud_usage_section(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
         let body: AnyElement = match &self.cloud.usage {
-            None => div().p(px(14.)).flex().items_center().gap(px(6.)).text_size(px(12.5)).text_color(theme.text_muted).child(kit::spinner("cloud-usage", 12., theme.text_muted)).child("Adding it up…").into_any_element(),
+            None => div()
+                .p(px(14.))
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .text_size(px(12.5))
+                .text_color(theme.text_muted)
+                .child(kit::spinner("cloud-usage", 12., theme.text_muted))
+                .child("Adding it up…")
+                .into_any_element(),
             Some(u) => {
                 let now = chrono::Utc::now();
                 let month_end = crate::cloud::usage::month_start(now)
@@ -94,13 +128,41 @@ impl SettingsPage {
                         .flex_1()
                         .min_w(px(0.))
                         .gap(px(2.))
-                        .child(div().text_size(px(11.)).text_color(theme.text_placeholder).child(label))
-                        .child(div().font_family(mono_font()).text_size(px(15.)).child(value))
-                        .child(div().truncate().text_size(px(11.5)).text_color(theme.text_muted).child(sub))
+                        .child(
+                            div()
+                                .text_size(px(11.))
+                                .text_color(theme.text_placeholder)
+                                .child(label),
+                        )
+                        .child(
+                            div()
+                                .font_family(mono_font())
+                                .text_size(px(15.))
+                                .child(value),
+                        )
+                        .child(
+                            div()
+                                .truncate()
+                                .text_size(px(11.5))
+                                .text_color(theme.text_muted)
+                                .child(sub),
+                        )
                 };
                 let bill = match (&u.account, &u.account_error) {
-                    (Some(b), _) => stat("DigitalOcean bill".into(), format!("${:.2}", b.month_to_date_usage), "this month, whole account".into()),
-                    _ => stat("DigitalOcean bill".into(), "—".into(), if u.account_needs_sign_in { "needs one more permission".into() } else { "not shared yet".into() }),
+                    (Some(b), _) => stat(
+                        "DigitalOcean bill".into(),
+                        format!("${:.2}", b.month_to_date_usage),
+                        "this month, whole account".into(),
+                    ),
+                    _ => stat(
+                        "DigitalOcean bill".into(),
+                        "—".into(),
+                        if u.account_needs_sign_in {
+                            "needs one more permission".into()
+                        } else {
+                            "not shared yet".into()
+                        },
+                    ),
                 };
                 let rows: Vec<AnyElement> = u
                     .machines
@@ -113,7 +175,9 @@ impl SettingsPage {
                             Some("destroyed") => ("destroyed", theme.text_placeholder),
                             _ => ("—", theme.text_placeholder),
                         };
-                        let place = crate::cloud::region_city(&m.region).map(str::to_string).unwrap_or_else(|| m.region.to_uppercase());
+                        let place = crate::cloud::region_city(&m.region)
+                            .map(str::to_string)
+                            .unwrap_or_else(|| m.region.to_uppercase());
                         let gone = m.machine_id.is_none();
                         div()
                             .flex()
@@ -130,11 +194,54 @@ impl SettingsPage {
                                     .flex_col()
                                     .flex_1()
                                     .min_w(px(0.))
-                                    .child(div().flex().items_center().gap(px(8.)).text_size(px(12.5)).child(m.name.clone()).child(div().text_size(px(11.5)).text_color(color).child(word)))
-                                    .child(div().truncate().text_size(px(11.5)).text_color(theme.text_placeholder).child(format!("{place} · {}", crate::cloud::size_label(&m.size)))),
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap(px(8.))
+                                            .text_size(px(12.5))
+                                            .child(m.name.clone())
+                                            .child(
+                                                div()
+                                                    .text_size(px(11.5))
+                                                    .text_color(color)
+                                                    .child(word),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .truncate()
+                                            .text_size(px(11.5))
+                                            .text_color(theme.text_placeholder)
+                                            .child(format!(
+                                                "{place} · {}",
+                                                crate::cloud::size_label(&m.size)
+                                            )),
+                                    ),
                             )
-                            .child(div().w(px(90.)).flex_none().font_family(mono_font()).text_size(px(12.)).text_color(theme.text_muted).child(if gone { "—".to_string() } else { format!("${:.3}/h", m.price_hourly) }))
-                            .child(div().w(px(110.)).flex_none().flex().justify_end().font_family(mono_font()).text_size(px(12.5)).child(format!("${:.2}", m.this_month)))
+                            .child(
+                                div()
+                                    .w(px(90.))
+                                    .flex_none()
+                                    .font_family(mono_font())
+                                    .text_size(px(12.))
+                                    .text_color(theme.text_muted)
+                                    .child(if gone {
+                                        "—".to_string()
+                                    } else {
+                                        format!("${:.3}/h", m.price_hourly)
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .w(px(110.))
+                                    .flex_none()
+                                    .flex()
+                                    .justify_end()
+                                    .font_family(mono_font())
+                                    .text_size(px(12.5))
+                                    .child(format!("${:.2}", m.this_month)),
+                            )
                             .into_any_element()
                     })
                     .collect();
@@ -203,14 +310,21 @@ impl SettingsPage {
                     .into_any_element()
             }
         };
-        div().flex().flex_col().gap(px(10.)).child(section_title(theme, "Usage and cost", None)).child(card(theme).child(body)).into_any_element()
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(10.))
+            .child(section_title(theme, "Usage and cost", None))
+            .child(card(theme).child(body))
+            .into_any_element()
     }
 
     fn cloud_connect(&mut self, method: &'static str, cx: &mut Context<Self>) {
         if self.cloud.busy {
             return;
         }
-        let token = (method == "token").then(|| self.cloud.token.read(cx).text().trim().to_string());
+        let token =
+            (method == "token").then(|| self.cloud.token.read(cx).text().trim().to_string());
         if token.as_deref() == Some("") {
             return;
         }
@@ -220,7 +334,11 @@ impl SettingsPage {
         let engine = self.engine.clone();
         let job = engine.runtime().spawn({
             let engine = engine.clone();
-            async move { engine.cloud_sign_in(method, token, |url| crate::util::open_url(url)).await }
+            async move {
+                engine
+                    .cloud_sign_in(method, token, |url| crate::util::open_url(url))
+                    .await
+            }
         });
         let task = cx.spawn(async move |this, cx| {
             let result = job.await.unwrap_or_else(|e| Err(e.to_string()));
@@ -265,7 +383,9 @@ impl SettingsPage {
                 Err(e) => (true, e),
             },
         });
-        self.cloud.tailscale_key.update(cx, |i, cx| i.set_text("", cx));
+        self.cloud
+            .tailscale_key
+            .update(cx, |i, cx| i.set_text("", cx));
         cx.notify();
     }
 
@@ -282,7 +402,11 @@ impl SettingsPage {
         let methods = segmented(
             theme,
             "do-auth",
-            &[("token", "API token"), ("oauth", "Browser"), ("doctl", "doctl")],
+            &[
+                ("token", "API token"),
+                ("oauth", "Browser"),
+                ("doctl", "doctl"),
+            ],
             &method,
             cx,
             |this, value, cx| {
@@ -292,7 +416,15 @@ impl SettingsPage {
             },
         );
         let status: AnyElement = match (&options, loading) {
-            (_, true) => div().flex().items_center().gap(px(6.)).text_size(px(12.5)).text_color(theme.text_muted).child(kit::spinner("cloud-check", 12., theme.text_muted)).child("Checking…").into_any_element(),
+            (_, true) => div()
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .text_size(px(12.5))
+                .text_color(theme.text_muted)
+                .child(kit::spinner("cloud-check", 12., theme.text_muted))
+                .child("Checking…")
+                .into_any_element(),
             (Some(o), _) if o.account.is_some() => {
                 let a = o.account.clone().unwrap_or_default();
                 div()
@@ -305,7 +437,13 @@ impl SettingsPage {
                         Some(t) => format!("Connected as {} · {t}", a.email),
                         None => format!("Connected as {}", a.email),
                     }))
-                    .when(method != "doctl", |d| d.child(Button::new("do-signout", "Sign out").style(ButtonStyle::Ghost).on_click(cx.listener(|this, _, _, cx| this.cloud_sign_out(cx)))))
+                    .when(method != "doctl", |d| {
+                        d.child(
+                            Button::new("do-signout", "Sign out")
+                                .style(ButtonStyle::Ghost)
+                                .on_click(cx.listener(|this, _, _, cx| this.cloud_sign_out(cx))),
+                        )
+                    })
                     .into_any_element()
             }
             (o, _) => {
@@ -349,7 +487,10 @@ impl SettingsPage {
                 }
             }
         };
-        let error = options.as_ref().and_then(|o| o.error.clone()).filter(|_| options.as_ref().is_some_and(|o| o.signed_in));
+        let error = options
+            .as_ref()
+            .and_then(|o| o.error.clone())
+            .filter(|_| options.as_ref().is_some_and(|o| o.signed_in));
         let account = div()
             .flex()
             .flex_col()
@@ -362,8 +503,15 @@ impl SettingsPage {
                     .gap(px(12.))
                     .child(row(theme, "Sign in with", methods.into_any_element()))
                     .child(status)
-                    .children(error.map(|e| div().text_size(px(12.)).text_color(theme.error).child(e)))
-                    .children(self.cloud.message.clone().map(|(bad, m)| div().text_size(px(12.)).text_color(if bad { theme.error } else { theme.success }).child(m))),
+                    .children(
+                        error.map(|e| div().text_size(px(12.)).text_color(theme.error).child(e)),
+                    )
+                    .children(self.cloud.message.clone().map(|(bad, m)| {
+                        div()
+                            .text_size(px(12.))
+                            .text_color(if bad { theme.error } else { theme.success })
+                            .child(m)
+                    })),
             );
 
         // New machines: only with a working sign-in.
@@ -485,7 +633,12 @@ impl SettingsPage {
         let idle = segmented(
             theme,
             "do-idle",
-            &[("off", "Nothing"), ("warn", "Tell me"), ("poweroff", "Power off"), ("destroy", "Destroy")],
+            &[
+                ("off", "Nothing"),
+                ("warn", "Tell me"),
+                ("poweroff", "Power off"),
+                ("destroy", "Destroy"),
+            ],
             &settings.idle_action,
             cx,
             |this, value, cx| this.save_cloud(|c| c.idle_action = value.into(), cx),
@@ -495,9 +648,25 @@ impl SettingsPage {
             .flex()
             .items_center()
             .gap(px(4.))
-            .child(Button::icon_only("idle-less", "minus").on_click(cx.listener(move |this, _, _, cx| this.save_cloud(|c| c.idle_hours = hours.saturating_sub(1).max(1), cx))))
-            .child(div().w(px(70.)).flex().justify_center().font_family(mono_font()).text_size(px(12.5)).child(format!("{hours} h")))
-            .child(Button::icon_only("idle-more", "plus").on_click(cx.listener(move |this, _, _, cx| this.save_cloud(|c| c.idle_hours = (hours + 1).min(72), cx))));
+            .child(
+                Button::icon_only("idle-less", "minus").on_click(cx.listener(
+                    move |this, _, _, cx| {
+                        this.save_cloud(|c| c.idle_hours = hours.saturating_sub(1).max(1), cx)
+                    },
+                )),
+            )
+            .child(
+                div()
+                    .w(px(70.))
+                    .flex()
+                    .justify_center()
+                    .font_family(mono_font())
+                    .text_size(px(12.5))
+                    .child(format!("{hours} h")),
+            )
+            .child(Button::icon_only("idle-more", "plus").on_click(cx.listener(
+                move |this, _, _, cx| this.save_cloud(|c| c.idle_hours = (hours + 1).min(72), cx),
+            )));
         let warning = match settings.idle_action.as_str() {
             "poweroff" => Some("DigitalOcean still bills a droplet that's off."),
             "destroy" => Some("Everything on it is lost. Push your work."),
@@ -519,25 +688,46 @@ impl SettingsPage {
                     .child(note(theme, "Idle: no busy session, running job or CPU use. Muxin has to be open to notice.")),
             );
 
-        div().flex().flex_col().gap(px(28.)).child(account).children(defaults).child(when_idle)
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(28.))
+            .child(account)
+            .children(defaults)
+            .child(when_idle)
     }
 }
-
 
 fn row(theme: &Theme, label: &'static str, control: AnyElement) -> impl IntoElement {
     div()
         .flex()
         .items_start()
         .gap(px(12.))
-        .child(div().w(px(110.)).flex_none().pt(px(5.)).text_size(px(12.5)).text_color(theme.text_muted).child(label))
+        .child(
+            div()
+                .w(px(110.))
+                .flex_none()
+                .pt(px(5.))
+                .text_size(px(12.5))
+                .text_color(theme.text_muted)
+                .child(label),
+        )
         .child(div().flex_1().min_w(px(0.)).child(control))
 }
 
 fn note(theme: &Theme, text: &'static str) -> gpui::Div {
-    div().text_size(px(12.)).text_color(theme.text_placeholder).child(text)
+    div()
+        .text_size(px(12.))
+        .text_color(theme.text_placeholder)
+        .child(text)
 }
 
-fn chip(theme: &Theme, id: SharedString, text: String, selected: bool) -> gpui::Stateful<gpui::Div> {
+fn chip(
+    theme: &Theme,
+    id: SharedString,
+    text: String,
+    selected: bool,
+) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
         .h(px(26.))
@@ -548,9 +738,21 @@ fn chip(theme: &Theme, id: SharedString, text: String, selected: bool) -> gpui::
         .border_1()
         .cursor_pointer()
         .text_size(px(12.5))
-        .border_color(if selected { theme.accent } else { theme.border_variant })
-        .bg(if selected { theme.accent.opacity(0.10) } else { theme.element })
-        .text_color(if selected { theme.text } else { theme.text_muted })
+        .border_color(if selected {
+            theme.accent
+        } else {
+            theme.border_variant
+        })
+        .bg(if selected {
+            theme.accent.opacity(0.10)
+        } else {
+            theme.element
+        })
+        .text_color(if selected {
+            theme.text
+        } else {
+            theme.text_muted
+        })
         .child(text)
 }
 
@@ -578,12 +780,26 @@ fn segmented(
                 .cursor_pointer()
                 .text_size(px(12.5))
                 .text_color(if on { theme.text } else { theme.text_muted })
-                .when(on, |d| d.bg(theme.surface).border_1().border_color(theme.border).shadow_sm())
+                .when(on, |d| {
+                    d.bg(theme.surface)
+                        .border_1()
+                        .border_color(theme.border)
+                        .shadow_sm()
+                })
                 .when(!on, |d| d.hover(|st| st.text_color(theme.text)))
                 .child(*label)
                 .on_click(cx.listener(move |this, _, _, cx| pick(this, value, cx)))
                 .into_any_element()
         })
         .collect();
-    div().flex().gap(px(2.)).p(px(3.)).rounded(px(8.)).bg(theme.element).border_1().border_color(theme.border_variant).children(items).into_any_element()
+    div()
+        .flex()
+        .gap(px(2.))
+        .p(px(3.))
+        .rounded(px(8.))
+        .bg(theme.element)
+        .border_1()
+        .border_color(theme.border_variant)
+        .children(items)
+        .into_any_element()
 }

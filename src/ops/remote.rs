@@ -24,9 +24,21 @@ const PS_READ_STDIN: &str = "$ProgressPreference = 'SilentlyContinue'; $b = New-
 /// encoded so no shell on the way changes them.
 pub(crate) fn ps_stdin_args() -> Vec<String> {
     use base64::Engine as _;
-    let utf16: Vec<u8> = PS_READ_STDIN.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let utf16: Vec<u8> = PS_READ_STDIN
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect();
     let encoded = base64::engine::general_purpose::STANDARD.encode(utf16);
-    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", &encoded].map(String::from).to_vec()
+    [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-EncodedCommand",
+        &encoded,
+    ]
+    .map(String::from)
+    .to_vec()
 }
 
 /// A PowerShell script as it's sent: with its end line.
@@ -63,7 +75,10 @@ pub fn with_params(shell: Shell, params: &[(&str, Param)], script: &str) -> Stri
             (Shell::Sh, Param::Bool(b)) => format!("{name}={}\n", if *b { 1 } else { 0 }),
             (Shell::Powershell, Param::Str(s)) => format!("${name} = {}\n", ps_quote(s)),
             (Shell::Powershell, Param::List(l)) => {
-                format!("${name} = @({})\n", l.iter().map(|s| ps_quote(s)).collect::<Vec<_>>().join(", "))
+                format!(
+                    "${name} = @({})\n",
+                    l.iter().map(|s| ps_quote(s)).collect::<Vec<_>>().join(", ")
+                )
             }
             (Shell::Powershell, Param::Bool(b)) => format!("${name} = ${b}\n"),
         };
@@ -93,7 +108,9 @@ pub async fn run(
     secrets: &[String],
     timeout: Duration,
 ) -> Result<(), String> {
-    run_lines(engine, op, spec, shell, script, secrets, timeout).await.map(|_| ())
+    run_lines(engine, op, spec, shell, script, secrets, timeout)
+        .await
+        .map(|_| ())
 }
 
 /// The same, and returns what it printed (stdout, line by line): a script's
@@ -109,9 +126,16 @@ pub async fn run_lines(
 ) -> Result<Vec<String>, String> {
     spec.refuse_if_disconnected()?;
     let mut cmd = command(spec, shell);
-    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
     let mut child = cmd.spawn().map_err(|e| {
-        if spec.is_local() { format!("Couldn't start the script: {e}") } else { format!("Couldn't run ssh: {e}") }
+        if spec.is_local() {
+            format!("Couldn't start the script: {e}")
+        } else {
+            format!("Couldn't run ssh: {e}")
+        }
     })?;
 
     let mut stdin = child.stdin.take().ok_or("No stdin for the script")?;
@@ -120,7 +144,11 @@ pub async fn run_lines(
 
     let work = async {
         // Ignore write errors (e.g. ssh exiting early); stderr says why.
-        let script = if shell == Shell::Powershell { ps_sendable(&script) } else { script };
+        let script = if shell == Shell::Powershell {
+            ps_sendable(&script)
+        } else {
+            script
+        };
         let _ = stdin.write_all(script.as_bytes()).await;
         drop(stdin);
 
@@ -178,24 +206,42 @@ pub async fn run_lines(
 
 /// Runs `script` on the machine and returns what it printed, or why it
 /// failed (its last `error: ...` line, else its last stderr line).
-pub async fn output(spec: &MachineSpec, shell: Shell, script: String, timeout: Duration) -> Result<String, String> {
+pub async fn output(
+    spec: &MachineSpec,
+    shell: Shell,
+    script: String,
+    timeout: Duration,
+) -> Result<String, String> {
     spec.refuse_if_disconnected()?;
     let mut cmd = command(spec, shell);
-    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
     let mut child = cmd.spawn().map_err(|e| format!("Couldn't run ssh: {e}"))?;
     let mut stdin = child.stdin.take().ok_or("No stdin for the script")?;
-    let script = if shell == Shell::Powershell { ps_sendable(&script) } else { script };
+    let script = if shell == Shell::Powershell {
+        ps_sendable(&script)
+    } else {
+        script
+    };
     let work = async move {
         let _ = stdin.write_all(script.as_bytes()).await;
         drop(stdin);
         child.wait_with_output().await.map_err(|e| e.to_string())
     };
-    let out = tokio::time::timeout(timeout, work).await.map_err(|_| format!("Gave up after {} seconds.", timeout.as_secs()))??;
+    let out = tokio::time::timeout(timeout, work)
+        .await
+        .map_err(|_| format!("Gave up after {} seconds.", timeout.as_secs()))??;
     if out.status.success() {
         return Ok(String::from_utf8_lossy(&out.stdout).to_string());
     }
     let err = String::from_utf8_lossy(&out.stderr).to_string();
-    let lines: Vec<&str> = err.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    let lines: Vec<&str> = err
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
     Err(lines
         .iter()
         .rev()
@@ -277,30 +323,54 @@ mod tests {
         let names = vec!["a-01".to_string(), "b-02".to_string()];
         let sh = with_params(
             Shell::Sh,
-            &[("OR_TOKEN", Param::Str("it's")), ("OR_NAMES", Param::List(&names)), ("OR_SERVICE", Param::Bool(true))],
+            &[
+                ("OR_TOKEN", Param::Str("it's")),
+                ("OR_NAMES", Param::List(&names)),
+                ("OR_SERVICE", Param::Bool(true)),
+            ],
             "echo hi\n",
         );
-        assert_eq!(sh, "OR_TOKEN='it'\\''s'\nOR_NAMES='a-01 b-02'\nOR_SERVICE=1\necho hi\n");
+        assert_eq!(
+            sh,
+            "OR_TOKEN='it'\\''s'\nOR_NAMES='a-01 b-02'\nOR_SERVICE=1\necho hi\n"
+        );
         let ps = with_params(
             Shell::Powershell,
-            &[("OR_TOKEN", Param::Str("it's")), ("OR_NAMES", Param::List(&names)), ("OR_SERVICE", Param::Bool(false))],
+            &[
+                ("OR_TOKEN", Param::Str("it's")),
+                ("OR_NAMES", Param::List(&names)),
+                ("OR_SERVICE", Param::Bool(false)),
+            ],
             "",
         );
-        assert_eq!(ps, "$OR_TOKEN = 'it''s'\n$OR_NAMES = @('a-01', 'b-02')\n$OR_SERVICE = $false\n");
+        assert_eq!(
+            ps,
+            "$OR_TOKEN = 'it''s'\n$OR_NAMES = @('a-01', 'b-02')\n$OR_SERVICE = $false\n"
+        );
     }
 
     #[test]
     fn cleans_lines() {
         let secrets = vec!["AABBCCDDEEFF".to_string()];
-        assert_eq!(clean_line("--token AABBCCDDEEFF --name x", &secrets), "--token •••••• --name x");
-        assert_eq!(clean_line("\u{1b}[32m√ Connected\u{1b}[0m  ", &[]), "√ Connected");
+        assert_eq!(
+            clean_line("--token AABBCCDDEEFF --name x", &secrets),
+            "--token •••••• --name x"
+        );
+        assert_eq!(
+            clean_line("\u{1b}[32m√ Connected\u{1b}[0m  ", &[]),
+            "√ Connected"
+        );
         assert_eq!(clean_line("10%\r50%\r100%", &[]), "100%");
     }
 
     #[test]
     fn picks_shells() {
         let spec: MachineSpec = toml::from_str("name = \"w\"\nhost = \"win\"").unwrap();
-        let probe = ProbeResult { os: Some("windows".into()), ok: true, ..Default::default() };
+        let probe = ProbeResult {
+            os: Some("windows".into()),
+            ok: true,
+            ..Default::default()
+        };
         assert_eq!(shell_for(&spec, Some(&probe)), Shell::Powershell);
         assert_eq!(shell_for(&spec, None), Shell::Sh);
     }

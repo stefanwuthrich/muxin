@@ -131,22 +131,47 @@ pub struct ScheduleInput {
 
 /// "Every 15 minutes", "Every day at 9:00", "Weekdays at 18:30", "Mon, Thu at 7:00".
 pub fn when_text(w: &When) -> String {
-    let at = w.at.as_deref().map(|a| a.trim_start_matches('0').to_string()).map(|a| if a.starts_with(':') { format!("0{a}") } else { a }).unwrap_or_default();
+    let at =
+        w.at.as_deref()
+            .map(|a| a.trim_start_matches('0').to_string())
+            .map(|a| {
+                if a.starts_with(':') {
+                    format!("0{a}")
+                } else {
+                    a
+                }
+            })
+            .unwrap_or_default();
     let n = w.n.unwrap_or(1);
     match w.every.as_str() {
         "minutes" if n == 1 => "Every minute".into(),
         "minutes" => format!("Every {n} minutes"),
         "hours" => {
-            let minute = w.at.as_deref().and_then(|a| a.split(':').nth(1)).unwrap_or("00");
-            if n == 1 { format!("Every hour at :{minute}") } else { format!("Every {n} hours at :{minute}") }
+            let minute =
+                w.at.as_deref()
+                    .and_then(|a| a.split(':').nth(1))
+                    .unwrap_or("00");
+            if n == 1 {
+                format!("Every hour at :{minute}")
+            } else {
+                format!("Every {n} hours at :{minute}")
+            }
         }
         "day" => format!("Every day at {at}"),
         "weekdays" => format!("Weekdays at {at}"),
         "week" => {
-            let days: Vec<String> = w.days.iter().map(|d| {
-                let mut c = d.chars();
-                c.next().map(|f| f.to_ascii_uppercase().to_string() + &c.take(2).collect::<String>()).unwrap_or_default()
-            }).collect();
+            let days: Vec<String> = w
+                .days
+                .iter()
+                .map(|d| {
+                    let mut c = d.chars();
+                    c.next()
+                        .map(|f| {
+                            f.to_ascii_uppercase().to_string() + &c.take(2).collect::<String>()
+                        })
+                        .unwrap_or_default()
+                })
+                .collect();
             format!("{} at {at}", days.join(", "))
         }
         other => other.to_string(),
@@ -158,7 +183,13 @@ fn new_id() -> String {
     const CHARS: &[u8] = b"abcdefghijkmnpqrstuvwxyz23456789";
     let mut bytes = [0u8; 6];
     let _ = SystemRandom::new().fill(&mut bytes);
-    format!("s-{}", bytes.iter().map(|b| CHARS[*b as usize % CHARS.len()] as char).collect::<String>())
+    format!(
+        "s-{}",
+        bytes
+            .iter()
+            .map(|b| CHARS[*b as usize % CHARS.len()] as char)
+            .collect::<String>()
+    )
 }
 
 impl Engine {
@@ -176,10 +207,15 @@ impl Engine {
         let asks = machines.into_iter().map(|(id, name)| {
             let me = self.clone();
             async move {
-                let mut out = MachineSchedules { machine_id: id.clone(), machine: name, ..Default::default() };
+                let mut out = MachineSchedules {
+                    machine_id: id.clone(),
+                    machine: name,
+                    ..Default::default()
+                };
                 match Box::pin(me.schedule_ctl(&id, json!({ "op": "schedules" }))).await {
                     Ok(reply) => {
-                        out.schedules = serde_json::from_value(reply["schedules"].clone()).unwrap_or_default();
+                        out.schedules =
+                            serde_json::from_value(reply["schedules"].clone()).unwrap_or_default();
                         for s in &mut out.schedules {
                             s.when_text = when_text(&s.when);
                         }
@@ -195,49 +231,142 @@ impl Engine {
     }
 
     /// Saves a schedule on a machine (new, or changed when `id` is set).
-    pub async fn schedule_save(self: &Arc<Self>, machine_id: &str, input: ScheduleInput) -> Result<Schedule, String> {
-        let (spec, probe) = self.machine(machine_id).ok_or_else(|| format!("No machine called {machine_id}."))?;
+    pub async fn schedule_save(
+        self: &Arc<Self>,
+        machine_id: &str,
+        input: ScheduleInput,
+    ) -> Result<Schedule, String> {
+        let (spec, probe) = self
+            .machine(machine_id)
+            .ok_or_else(|| format!("No machine called {machine_id}."))?;
         let name = input.name.trim().to_string();
         if name.is_empty() {
             return Err("Give the schedule a name.".into());
         }
-        let cwd = input.folder.clone().filter(|f| !f.trim().is_empty()).unwrap_or_else(|| "~".into());
-        let what = match (input.command.as_deref().map(str::trim).filter(|c| !c.is_empty()), input.agent.as_deref().filter(|a| !a.is_empty())) {
-            (Some(c), None) => What { kind: "command".into(), command: Some(c.to_string()), cwd: Some(cwd), ..Default::default() },
+        let cwd = input
+            .folder
+            .clone()
+            .filter(|f| !f.trim().is_empty())
+            .unwrap_or_else(|| "~".into());
+        let what = match (
+            input
+                .command
+                .as_deref()
+                .map(str::trim)
+                .filter(|c| !c.is_empty()),
+            input.agent.as_deref().filter(|a| !a.is_empty()),
+        ) {
+            (Some(c), None) => What {
+                kind: "command".into(),
+                command: Some(c.to_string()),
+                cwd: Some(cwd),
+                ..Default::default()
+            },
             (None, Some(a)) => {
-                let kind = super::sessions::agent(a).ok_or_else(|| format!("Unknown agent \"{a}\". Use one of: {}.", super::sessions::AGENTS.iter().map(|k| k.id).collect::<Vec<_>>().join(", ")))?;
-                let prompt = input.prompt.clone().map(|p| p.trim().to_string()).filter(|p| !p.is_empty());
-                let windows = matches!(crate::ops::remote::shell_for(&spec, probe.as_ref()), crate::probe::Shell::Powershell);
+                let kind = super::sessions::agent(a).ok_or_else(|| {
+                    format!(
+                        "Unknown agent \"{a}\". Use one of: {}.",
+                        super::sessions::AGENTS
+                            .iter()
+                            .map(|k| k.id)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                })?;
+                let prompt = input
+                    .prompt
+                    .clone()
+                    .map(|p| p.trim().to_string())
+                    .filter(|p| !p.is_empty());
+                let windows = matches!(
+                    crate::ops::remote::shell_for(&spec, probe.as_ref()),
+                    crate::probe::Shell::Powershell
+                );
                 let (run, send) = super::sessions::launch_line(kind, prompt.as_deref(), windows);
-                What { kind: "agent".into(), cwd: Some(cwd), agent: Some(kind.id.into()), prompt, title: Some(name.clone()), run: Some(run), send, ..Default::default() }
+                What {
+                    kind: "agent".into(),
+                    cwd: Some(cwd),
+                    agent: Some(kind.id.into()),
+                    prompt,
+                    title: Some(name.clone()),
+                    run: Some(run),
+                    send,
+                    ..Default::default()
+                }
             }
-            (Some(_), Some(_)) => return Err("A schedule runs a command or starts an agent, not both.".into()),
-            (None, None) => return Err("Say what it runs: a command, or an agent with a prompt.".into()),
+            (Some(_), Some(_)) => {
+                return Err("A schedule runs a command or starts an agent, not both.".into());
+            }
+            (None, None) => {
+                return Err("Say what it runs: a command, or an agent with a prompt.".into());
+            }
         };
-        let schedule = Schedule { id: input.id.clone().unwrap_or_else(new_id), name, enabled: input.enabled, when: input.when, what, ..Default::default() };
-        let reply = Box::pin(self.schedule_ctl(&spec.id, json!({ "op": "schedule_save", "schedule": schedule }))).await?;
-        let mut saved: Schedule = serde_json::from_value(reply["schedule"].clone()).unwrap_or(schedule);
+        let schedule = Schedule {
+            id: input.id.clone().unwrap_or_else(new_id),
+            name,
+            enabled: input.enabled,
+            when: input.when,
+            what,
+            ..Default::default()
+        };
+        let reply = Box::pin(self.schedule_ctl(
+            &spec.id,
+            json!({ "op": "schedule_save", "schedule": schedule }),
+        ))
+        .await?;
+        let mut saved: Schedule =
+            serde_json::from_value(reply["schedule"].clone()).unwrap_or(schedule);
         saved.when_text = when_text(&saved.when);
         Ok(saved)
     }
 
-    pub async fn schedule_delete(self: &Arc<Self>, machine_id: &str, id: &str) -> Result<(), String> {
-        Box::pin(self.schedule_ctl(machine_id, json!({ "op": "schedule_delete", "schedule_id": id }))).await.map(|_| ())
+    pub async fn schedule_delete(
+        self: &Arc<Self>,
+        machine_id: &str,
+        id: &str,
+    ) -> Result<(), String> {
+        Box::pin(self.schedule_ctl(
+            machine_id,
+            json!({ "op": "schedule_delete", "schedule_id": id }),
+        ))
+        .await
+        .map(|_| ())
     }
 
     /// Runs one now (in the background there).
     pub async fn schedule_run(self: &Arc<Self>, machine_id: &str, id: &str) -> Result<(), String> {
-        Box::pin(self.schedule_ctl(machine_id, json!({ "op": "schedule_run", "schedule_id": id }))).await.map(|_| ())
+        Box::pin(self.schedule_ctl(
+            machine_id,
+            json!({ "op": "schedule_run", "schedule_id": id }),
+        ))
+        .await
+        .map(|_| ())
     }
 
     /// A schedule's runs, and one run's output (the newest, or the one that `started` then).
-    pub async fn schedule_log(self: &Arc<Self>, machine_id: &str, id: &str, started: Option<i64>) -> Result<ScheduleLog, String> {
-        let reply = Box::pin(self.schedule_ctl(machine_id, json!({ "op": "schedule_log", "schedule_id": id, "started": started }))).await?;
-        serde_json::from_value(reply).map_err(|e| format!("The machine answered in a way Muxin can't read: {e}"))
+    pub async fn schedule_log(
+        self: &Arc<Self>,
+        machine_id: &str,
+        id: &str,
+        started: Option<i64>,
+    ) -> Result<ScheduleLog, String> {
+        let reply = Box::pin(self.schedule_ctl(
+            machine_id,
+            json!({ "op": "schedule_log", "schedule_id": id, "started": started }),
+        ))
+        .await?;
+        serde_json::from_value(reply)
+            .map_err(|e| format!("The machine answered in a way Muxin can't read: {e}"))
     }
 
-    async fn schedule_ctl(self: &Arc<Self>, machine_id: &str, request: Value) -> Result<Value, String> {
-        let (spec, probe) = self.machine(machine_id).ok_or_else(|| format!("No machine called {machine_id}."))?;
+    async fn schedule_ctl(
+        self: &Arc<Self>,
+        machine_id: &str,
+        request: Value,
+    ) -> Result<Value, String> {
+        let (spec, probe) = self
+            .machine(machine_id)
+            .ok_or_else(|| format!("No machine called {machine_id}."))?;
         if self.demo_world().is_some() {
             return Ok(demo_reply(&spec.id, &request));
         }
@@ -312,13 +441,23 @@ mod tests {
 
     #[test]
     fn says_when_in_words() {
-        let w = |every: &str, n: Option<u32>, at: Option<&str>, days: &[&str]| when_text(&When { every: every.into(), n, at: at.map(Into::into), days: days.iter().map(|d| d.to_string()).collect() });
+        let w = |every: &str, n: Option<u32>, at: Option<&str>, days: &[&str]| {
+            when_text(&When {
+                every: every.into(),
+                n,
+                at: at.map(Into::into),
+                days: days.iter().map(|d| d.to_string()).collect(),
+            })
+        };
         assert_eq!(w("minutes", Some(15), None, &[]), "Every 15 minutes");
         assert_eq!(w("hours", Some(1), Some("00:30"), &[]), "Every hour at :30");
         assert_eq!(w("day", None, Some("09:00"), &[]), "Every day at 9:00");
         assert_eq!(w("day", None, Some("00:15"), &[]), "Every day at 0:15");
         assert_eq!(w("weekdays", None, Some("18:30"), &[]), "Weekdays at 18:30");
-        assert_eq!(w("week", None, Some("07:00"), &["mon", "thu"]), "Mon, Thu at 7:00");
+        assert_eq!(
+            w("week", None, Some("07:00"), &["mon", "thu"]),
+            "Mon, Thu at 7:00"
+        );
     }
 
     #[test]

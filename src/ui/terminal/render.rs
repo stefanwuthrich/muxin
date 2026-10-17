@@ -7,8 +7,9 @@ use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor};
 use gpui::{
-    App, Bounds, ContentMask, Font, FontFeatures, FontStyle, FontWeight, Hsla, Pixels, Point, ShapedLine, SharedString, StrikethroughStyle,
-    TextRun, UnderlineStyle, Window, canvas, fill, point, prelude::*, px, size,
+    App, Bounds, ContentMask, Font, FontFeatures, FontStyle, FontWeight, Hsla, Pixels, Point,
+    ShapedLine, SharedString, StrikethroughStyle, TextRun, UnderlineStyle, Window, canvas, fill,
+    point, prelude::*, px, size,
 };
 
 use super::boxdraw::{self, Shape};
@@ -88,25 +89,49 @@ pub(super) struct Frame {
 }
 
 /// `cursor`: draw the cursor (false in a blink's off phase).
-pub(super) fn grid(shared: Arc<Shared>, palette: Palette, focused: bool, cursor: bool, metrics: Metrics) -> impl IntoElement {
-    canvas(move |bounds, window, cx| prepaint(&shared, &palette, focused, cursor, metrics, bounds, window, cx), |_, frame, window, cx| paint(frame, window, cx))
-        .size_full()
+pub(super) fn grid(
+    shared: Arc<Shared>,
+    palette: Palette,
+    focused: bool,
+    cursor: bool,
+    metrics: Metrics,
+) -> impl IntoElement {
+    canvas(
+        move |bounds, window, cx| {
+            prepaint(
+                &shared, &palette, focused, cursor, metrics, bounds, window, cx,
+            )
+        },
+        |_, frame, window, cx| paint(frame, window, cx),
+    )
+    .size_full()
 }
 
 fn base_font(window: &Window) -> Font {
     let installed = installed(window);
     let has = |f: &str| installed.iter().any(|n| n == f);
-    let chosen = CHOSEN.read().ok().and_then(|c| c.clone()).unwrap_or_else(|| DEFAULT_FONT.into());
+    let chosen = CHOSEN
+        .read()
+        .ok()
+        .and_then(|c| c.clone())
+        .unwrap_or_else(|| DEFAULT_FONT.into());
     let family = if has(&chosen) {
         chosen
     } else {
-        FALLBACKS.iter().find(|f| has(f)).map(|f| SharedString::from(*f)).unwrap_or_else(|| mono_font().into())
+        FALLBACKS
+            .iter()
+            .find(|f| has(f))
+            .map(|f| SharedString::from(*f))
+            .unwrap_or_else(|| mono_font().into())
     };
     let mut font = gpui::font(family);
     // Icons the font lacks (Nerd Font glyphs): from the bundled symbols font.
     // On Windows, then its own monochrome symbols, before the system's
     // fallback reaches Segoe UI Emoji (Claude Code's ⏺ as a blue square).
-    let mut fallbacks: Vec<String> = crate::ui::assets::NERD_SYMBOLS_NAMES.iter().map(|n| n.to_string()).collect();
+    let mut fallbacks: Vec<String> = crate::ui::assets::NERD_SYMBOLS_NAMES
+        .iter()
+        .map(|n| n.to_string())
+        .collect();
     if cfg!(windows) {
         fallbacks.extend(["Segoe UI Symbol", "Cascadia Mono", "Consolas"].map(String::from));
     }
@@ -120,7 +145,10 @@ fn base_font(window: &Window) -> Font {
 pub(super) fn cell_size(window: &Window, m: Metrics) -> (f32, f32) {
     let ts = window.text_system();
     let id = ts.resolve_font(&base_font(window));
-    let w = ts.advance(id, px(m.size), 'm').map(|s| f32::from(s.width)).unwrap_or(m.size * 0.6);
+    let w = ts
+        .advance(id, px(m.size), 'm')
+        .map(|s| f32::from(s.width))
+        .unwrap_or(m.size * 0.6);
     (w, (m.size * m.line_height).round())
 }
 
@@ -130,13 +158,32 @@ pub(super) fn family(window: &Window) -> SharedString {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn prepaint(shared: &Shared, palette: &Palette, focused: bool, show_cursor: bool, m: Metrics, bounds: Bounds<Pixels>, window: &mut Window, _cx: &mut App) -> Frame {
+fn prepaint(
+    shared: &Shared,
+    palette: &Palette,
+    focused: bool,
+    show_cursor: bool,
+    m: Metrics,
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+    _cx: &mut App,
+) -> Frame {
     let (cell_w, line_h) = cell_size(window, m);
-    let cols = ((f32::from(bounds.size.width) - 2. * PAD_X) / cell_w).floor().max(2.) as usize;
-    let rows = ((f32::from(bounds.size.height) - 2. * PAD_Y) / line_h).floor().max(1.) as usize;
+    let cols = ((f32::from(bounds.size.width) - 2. * PAD_X) / cell_w)
+        .floor()
+        .max(2.) as usize;
+    let rows = ((f32::from(bounds.size.height) - 2. * PAD_Y) / line_h)
+        .floor()
+        .max(1.) as usize;
     shared.resize(cols, rows, cell_w, line_h);
     let origin = bounds.origin + point(px(PAD_X), px(PAD_Y));
-    *shared.geometry.lock().unwrap() = Geometry { origin, cell_w, line_h, cols, rows };
+    *shared.geometry.lock().unwrap() = Geometry {
+        origin,
+        cell_w,
+        line_h,
+        cols,
+        rows,
+    };
 
     // Copy what's visible out of the grid.
     let (cells, cursor) = {
@@ -160,7 +207,8 @@ fn prepaint(shared: &Shared, palette: &Palette, focused: bool, show_cursor: bool
             }
             let mut fg = palette.resolve(cell.fg, overrides);
             let bg_color = cell.bg;
-            let mut bg = (bg_color != Color::Named(NamedColor::Background)).then(|| palette.resolve(bg_color, overrides));
+            let mut bg = (bg_color != Color::Named(NamedColor::Background))
+                .then(|| palette.resolve(bg_color, overrides));
             if flags.contains(Flags::INVERSE) {
                 let back = bg.unwrap_or(palette.bg);
                 bg = Some(fg);
@@ -201,26 +249,51 @@ fn prepaint(shared: &Shared, palette: &Palette, focused: bool, show_cursor: bool
             });
         }
         let cursor_row = cur.point.line.0 + offset;
-        let cursor = (show_cursor && cur.shape != CursorShape::Hidden && cursor_row >= 0 && cursor_row < screen_rows)
-            .then(|| (cursor_row as usize, cur.point.column.0, cur.shape, term.grid()[cur.point].flags.contains(Flags::WIDE_CHAR)));
+        let cursor = (show_cursor
+            && cur.shape != CursorShape::Hidden
+            && cursor_row >= 0
+            && cursor_row < screen_rows)
+            .then(|| {
+                (
+                    cursor_row as usize,
+                    cur.point.column.0,
+                    cur.shape,
+                    term.grid()[cur.point].flags.contains(Flags::WIDE_CHAR),
+                )
+            });
         (cells, cursor)
     };
 
-    let at = |row: usize, col: usize| origin + point(px(col as f32 * cell_w), px(row as f32 * line_h));
-    let mut frame = Frame { line_h: px(line_h), rects: Vec::new(), lines: Vec::new(), shapes: Vec::new(), cursor: Vec::new(), bounds };
+    let at =
+        |row: usize, col: usize| origin + point(px(col as f32 * cell_w), px(row as f32 * line_h));
+    let mut frame = Frame {
+        line_h: px(line_h),
+        rects: Vec::new(),
+        lines: Vec::new(),
+        shapes: Vec::new(),
+        cursor: Vec::new(),
+        bounds,
+    };
 
     // Backgrounds, merged along each row.
     let mut run: Option<(usize, usize, usize, Hsla)> = None; // row, start col, end col (exclusive), color
     let flush_rect = |run: &mut Option<(usize, usize, usize, Hsla)>, frame: &mut Frame| {
         if let Some((row, start, end, color)) = run.take() {
-            let b = Bounds::new(at(row, start), size(px((end - start) as f32 * cell_w), px(line_h)));
+            let b = Bounds::new(
+                at(row, start),
+                size(px((end - start) as f32 * cell_w), px(line_h)),
+            );
             frame.rects.push((b, color));
         }
     };
     for c in &cells {
         let width = if c.wide { 2 } else { 1 };
         match (c.bg, &mut run) {
-            (Some(bg), Some((row, _, end, color))) if *row == c.row && *end == c.col && *color == bg => *end += width,
+            (Some(bg), Some((row, _, end, color)))
+                if *row == c.row && *end == c.col && *color == bg =>
+            {
+                *end += width
+            }
             (Some(bg), _) => {
                 flush_rect(&mut run, &mut frame);
                 run = Some((c.row, c.col, c.col + width, bg));
@@ -237,7 +310,14 @@ fn prepaint(shared: &Shared, palette: &Palette, focused: bool, show_cursor: bool
     for c in &cells {
         if boxdraw::handles(c.c) {
             seg.flush(&mut frame, window, font_size, cell_w, &at);
-            boxdraw::draw(c.c, at(c.row, c.col), cell_w, line_h, c.fg, &mut frame.shapes);
+            boxdraw::draw(
+                c.c,
+                at(c.row, c.col),
+                cell_w,
+                line_h,
+                c.fg,
+                &mut frame.shapes,
+            );
             continue;
         }
         let blank = c.c == ' ' && c.underline.is_none() && !c.strike;
@@ -266,15 +346,30 @@ fn prepaint(shared: &Shared, palette: &Palette, focused: bool, show_cursor: bool
         let thin = 2.;
         match (shape, focused) {
             (CursorShape::Block, true) => {}
-            (CursorShape::Beam, _) => frame.cursor.push((Bounds::new(o, size(px(thin), px(line_h))), color)),
-            (CursorShape::Underline, _) => frame.cursor.push((Bounds::new(o + point(px(0.), px(line_h - thin)), size(px(w), px(thin))), color)),
+            (CursorShape::Beam, _) => frame
+                .cursor
+                .push((Bounds::new(o, size(px(thin), px(line_h))), color)),
+            (CursorShape::Underline, _) => frame.cursor.push((
+                Bounds::new(o + point(px(0.), px(line_h - thin)), size(px(w), px(thin))),
+                color,
+            )),
             _ => {
                 // Hollow block: four 1px edges.
                 let edge = 1.;
-                frame.cursor.push((Bounds::new(o, size(px(w), px(edge))), color));
-                frame.cursor.push((Bounds::new(o + point(px(0.), px(line_h - edge)), size(px(w), px(edge))), color));
-                frame.cursor.push((Bounds::new(o, size(px(edge), px(line_h))), color));
-                frame.cursor.push((Bounds::new(o + point(px(w - edge), px(0.)), size(px(edge), px(line_h))), color));
+                frame
+                    .cursor
+                    .push((Bounds::new(o, size(px(w), px(edge))), color));
+                frame.cursor.push((
+                    Bounds::new(o + point(px(0.), px(line_h - edge)), size(px(w), px(edge))),
+                    color,
+                ));
+                frame
+                    .cursor
+                    .push((Bounds::new(o, size(px(edge), px(line_h))), color));
+                frame.cursor.push((
+                    Bounds::new(o + point(px(w - edge), px(0.)), size(px(edge), px(line_h))),
+                    color,
+                ));
             }
         }
     }
@@ -300,20 +395,45 @@ impl Segment {
         if c.italic {
             font.style = FontStyle::Italic;
         }
-        let underline = c.underline.map(|wavy| UnderlineStyle { thickness: px(1.), color: Some(c.fg), wavy });
-        let strikethrough = c.strike.then(|| StrikethroughStyle { thickness: px(1.), color: Some(c.fg) });
+        let underline = c.underline.map(|wavy| UnderlineStyle {
+            thickness: px(1.),
+            color: Some(c.fg),
+            wavy,
+        });
+        let strikethrough = c.strike.then(|| StrikethroughStyle {
+            thickness: px(1.),
+            color: Some(c.fg),
+        });
         let len = c.c.len_utf8();
         self.text.push(c.c);
         if let Some(last) = self.runs.last_mut() {
-            if last.font == font && last.color == c.fg && last.underline == underline && last.strikethrough == strikethrough {
+            if last.font == font
+                && last.color == c.fg
+                && last.underline == underline
+                && last.strikethrough == strikethrough
+            {
                 last.len += len;
                 return;
             }
         }
-        self.runs.push(TextRun { len, font, color: c.fg, background_color: None, underline, strikethrough });
+        self.runs.push(TextRun {
+            len,
+            font,
+            color: c.fg,
+            background_color: None,
+            underline,
+            strikethrough,
+        });
     }
 
-    fn flush(&mut self, frame: &mut Frame, window: &mut Window, font_size: Pixels, cell_w: f32, at: &impl Fn(usize, usize) -> Point<Pixels>) {
+    fn flush(
+        &mut self,
+        frame: &mut Frame,
+        window: &mut Window,
+        font_size: Pixels,
+        cell_w: f32,
+        at: &impl Fn(usize, usize) -> Point<Pixels>,
+    ) {
         if self.text.is_empty() {
             return;
         }
@@ -321,30 +441,37 @@ impl Segment {
         let runs = std::mem::take(&mut self.runs);
         // Wide characters (CJK, emoji) get their own segment, so the grid stays aligned.
         let geometry_w = if self.wide { None } else { Some(px(cell_w)) };
-        let shaped = window.text_system().shape_line(text, font_size, &runs, geometry_w);
+        let shaped = window
+            .text_system()
+            .shape_line(text, font_size, &runs, geometry_w);
         frame.lines.push((at(self.row, self.col), shaped));
         self.wide = false;
     }
 }
 
 fn paint(frame: Frame, window: &mut Window, cx: &mut App) {
-    window.with_content_mask(Some(ContentMask { bounds: frame.bounds }), |window| {
-        for (b, color) in frame.rects {
-            window.paint_quad(fill(b, color));
-        }
-        for shape in frame.shapes {
-            match shape {
-                Shape::Rect(b, color) => window.paint_quad(fill(b, color)),
-                Shape::Path(path, color) => window.paint_path(path, color),
+    window.with_content_mask(
+        Some(ContentMask {
+            bounds: frame.bounds,
+        }),
+        |window| {
+            for (b, color) in frame.rects {
+                window.paint_quad(fill(b, color));
             }
-        }
-        for (origin, line) in frame.lines {
-            let _ = line.paint(origin, frame.line_h, window, cx);
-        }
-        for (b, color) in frame.cursor {
-            window.paint_quad(fill(b, color));
-        }
-    });
+            for shape in frame.shapes {
+                match shape {
+                    Shape::Rect(b, color) => window.paint_quad(fill(b, color)),
+                    Shape::Path(path, color) => window.paint_path(path, color),
+                }
+            }
+            for (origin, line) in frame.lines {
+                let _ = line.paint(origin, frame.line_h, window, cx);
+            }
+            for (b, color) in frame.cursor {
+                window.paint_quad(fill(b, color));
+            }
+        },
+    );
 }
 
 /// The grid cell under a window position, and which half of it.

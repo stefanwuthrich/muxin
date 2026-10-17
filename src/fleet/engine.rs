@@ -9,15 +9,18 @@ use std::time::{Duration, Instant, SystemTime};
 use chrono::{DateTime, Utc};
 use futures::stream::{FuturesUnordered, StreamExt};
 use tokio::runtime::Handle;
-use tokio::sync::{watch, Notify};
+use tokio::sync::{Notify, watch};
 
 mod roaming;
 
-use super::build::{build, Inputs};
+use super::build::{Inputs, build};
 use super::model::{CheckInfo, InventoryInfo, Operation, Snapshot};
 use super::sessions::{self, DirectSession, MachineSessions, SessionInfo, SessionNotice};
 use super::workspaces::{self as workspaces, WorkspaceRecord};
-use crate::config::{default_inventory, display_path, write_atomic, Inventory, MachineSpec, Paths, PersistedState, Settings};
+use crate::config::{
+    Inventory, MachineSpec, Paths, PersistedState, Settings, default_inventory, display_path,
+    write_atomic,
+};
 use crate::demo::World;
 use crate::github::{self, GitHubData, ScopeTest};
 use crate::probe::{self, ProbeResult};
@@ -105,7 +108,11 @@ impl Engine {
         let (inventory, inventory_info, settings, persisted) = match &world {
             Some(w) => (
                 w.inventory(),
-                InventoryInfo { path: "demo://config.toml".into(), loaded_at: Some(Utc::now()), ..Default::default() },
+                InventoryInfo {
+                    path: "demo://config.toml".into(),
+                    loaded_at: Some(Utc::now()),
+                    ..Default::default()
+                },
                 w.settings(),
                 PersistedState::default(),
             ),
@@ -113,7 +120,10 @@ impl Engine {
                 ensure_inventory(&paths);
                 (
                     Inventory::default(),
-                    InventoryInfo { path: display_path(&paths.inventory), ..Default::default() },
+                    InventoryInfo {
+                        path: display_path(&paths.inventory),
+                        ..Default::default()
+                    },
                     Settings::load(&paths.settings),
                     PersistedState::load(&paths.state),
                 )
@@ -155,7 +165,13 @@ impl Engine {
             direct: Vec::new(),
             // The demo's are there from the start (a real machine's are looked for).
             checkouts: match &world {
-                Some(w) => w.inventory().machines.iter().map(|m| (m.id.clone(), w.checkouts(&m.id))).filter(|(_, c)| !c.is_empty()).collect(),
+                Some(w) => w
+                    .inventory()
+                    .machines
+                    .iter()
+                    .map(|m| (m.id.clone(), w.checkouts(&m.id)))
+                    .filter(|(_, c)| !c.is_empty())
+                    .collect(),
                 None => HashMap::new(),
             },
             git: HashMap::new(),
@@ -188,19 +204,30 @@ impl Engine {
             }
         });
         let weak = Arc::downgrade(&engine);
-        engine.github.set_token_fetcher(Arc::new(move |machine: String, host: String| {
-            let weak = weak.clone();
-            Box::pin(async move {
-                let engine = weak.upgrade()?;
-                engine.machine_gh_token(&machine, &host).await.map_err(|e| tracing::warn!("GitHub login on {machine}: {e}")).ok()
-            })
-        }));
+        engine
+            .github
+            .set_token_fetcher(Arc::new(move |machine: String, host: String| {
+                let weak = weak.clone();
+                Box::pin(async move {
+                    let engine = weak.upgrade()?;
+                    engine
+                        .machine_gh_token(&machine, &host)
+                        .await
+                        .map_err(|e| tracing::warn!("GitHub login on {machine}: {e}"))
+                        .ok()
+                })
+            }));
         {
             let mut st = engine.state.lock().unwrap();
             if engine.demo.is_none() {
                 engine.reload_inventory(&mut st, true);
                 let known: HashSet<&String> = st.inventory.machines.iter().map(|m| &m.id).collect();
-                let stale: Vec<String> = st.probes.keys().filter(|id| !known.contains(id)).cloned().collect();
+                let stale: Vec<String> = st
+                    .probes
+                    .keys()
+                    .filter(|id| !known.contains(id))
+                    .cloned()
+                    .collect();
                 for id in stale {
                     st.probes.remove(&id);
                 }
@@ -255,7 +282,10 @@ impl Engine {
                 .machines
                 .iter()
                 .filter(|m| !m.is_down() && !m.host.is_empty())
-                .filter(|m| m.platform.starts_with("darwin") || m.probe.as_ref().and_then(|p| p.desktop) == Some(true))
+                .filter(|m| {
+                    m.platform.starts_with("darwin")
+                        || m.probe.as_ref().and_then(|p| p.desktop) == Some(true)
+                })
                 .map(|m| m.id.clone())
                 .collect();
             futures::future::join_all(ids.iter().map(|id| me.displays(id))).await;
@@ -277,7 +307,8 @@ impl Engine {
     pub fn update_settings(&self, new: Settings) -> Result<Settings, String> {
         let new = new.normalized()?;
         if self.demo.is_none() {
-            new.save(&self.paths.settings).map_err(|e| format!("Couldn't save settings: {e:#}"))?;
+            new.save(&self.paths.settings)
+                .map_err(|e| format!("Couldn't save settings: {e:#}"))?;
         }
         let favorites_only = {
             let mut st = self.state.lock().unwrap();
@@ -294,7 +325,10 @@ impl Engine {
                     super::clipboard::stop_all();
                 }
             }
-            let favorites_only = Settings { favorite_repos: new.favorite_repos.clone(), ..st.settings.clone() } == new;
+            let favorites_only = Settings {
+                favorite_repos: new.favorite_repos.clone(),
+                ..st.settings.clone()
+            } == new;
             st.settings = new.clone();
             if scopes_changed && new.github.orgs.is_empty() && new.github.repos.is_empty() {
                 st.github = None;
@@ -321,7 +355,8 @@ impl Engine {
     /// Kicks off a machine check (all machines, or one) plus a GitHub refresh.
     pub fn trigger_check(self: &Arc<Self>, machine: Option<String>) {
         let me = self.clone();
-        self.rt.spawn(async move { me.run_check(machine.map(|m| vec![m])).await });
+        self.rt
+            .spawn(async move { me.run_check(machine.map(|m| vec![m])).await });
         self.sync_now.notify_one();
     }
 
@@ -410,7 +445,13 @@ impl Engine {
     }
 
     /// Starts tracking an operation and returns its id.
-    pub(crate) fn begin_op(&self, kind: &str, title: String, machine_id: Option<String>, runner_id: Option<String>) -> u64 {
+    pub(crate) fn begin_op(
+        &self,
+        kind: &str,
+        title: String,
+        machine_id: Option<String>,
+        runner_id: Option<String>,
+    ) -> u64 {
         let mut st = self.state.lock().unwrap();
         let id = st.next_op;
         st.next_op += 1;
@@ -444,13 +485,17 @@ impl Engine {
     /// Appends output to an operation. Publishing is coalesced.
     pub(crate) fn op_log(self: &Arc<Self>, id: u64, line: impl Into<String>) {
         let mut st = self.state.lock().unwrap();
-        let Some(op) = st.operations.iter_mut().find(|o| o.id == id) else { return };
+        let Some(op) = st.operations.iter_mut().find(|o| o.id == id) else {
+            return;
+        };
         op.log.push(line.into());
         if op.log.len() > MAX_OP_LOG_LINES {
             let extra = op.log.len() - MAX_OP_LOG_LINES;
             op.log.drain(..extra);
         }
-        let due = st.last_publish.is_none_or(|t| t.elapsed() >= OP_PUBLISH_INTERVAL);
+        let due = st
+            .last_publish
+            .is_none_or(|t| t.elapsed() >= OP_PUBLISH_INTERVAL);
         if due {
             self.publish(&mut st);
         } else if !st.publish_scheduled {
@@ -492,9 +537,13 @@ impl Engine {
     /// How far along an operation is. Publishing is coalesced.
     pub(crate) fn op_progress(self: &Arc<Self>, id: u64, progress: super::model::OpProgress) {
         let mut st = self.state.lock().unwrap();
-        let Some(op) = st.operations.iter_mut().find(|o| o.id == id) else { return };
+        let Some(op) = st.operations.iter_mut().find(|o| o.id == id) else {
+            return;
+        };
         op.progress = Some(progress);
-        let due = st.last_publish.is_none_or(|t| t.elapsed() >= OP_PUBLISH_INTERVAL);
+        let due = st
+            .last_publish
+            .is_none_or(|t| t.elapsed() >= OP_PUBLISH_INTERVAL);
         if due {
             self.publish(&mut st);
         } else if !st.publish_scheduled {
@@ -530,7 +579,8 @@ impl Engine {
     pub(crate) fn set_droplet_status(&self, machine_id: &str, status: &str) {
         let mut st = self.state.lock().unwrap();
         if st.droplets.get(machine_id).map(String::as_str) != Some(status) {
-            st.droplets.insert(machine_id.to_string(), status.to_string());
+            st.droplets
+                .insert(machine_id.to_string(), status.to_string());
             self.save_state(&mut st);
             self.publish(&mut st);
         }
@@ -540,7 +590,10 @@ impl Engine {
     /// next one's, for a while), and forgets its power state.
     pub(crate) fn record_destroyed(&self, machine_id: &str, entry: crate::config::DestroyedCloud) {
         if let Err(e) = crate::config::add_cloud_history(&self.paths().cloud_history, entry) {
-            tracing::warn!("couldn't write {}: {e}", self.paths().cloud_history.display());
+            tracing::warn!(
+                "couldn't write {}: {e}",
+                self.paths().cloud_history.display()
+            );
         }
         let mut st = self.state.lock().unwrap();
         st.droplets.remove(machine_id);
@@ -554,9 +607,9 @@ impl Engine {
     /// True while another operation is changing this machine.
     pub(crate) fn machine_busy(&self, machine_id: &str) -> bool {
         let st = self.state.lock().unwrap();
-        st.operations
-            .iter()
-            .any(|o| o.status == "running" && o.kind != "logs" && o.machine_id.as_deref() == Some(machine_id))
+        st.operations.iter().any(|o| {
+            o.status == "running" && o.kind != "logs" && o.machine_id.as_deref() == Some(machine_id)
+        })
     }
 
     /// Forgets finished operations (the activity panel's "Clear").
@@ -566,20 +619,44 @@ impl Engine {
     }
 
     pub(crate) fn all_sessions(&self) -> Vec<(String, MachineSessions)> {
-        self.state.lock().unwrap().sessions.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        self.state
+            .lock()
+            .unwrap()
+            .sessions
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
     }
 
     pub(crate) fn set_sessions(&self, machine_id: &str, found: MachineSessions) {
         let mut st = self.state.lock().unwrap();
         let newest = found.events.iter().map(|e| e.at).max().unwrap_or(0);
         // The first look at a machine sets the baseline: old events don't notify.
-        if let (Some(before), Some(&since)) = (st.sessions.get(machine_id), st.event_marks.get(machine_id)) {
-            let name = st.inventory.machines.iter().find(|m| m.id == machine_id).map(|m| m.name.clone()).unwrap_or_else(|| machine_id.to_string());
-            for (session_id, kind, title, message) in sessions::new_notices(before, &found, since, &name) {
+        if let (Some(before), Some(&since)) =
+            (st.sessions.get(machine_id), st.event_marks.get(machine_id))
+        {
+            let name = st
+                .inventory
+                .machines
+                .iter()
+                .find(|m| m.id == machine_id)
+                .map(|m| m.name.clone())
+                .unwrap_or_else(|| machine_id.to_string());
+            for (session_id, kind, title, message) in
+                sessions::new_notices(before, &found, since, &name)
+            {
                 let id = st.next_notice;
                 st.next_notice += 1;
                 st.attention.insert(session_id.clone(), kind.clone());
-                st.notices.push_front(SessionNotice { id, session_id, machine_id: machine_id.to_string(), kind, title, message, at: Utc::now() });
+                st.notices.push_front(SessionNotice {
+                    id,
+                    session_id,
+                    machine_id: machine_id.to_string(),
+                    kind,
+                    title,
+                    message,
+                    at: Utc::now(),
+                });
             }
             st.notices.truncate(MAX_NOTICES);
         }
@@ -589,7 +666,10 @@ impl Engine {
         let gone: Vec<String> = st
             .attention
             .keys()
-            .filter(|id| id.starts_with(&format!("{machine_id}/")) && !found.sessions.iter().any(|s| &&s.id == id))
+            .filter(|id| {
+                id.starts_with(&format!("{machine_id}/"))
+                    && !found.sessions.iter().any(|s| &&s.id == id)
+            })
             .cloned()
             .collect();
         for id in gone {
@@ -600,11 +680,20 @@ impl Engine {
     }
 
     pub(crate) fn git_looked_at(&self, machine_id: &str) -> Option<Instant> {
-        self.state.lock().unwrap().git_looked.get(machine_id).copied()
+        self.state
+            .lock()
+            .unwrap()
+            .git_looked
+            .get(machine_id)
+            .copied()
     }
 
     pub(crate) fn set_git_looked(&self, machine_id: &str) {
-        self.state.lock().unwrap().git_looked.insert(machine_id.to_string(), Instant::now());
+        self.state
+            .lock()
+            .unwrap()
+            .git_looked
+            .insert(machine_id.to_string(), Instant::now());
     }
 
     /// What the work in a machine's folders changed (see sessions::git).
@@ -618,18 +707,39 @@ impl Engine {
     }
 
     /// A branch's pull request as GitHub said it within `fresh`.
-    pub(crate) fn cached_pull(&self, key: &(String, String), fresh: std::time::Duration) -> Option<Option<crate::github::hub::BranchPull>> {
-        self.state.lock().unwrap().pulls.get(key).filter(|(at, _)| at.elapsed() < fresh).map(|(_, p)| p.clone())
+    pub(crate) fn cached_pull(
+        &self,
+        key: &(String, String),
+        fresh: std::time::Duration,
+    ) -> Option<Option<crate::github::hub::BranchPull>> {
+        self.state
+            .lock()
+            .unwrap()
+            .pulls
+            .get(key)
+            .filter(|(at, _)| at.elapsed() < fresh)
+            .map(|(_, p)| p.clone())
     }
 
-    pub(crate) fn cache_pull(&self, key: (String, String), pull: Option<crate::github::hub::BranchPull>) {
+    pub(crate) fn cache_pull(
+        &self,
+        key: (String, String),
+        pull: Option<crate::github::hub::BranchPull>,
+    ) {
         let mut st = self.state.lock().unwrap();
-        st.pulls.retain(|_, (at, _)| at.elapsed() < std::time::Duration::from_secs(3600));
+        st.pulls
+            .retain(|_, (at, _)| at.elapsed() < std::time::Duration::from_secs(3600));
         st.pulls.insert(key, (Instant::now(), pull));
     }
 
     pub(crate) fn checkouts_of(&self, machine_id: &str) -> Vec<super::model::Checkout> {
-        self.state.lock().unwrap().checkouts.get(machine_id).cloned().unwrap_or_default()
+        self.state
+            .lock()
+            .unwrap()
+            .checkouts
+            .get(machine_id)
+            .cloned()
+            .unwrap_or_default()
     }
 
     pub(crate) fn set_checkouts(&self, machine_id: &str, found: Vec<super::model::Checkout>) {
@@ -639,7 +749,13 @@ impl Engine {
     }
 
     pub(crate) fn direct_session(&self, id: &str) -> Option<DirectSession> {
-        self.state.lock().unwrap().direct.iter().find(|d| d.info.id == id).cloned()
+        self.state
+            .lock()
+            .unwrap()
+            .direct
+            .iter()
+            .find(|d| d.info.id == id)
+            .cloned()
     }
 
     pub(crate) fn add_direct(&self, d: DirectSession) {
@@ -697,7 +813,10 @@ impl Engine {
 
     /// Changes the workspaces: in demo mode in memory, otherwise in workspaces.json
     /// under its lock (re-read first, so other processes' changes survive).
-    pub(crate) fn update_workspaces<R>(&self, f: impl FnOnce(&mut Vec<WorkspaceRecord>) -> R) -> Result<R, String> {
+    pub(crate) fn update_workspaces<R>(
+        &self,
+        f: impl FnOnce(&mut Vec<WorkspaceRecord>) -> R,
+    ) -> Result<R, String> {
         if self.demo.is_some() {
             let mut st = self.state.lock().unwrap();
             let result = f(&mut st.workspaces);
@@ -754,14 +873,20 @@ impl Engine {
             let new_machines: Vec<String> = {
                 let st = self.state.lock().unwrap();
                 if st.inventory.machines.len() != before {
-                    st.inventory.machines.iter().filter(|m| !st.probes.contains_key(&m.id)).map(|m| m.id.clone()).collect()
+                    st.inventory
+                        .machines
+                        .iter()
+                        .filter(|m| !st.probes.contains_key(&m.id))
+                        .map(|m| m.id.clone())
+                        .collect()
                 } else {
                     Vec::new()
                 }
             };
             if !new_machines.is_empty() {
                 let me = self.clone();
-                self.rt.spawn(async move { me.run_check(Some(new_machines)).await });
+                self.rt
+                    .spawn(async move { me.run_check(Some(new_machines)).await });
             }
         }
     }
@@ -800,30 +925,62 @@ impl Engine {
     async fn follow_link(self: Arc<Self>, link: Arc<super::link::Link>) {
         // The shared clipboard rides along (machines with a desktop; not this computer).
         let share = self.state.lock().unwrap().settings.share_clipboard;
-        if share && self.machine(&link.machine).is_some_and(|(spec, _)| !spec.is_local()) {
+        if share
+            && self
+                .machine(&link.machine)
+                .is_some_and(|(spec, _)| !spec.is_local())
+        {
             self.rt.spawn(super::clipboard::share(link.clone()));
         }
         // A paired machine's local addresses change (DHCP, another network):
         // keep them current, so the next direct connection takes the short way.
         if let Some(mut paired) = super::direct::paired(&link.machine) {
-            if let Ok(r) = link.request(serde_json::json!({ "op": "addresses" }), Duration::from_secs(10)).await {
-                let list = |k: &str| -> Vec<String> { r[k].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default() };
+            if let Ok(r) = link
+                .request(
+                    serde_json::json!({ "op": "addresses" }),
+                    Duration::from_secs(10),
+                )
+                .await
+            {
+                let list = |k: &str| -> Vec<String> {
+                    r[k].as_array()
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|v| v.as_str().map(str::to_string))
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                };
                 // Agents before 0.2.1 don't report Tailscale addresses: keep what we had.
-                let (lan, tailnet) = (list("addresses"), if r["tailnet"].is_array() { list("tailnet") } else { paired.tailnet.clone() });
-                if r["ok"].as_bool() == Some(true) && (lan != paired.lan || tailnet != paired.tailnet) {
+                let (lan, tailnet) = (
+                    list("addresses"),
+                    if r["tailnet"].is_array() {
+                        list("tailnet")
+                    } else {
+                        paired.tailnet.clone()
+                    },
+                );
+                if r["ok"].as_bool() == Some(true)
+                    && (lan != paired.lan || tailnet != paired.tailnet)
+                {
                     let lan_changed = lan != paired.lan;
                     paired.lan = lan;
                     paired.tailnet = tailnet;
                     let _ = super::direct::save(&link.machine, Some(paired));
                     // Reconnect the short way, unless this link already is.
-                    if lan_changed && (link.transport() != "direct" || link.network() != Some("Local network")) {
+                    if lan_changed
+                        && (link.transport() != "direct" || link.network() != Some("Local network"))
+                    {
                         super::link::reset(&link.machine);
                     }
                 }
             }
             // Through Tailscale while the machine may be right here: look again
             // in a moment, once the dust settles.
-            if link.alive() && link.transport() == "direct" && link.network() != Some("Local network") {
+            if link.alive()
+                && link.transport() == "direct"
+                && link.network() != Some("Local network")
+            {
                 let (me, id) = (self.clone(), link.machine.clone());
                 self.rt.spawn(async move {
                     tokio::time::sleep(Duration::from_secs(3)).await;
@@ -832,7 +989,14 @@ impl Engine {
             }
         }
         let mut events = link.subscribe();
-        if link.request(serde_json::json!({ "op": "watch" }), Duration::from_secs(10)).await.is_ok() {
+        if link
+            .request(
+                serde_json::json!({ "op": "watch" }),
+                Duration::from_secs(10),
+            )
+            .await
+            .is_ok()
+        {
             loop {
                 tokio::select! {
                     e = events.recv() => match e {
@@ -869,15 +1033,30 @@ impl Engine {
         // At startup, look everywhere the last check reached.
         let reachable: Vec<String> = {
             let st = self.state.lock().unwrap();
-            st.inventory.machines.iter().filter(|m| m.is_connected() && st.probes.get(&m.id).is_some_and(|p| p.ok)).map(|m| m.id.clone()).collect()
+            st.inventory
+                .machines
+                .iter()
+                .filter(|m| m.is_connected() && st.probes.get(&m.id).is_some_and(|p| p.ok))
+                .map(|m| m.id.clone())
+                .collect()
         };
-        let mut first: FuturesUnordered<_> = reachable.iter().map(|id| self.refresh_sessions(id)).collect();
+        let mut first: FuturesUnordered<_> = reachable
+            .iter()
+            .map(|id| self.refresh_sessions(id))
+            .collect();
         while first.next().await.is_some() {}
         loop {
             tokio::time::sleep(sessions::REFRESH_EVERY).await;
-            let ids: Vec<String> = self.machines_with_sessions().into_iter().filter(|id| self.machine(id).is_some_and(|(spec, _)| !spec.disconnected)).collect();
+            let ids: Vec<String> = self
+                .machines_with_sessions()
+                .into_iter()
+                .filter(|id| self.machine(id).is_some_and(|(spec, _)| !spec.disconnected))
+                .collect();
             // A slow machine doesn't hold up the rest for long.
-            let mut pending: FuturesUnordered<_> = ids.iter().map(|id| tokio::time::timeout(Duration::from_secs(15), self.refresh_sessions(id))).collect();
+            let mut pending: FuturesUnordered<_> = ids
+                .iter()
+                .map(|id| tokio::time::timeout(Duration::from_secs(15), self.refresh_sessions(id)))
+                .collect();
             while pending.next().await.is_some() {}
         }
     }
@@ -903,11 +1082,17 @@ impl Engine {
                     .filter(|m| {
                         // Tailscale says when a machine on the tailnet is back
                         // (see roaming.rs); those only need an occasional look.
-                        let watched = st.tailscale.as_ref().is_some_and(|t| t.running) && st.tailnet.contains_key(&m.id);
+                        let watched = st.tailscale.as_ref().is_some_and(|t| t.running)
+                            && st.tailnet.contains_key(&m.id);
                         st.probes.get(&m.id).is_some_and(|p| {
                             !p.ok
-                                && super::build::comes_back_by_itself(super::build::unreachable_kind(p.error.as_deref().unwrap_or("")))
-                                && (!watched || Utc::now() - p.checked_at > chrono::Duration::minutes(3))
+                                && super::build::comes_back_by_itself(
+                                    super::build::unreachable_kind(
+                                        p.error.as_deref().unwrap_or(""),
+                                    ),
+                                )
+                                && (!watched
+                                    || Utc::now() - p.checked_at > chrono::Duration::minutes(3))
                         })
                     })
                     .map(|m| m.id.clone())
@@ -974,10 +1159,13 @@ impl Engine {
                 st.checking.insert(s.id.clone());
             }
             self.publish(&mut st);
-            specs.into_iter().map(|s| {
-                let shell = st.probes.get(&s.id).and_then(|p| p.shell);
-                (s, shell)
-            }).collect()
+            specs
+                .into_iter()
+                .map(|s| {
+                    let shell = st.probes.get(&s.id).and_then(|p| p.shell);
+                    (s, shell)
+                })
+                .collect()
         };
 
         let mut pending: FuturesUnordered<_> = jobs
@@ -1001,7 +1189,8 @@ impl Engine {
                     self.set_droplet_status(&id, "active");
                 } else {
                     let (me, id) = (self.clone(), id.clone());
-                    self.rt.spawn(async move { me.refresh_droplet_status(&id, droplet).await });
+                    self.rt
+                        .spawn(async move { me.refresh_droplet_status(&id, droplet).await });
                 }
             }
             let mut st = self.state.lock().unwrap();
@@ -1029,7 +1218,8 @@ impl Engine {
         if full {
             st.check_running = false;
             st.check_finished_at = Some(Utc::now());
-            let known: HashSet<String> = st.inventory.machines.iter().map(|m| m.id.clone()).collect();
+            let known: HashSet<String> =
+                st.inventory.machines.iter().map(|m| m.id.clone()).collect();
             st.probes.retain(|id, _| known.contains(id));
             self.settings_changed.notify_waiters(); // reschedule the next automatic check
         }
@@ -1053,7 +1243,10 @@ impl Engine {
         if loaded == st.settings {
             return false;
         }
-        if loaded.github != st.settings.github && loaded.github.orgs.is_empty() && loaded.github.repos.is_empty() {
+        if loaded.github != st.settings.github
+            && loaded.github.orgs.is_empty()
+            && loaded.github.repos.is_empty()
+        {
             st.github = None;
         }
         st.settings = loaded;
@@ -1088,18 +1281,31 @@ impl Engine {
         }
         st.state_mtime = modified;
         let disk = PersistedState::load(&self.paths.state);
-        let known: HashSet<&str> = st.inventory.machines.iter().map(|m| m.id.as_str()).collect();
+        let known: HashSet<&str> = st
+            .inventory
+            .machines
+            .iter()
+            .map(|m| m.id.as_str())
+            .collect();
         let mut newer = Vec::new();
         for (id, probe) in disk.probes {
             let ours = st.probes.get(&id).map(|p| p.checked_at);
-            if known.contains(id.as_str()) && !st.checking.contains(&id) && ours.is_none_or(|t| probe.checked_at > t) {
+            if known.contains(id.as_str())
+                && !st.checking.contains(&id)
+                && ours.is_none_or(|t| probe.checked_at > t)
+            {
                 newer.push((id, probe));
             }
         }
         let mut changed = !newer.is_empty();
         st.probes.extend(newer);
         for (id, device) in disk.tailnet {
-            if known.contains(id.as_str()) && st.tailnet.get(&id).is_none_or(|d| device.read_at > d.read_at) {
+            if known.contains(id.as_str())
+                && st
+                    .tailnet
+                    .get(&id)
+                    .is_none_or(|d| device.read_at > d.read_at)
+            {
                 st.tailnet.insert(id, device);
                 changed = true;
             }
@@ -1174,9 +1380,14 @@ impl Engine {
         });
         snapshot.version = st.version;
         snapshot.operations = st.operations.iter().cloned().collect();
-        snapshot.workspaces = workspaces::snapshot_infos(&st.workspaces, &snapshot.machines, &st.inventory.machines);
+        snapshot.workspaces =
+            workspaces::snapshot_infos(&st.workspaces, &snapshot.machines, &st.inventory.machines);
         for w in &mut snapshot.workspaces {
-            w.git = st.git.get(&w.machine_id).and_then(|g| g.iter().find(|(path, _)| *path == w.path)).map(|(_, status)| status.clone());
+            w.git = st
+                .git
+                .get(&w.machine_id)
+                .and_then(|g| g.iter().find(|(path, _)| *path == w.path))
+                .map(|(_, status)| status.clone());
         }
         for m in &mut snapshot.machines {
             if let Some(d) = st.displays.get(&m.id) {
@@ -1191,23 +1402,42 @@ impl Engine {
                 // (or disconnected: nothing we can see).
                 let offline = m.is_down();
                 let git = st.git.get(&m.id);
-                snapshot.sessions.extend(found.sessions.iter().cloned().map(|mut s| {
-                    s.attention = st.attention.get(&s.id).cloned().or(s.attention);
-                    s.busy &= !offline;
-                    s.git = git.and_then(|g| g.iter().find(|(path, _)| *path == s.cwd)).map(|(_, status)| status.clone());
-                    s
-                }));
+                snapshot
+                    .sessions
+                    .extend(found.sessions.iter().cloned().map(|mut s| {
+                        s.attention = st.attention.get(&s.id).cloned().or(s.attention);
+                        s.busy &= !offline;
+                        s.git = git
+                            .and_then(|g| g.iter().find(|(path, _)| *path == s.cwd))
+                            .map(|(_, status)| status.clone());
+                        s
+                    }));
             }
         }
         // Sessions without the agent come after the machine's agent ones.
         for d in &st.direct {
-            let at = snapshot.sessions.iter().rposition(|s| s.machine_id == d.info.machine_id).map(|i| i + 1).unwrap_or(snapshot.sessions.len());
+            let at = snapshot
+                .sessions
+                .iter()
+                .rposition(|s| s.machine_id == d.info.machine_id)
+                .map(|i| i + 1)
+                .unwrap_or(snapshot.sessions.len());
             snapshot.sessions.insert(at, d.info.clone());
         }
         snapshot.notifications = st.notices.iter().cloned().collect();
         let known: Vec<&String> = st.inventory.machines.iter().map(|m| &m.id).collect();
-        snapshot.checkouts = st.checkouts.iter().filter(|(id, _)| known.contains(id)).flat_map(|(_, c)| c.iter().cloned()).collect();
-        snapshot.checkouts.sort_by(|a, b| a.repo.cmp(&b.repo).then(a.machine_id.cmp(&b.machine_id)).then(a.path.cmp(&b.path)));
+        snapshot.checkouts = st
+            .checkouts
+            .iter()
+            .filter(|(id, _)| known.contains(id))
+            .flat_map(|(_, c)| c.iter().cloned())
+            .collect();
+        snapshot.checkouts.sort_by(|a, b| {
+            a.repo
+                .cmp(&b.repo)
+                .then(a.machine_id.cmp(&b.machine_id))
+                .then(a.path.cmp(&b.path))
+        });
         self.tx.send_replace(Arc::new(snapshot));
     }
 }
@@ -1237,7 +1467,11 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("muxen-xproc-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("config.toml"), "[[machine]]\nname = \"Box\"\nhost = \"box.invalid\"\n").unwrap();
+        std::fs::write(
+            dir.join("config.toml"),
+            "[[machine]]\nname = \"Box\"\nhost = \"box.invalid\"\n",
+        )
+        .unwrap();
         let paths = Paths::resolve(Some(dir.clone()), None);
         let window = Engine::new(paths.clone(), false);
         let agent = Engine::new(paths.clone(), false);
@@ -1271,7 +1505,11 @@ mod tests {
         write(probe(false, 30));
         std::thread::sleep(Duration::from_millis(5));
         window.refresh_from_disk();
-        assert_eq!(window.current().machines[0].status, "online", "an older check must not win");
+        assert_eq!(
+            window.current().machines[0].status,
+            "online",
+            "an older check must not win"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

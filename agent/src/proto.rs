@@ -28,7 +28,10 @@ pub fn read_frame(r: &mut impl Read) -> io::Result<(u8, Vec<u8>)> {
     r.read_exact(&mut head)?;
     let len = u32::from_be_bytes([head[1], head[2], head[3], head[4]]) as usize;
     if len > MAX_FRAME {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "frame too large"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "frame too large",
+        ));
     }
     let mut payload = vec![0u8; len];
     r.read_exact(&mut payload)?;
@@ -47,7 +50,10 @@ pub fn read_line(r: &mut impl Read) -> io::Result<Value> {
     let mut byte = [0u8; 1];
     loop {
         if r.read(&mut byte)? == 0 {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "connection closed"));
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "connection closed",
+            ));
         }
         if byte[0] == b'\n' {
             break;

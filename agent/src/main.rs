@@ -17,26 +17,26 @@
 mod client;
 mod clipboard;
 mod daemon;
-mod detect;
 mod desktop;
+mod detect;
+mod direct;
 #[cfg(unix)]
 mod displays;
-mod logs;
-mod ports;
-mod procs;
-mod usage;
-mod wake;
-mod root;
-mod services;
-mod direct;
 mod files;
 mod gui;
 mod link;
+mod logs;
+mod ports;
+mod procs;
 mod proto;
 mod repos;
+mod root;
 mod schedules;
 mod screen;
+mod services;
 mod sys;
+mod usage;
+mod wake;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod win;
 #[cfg(windows)]
@@ -96,7 +96,9 @@ fn usage() -> i32 {
 /// FNV-1a of this executable. Muxen compares it with the build it ships to
 /// decide whether to upload a new one.
 pub fn self_hash() -> String {
-    let bytes = std::env::current_exe().and_then(std::fs::read).unwrap_or_default();
+    let bytes = std::env::current_exe()
+        .and_then(std::fs::read)
+        .unwrap_or_default();
     format!("{:016x}", fnv(&bytes))
 }
 
@@ -146,5 +148,8 @@ pub fn socket_path() -> PathBuf {
 }
 
 pub fn now() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }

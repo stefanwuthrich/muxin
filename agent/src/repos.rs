@@ -12,8 +12,27 @@ use serde_json::{Value, json};
 /// Folders that never hold checkouts worth listing, are huge, or (on macOS)
 /// are privacy-protected, where even looking makes the system ask the user.
 const SKIP: &[&str] = &[
-    "node_modules", "target", "vendor", "dist", "build", "out", "Pods", "DerivedData", "Library", "venv", "__pycache__",
-    "Applications", "Movies", "Music", "Pictures", "Desktop", "Documents", "Downloads", "Public", "go", "snap",
+    "node_modules",
+    "target",
+    "vendor",
+    "dist",
+    "build",
+    "out",
+    "Pods",
+    "DerivedData",
+    "Library",
+    "venv",
+    "__pycache__",
+    "Applications",
+    "Movies",
+    "Music",
+    "Pictures",
+    "Desktop",
+    "Documents",
+    "Downloads",
+    "Public",
+    "go",
+    "snap",
 ];
 const MAX_REPOS: usize = 300;
 
@@ -40,7 +59,9 @@ fn walk(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
     if depth == 0 {
         return;
     }
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     let mut children: Vec<PathBuf> = entries
         .filter_map(Result::ok)
         .filter(|e| e.file_type().is_ok_and(|t| t.is_dir())) // not following symlinks
@@ -69,7 +90,9 @@ fn git(dir: &Path, args: &[&str]) -> Option<String> {
         .stderr(Stdio::null())
         .output()
         .ok()?;
-    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// A checkout's branch and where it stands, from `git status`.
@@ -94,8 +117,14 @@ fn status(dir: &Path) -> Status {
             s.upstream = Some(v.to_string());
         } else if let Some(v) = line.strip_prefix("# branch.ab ") {
             let mut parts = v.split(' ');
-            s.ahead = parts.next().and_then(|a| a.trim_start_matches('+').parse().ok()).unwrap_or(0);
-            s.behind = parts.next().and_then(|b| b.trim_start_matches('-').parse().ok()).unwrap_or(0);
+            s.ahead = parts
+                .next()
+                .and_then(|a| a.trim_start_matches('+').parse().ok())
+                .unwrap_or(0);
+            s.behind = parts
+                .next()
+                .and_then(|b| b.trim_start_matches('-').parse().ok())
+                .unwrap_or(0);
         } else if !line.starts_with('#') && !line.is_empty() {
             s.dirty += 1;
             if line.starts_with("? ") {
@@ -107,7 +136,9 @@ fn status(dir: &Path) -> Status {
 }
 
 fn origin(dir: &Path) -> Option<String> {
-    git(dir, &["config", "--get", "remote.origin.url"]).map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+    git(dir, &["config", "--get", "remote.origin.url"])
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 /// One checkout's state.
@@ -133,18 +164,38 @@ fn describe(dir: &Path) -> Value {
 /// (`origin/HEAD`), uncommitted changes included. `{"git": false}` outside one.
 pub fn info(path: &str) -> Value {
     let dir = expand(path);
-    let Some(root) = git(&dir, &["rev-parse", "--show-toplevel"]).map(|r| r.trim().to_string()) else {
+    let Some(root) = git(&dir, &["rev-parse", "--show-toplevel"]).map(|r| r.trim().to_string())
+    else {
         return json!({ "path": path, "git": false });
     };
     let s = status(&dir);
-    let base = git(&dir, &["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"])
-        .map(|b| b.trim().to_string())
-        .or_else(|| ["origin/main", "origin/master"].iter().find(|b| git(&dir, &["rev-parse", "--verify", "--quiet", b]).is_some()).map(|b| b.to_string()));
-    let fork = base.as_deref().and_then(|b| git(&dir, &["merge-base", "HEAD", b])).map(|m| m.trim().to_string());
+    let base = git(
+        &dir,
+        &[
+            "symbolic-ref",
+            "--quiet",
+            "--short",
+            "refs/remotes/origin/HEAD",
+        ],
+    )
+    .map(|b| b.trim().to_string())
+    .or_else(|| {
+        ["origin/main", "origin/master"]
+            .iter()
+            .find(|b| git(&dir, &["rev-parse", "--verify", "--quiet", b]).is_some())
+            .map(|b| b.to_string())
+    });
+    let fork = base
+        .as_deref()
+        .and_then(|b| git(&dir, &["merge-base", "HEAD", b]))
+        .map(|m| m.trim().to_string());
     let (mut files, mut added, mut removed, mut commits) = (0u64, 0u64, 0u64, 0u64);
     if let Some(m) = &fork {
-        (files, added, removed) = shortstat(&git(&dir, &["diff", "--shortstat", m]).unwrap_or_default());
-        commits = git(&dir, &["rev-list", "--count", &format!("{m}..HEAD")]).and_then(|c| c.trim().parse().ok()).unwrap_or(0);
+        (files, added, removed) =
+            shortstat(&git(&dir, &["diff", "--shortstat", m]).unwrap_or_default());
+        commits = git(&dir, &["rev-list", "--count", &format!("{m}..HEAD")])
+            .and_then(|c| c.trim().parse().ok())
+            .unwrap_or(0);
     }
     json!({
         "path": path,
@@ -172,7 +223,10 @@ fn shortstat(text: &str) -> (u64, u64, u64) {
     let mut out = (0, 0, 0);
     for part in text.split(',') {
         let mut words = part.split_whitespace();
-        let (Some(n), Some(what)) = (words.next().and_then(|n| n.parse().ok()), words.next()) else { continue };
+        let (Some(n), Some(what)) = (words.next().and_then(|n| n.parse().ok()), words.next())
+        else {
+            continue;
+        };
         match what {
             w if w.starts_with("file") => out.0 = n,
             w if w.starts_with("insertion") => out.1 = n,
@@ -193,7 +247,9 @@ pub fn scan(roots: &[String]) -> Vec<Value> {
             _ => (root.as_str(), 3),
         };
         // ~/developer and ~/Developer are one folder on a case-insensitive disk.
-        let Ok(dir) = std::fs::canonicalize(expand(dir)) else { continue };
+        let Ok(dir) = std::fs::canonicalize(expand(dir)) else {
+            continue;
+        };
         if dir.is_dir() && !seen_roots.contains(&dir) {
             seen_roots.push(dir.clone());
             walk(&dir, depth, &mut found);
@@ -202,7 +258,11 @@ pub fn scan(roots: &[String]) -> Vec<Value> {
     // git is quick per checkout, but there can be many: a few at a time.
     let mut out = Vec::with_capacity(found.len());
     for chunk in found.chunks(8) {
-        let handles: Vec<_> = chunk.iter().cloned().map(|d| thread::spawn(move || describe(&d))).collect();
+        let handles: Vec<_> = chunk
+            .iter()
+            .cloned()
+            .map(|d| thread::spawn(move || describe(&d)))
+            .collect();
         out.extend(handles.into_iter().filter_map(|h| h.join().ok()));
     }
     out
@@ -220,13 +280,33 @@ pub fn act(path: &str, action: &str) -> Result<String, String> {
         "push" => &["push"],
         other => return Err(format!("unknown git action \"{other}\"")),
     };
-    let out = run_with_timeout(Command::new("git").arg("-C").arg(&dir).args(args).env("GIT_TERMINAL_PROMPT", "0"), Duration::from_secs(120))?;
+    let out = run_with_timeout(
+        Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(args)
+            .env("GIT_TERMINAL_PROMPT", "0"),
+        Duration::from_secs(120),
+    )?;
     let text = format!("{}{}", out.1, out.2).trim().to_string();
-    if out.0 { Ok(text) } else { Err(if text.is_empty() { format!("git {action} failed") } else { text }) }
+    if out.0 {
+        Ok(text)
+    } else {
+        Err(if text.is_empty() {
+            format!("git {action} failed")
+        } else {
+            text
+        })
+    }
 }
 
 fn run_with_timeout(cmd: &mut Command, limit: Duration) -> Result<(bool, String, String), String> {
-    let child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| e.to_string())?;
+    let child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
     let started = Instant::now();
     let id = child.id();
     let (tx, rx) = std::sync::mpsc::channel();
@@ -236,7 +316,11 @@ fn run_with_timeout(cmd: &mut Command, limit: Duration) -> Result<(bool, String,
     loop {
         if let Ok(out) = rx.try_recv() {
             let out = out.map_err(|e| e.to_string())?;
-            return Ok((out.status.success(), String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned()));
+            return Ok((
+                out.status.success(),
+                String::from_utf8_lossy(&out.stdout).into_owned(),
+                String::from_utf8_lossy(&out.stderr).into_owned(),
+            ));
         }
         if started.elapsed() > limit {
             crate::sys::kill_one(id, false);
@@ -248,15 +332,25 @@ fn run_with_timeout(cmd: &mut Command, limit: Duration) -> Result<(bool, String,
 
 /// Whether the GitHub CLI is here and signed in (for agents that use it).
 pub fn gh_status(path_dirs: &[String]) -> Value {
-    let gh = path_dirs.iter().map(|d| Path::new(d).join("gh")).find(|p| p.is_file());
-    let Some(gh) = gh else { return json!({ "installed": false }) };
-    let out = run_with_timeout(Command::new(&gh).args(["auth", "status", "--hostname", "github.com"]), Duration::from_secs(8));
+    let gh = path_dirs
+        .iter()
+        .map(|d| Path::new(d).join("gh"))
+        .find(|p| p.is_file());
+    let Some(gh) = gh else {
+        return json!({ "installed": false });
+    };
+    let out = run_with_timeout(
+        Command::new(&gh).args(["auth", "status", "--hostname", "github.com"]),
+        Duration::from_secs(8),
+    );
     let (ok, stdout, stderr) = out.unwrap_or((false, String::new(), String::new()));
     let text = format!("{stdout}{stderr}");
     // "Logged in to github.com account octocat" (newer) or "... as octocat" (older).
     let account = text.lines().find_map(|l| {
         let l = l.trim().trim_start_matches('✓').trim();
-        let rest = l.strip_prefix("Logged in to github.com account ").or_else(|| l.strip_prefix("Logged in to github.com as "))?;
+        let rest = l
+            .strip_prefix("Logged in to github.com account ")
+            .or_else(|| l.strip_prefix("Logged in to github.com as "))?;
         rest.split_whitespace().next().map(str::to_string)
     });
     json!({ "installed": true, "path": gh.display().to_string(), "logged_in": ok && account.is_some(), "account": account })
@@ -268,7 +362,10 @@ mod tests {
 
     #[test]
     fn reads_shortstat() {
-        assert_eq!(shortstat(" 3 files changed, 120 insertions(+), 40 deletions(-)\n"), (3, 120, 40));
+        assert_eq!(
+            shortstat(" 3 files changed, 120 insertions(+), 40 deletions(-)\n"),
+            (3, 120, 40)
+        );
         assert_eq!(shortstat(" 1 file changed, 1 insertion(+)\n"), (1, 1, 0));
         assert_eq!(shortstat(" 2 files changed, 7 deletions(-)\n"), (2, 0, 7));
         assert_eq!(shortstat(""), (0, 0, 0));
@@ -282,8 +379,21 @@ mod tests {
         let (origin, work) = (tmp.join("origin"), tmp.join("work"));
         std::fs::create_dir_all(&origin).unwrap();
         let run = |dir: &Path, args: &[&str]| {
-            let ok = Command::new("git").arg("-C").arg(dir).args(args).env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@t").env("GIT_COMMITTER_NAME", "t").env("GIT_COMMITTER_EMAIL", "t@t").output().unwrap();
-            assert!(ok.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&ok.stderr));
+            let ok = Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@t")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@t")
+                .output()
+                .unwrap();
+            assert!(
+                ok.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&ok.stderr)
+            );
         };
         run(&origin, &["init", "-q", "-b", "main"]);
         std::fs::write(origin.join("a.txt"), "one\ntwo\n").unwrap();
@@ -299,14 +409,46 @@ mod tests {
         assert_eq!(v["git"], true);
         assert_eq!(v["branch"], "fix");
         assert_eq!(v["base"], "origin/main");
-        assert_eq!((v["commits"].as_u64(), v["added"].as_u64(), v["removed"].as_u64()), (Some(1), Some(2), Some(1)));
+        assert_eq!(
+            (
+                v["commits"].as_u64(),
+                v["added"].as_u64(),
+                v["removed"].as_u64()
+            ),
+            (Some(1), Some(2), Some(1))
+        );
         // a.txt changed, new.txt is new.
-        assert_eq!((v["files"].as_u64(), v["untracked"].as_u64(), v["dirty"].as_u64()), (Some(2), Some(1), Some(1)));
+        assert_eq!(
+            (
+                v["files"].as_u64(),
+                v["untracked"].as_u64(),
+                v["dirty"].as_u64()
+            ),
+            (Some(2), Some(1), Some(1))
+        );
         assert_eq!(v["worktree"], false);
 
-        run(&work, &["worktree", "add", "-q", "-b", "other", tmp.join("wt").to_str().unwrap(), "origin/main"]);
+        run(
+            &work,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "other",
+                tmp.join("wt").to_str().unwrap(),
+                "origin/main",
+            ],
+        );
         let wt = info(tmp.join("wt").to_str().unwrap());
-        assert_eq!((wt["branch"].as_str(), wt["worktree"].as_bool(), wt["files"].as_u64()), (Some("other"), Some(true), Some(0)));
+        assert_eq!(
+            (
+                wt["branch"].as_str(),
+                wt["worktree"].as_bool(),
+                wt["files"].as_u64()
+            ),
+            (Some("other"), Some(true), Some(0))
+        );
 
         assert_eq!(info(tmp.to_str().unwrap())["git"], false);
         let _ = std::fs::remove_dir_all(&tmp);

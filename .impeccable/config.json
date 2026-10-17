@@ -1,0 +1,35 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "geist mono",
+        "createdAt": "2026-10-17T17:29:31.413Z",
+        "reason": "diagram-design skill, attached by the user, requires Geist Mono for sublabels, eyebrows, and arrow labels"
+      },
+      {
+        "rule": "overused-font",
+        "value": "instrument serif",
+        "createdAt": "2026-10-17T17:29:31.420Z",
+        "reason": "diagram-design skill, attached by the user, requires Instrument Serif for the diagram title"
+      },
+      {
+        "rule": "overused-font",
+        "value": "geist",
+        "createdAt": "2026-10-17T17:29:31.426Z",
+        "reason": "diagram-design skill, attached by the user, requires Geist for node names"
+      },
+      {
+        "rule": "undersized-ui-text",
+        "value": "*",
+        "files": [
+          "docs/diagrams/architecture.html"
+        ],
+        "createdAt": "2026-10-17T17:29:31.432Z",
+        "reason": "diagram-design doc-inline ramp sets node names at 12px and labels at 7-9px; raising them fails that skill's type ramp"
+      }
+    ]
+  }
+}

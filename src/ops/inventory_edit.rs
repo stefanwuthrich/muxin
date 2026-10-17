@@ -7,15 +7,18 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Mutex;
 
-use toml_edit::{value, Array, ArrayOfTables, DocumentMut, Item, Table};
+use toml_edit::{Array, ArrayOfTables, DocumentMut, Item, Table, value};
 
-use crate::config::{assign_machine_id, display_path, write_atomic, Inventory};
+use crate::config::{Inventory, assign_machine_id, display_path, write_atomic};
 
 /// Serializes edits so two operations finishing together don't drop each other's change.
 static FILE_LOCK: Mutex<()> = Mutex::new(());
 
 /// Reads the file (missing is fine), applies `edit`, validates and writes it back atomically.
-pub fn edit_file(path: &Path, edit: impl FnOnce(&str) -> Result<String, String>) -> Result<(), String> {
+pub fn edit_file(
+    path: &Path,
+    edit: impl FnOnce(&str) -> Result<String, String>,
+) -> Result<(), String> {
     let _guard = FILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
@@ -23,7 +26,8 @@ pub fn edit_file(path: &Path, edit: impl FnOnce(&str) -> Result<String, String>)
         Err(e) => return Err(format!("Couldn't read {}: {e}", display_path(path))),
     };
     let updated = edit(&text)?;
-    write_atomic(path, updated.as_bytes()).map_err(|e| format!("Couldn't write {}: {e:#}", display_path(path)))
+    write_atomic(path, updated.as_bytes())
+        .map_err(|e| format!("Couldn't write {}: {e:#}", display_path(path)))
 }
 
 /// Appends a `[[machine]]` with `name` and `host`. Returns the new text and the machine's id.
@@ -39,8 +43,13 @@ pub fn add_machine(text: &str, name: &str, host: &str) -> Result<(String, String
     let (attached, rest) = (attached.to_string(), rest.to_string());
     {
         let machines = machines_mut(&mut doc)?;
-        if machines.iter().any(|t| table_name(t).eq_ignore_ascii_case(name)) {
-            return Err(format!("A machine called \"{name}\" is already in config.toml."));
+        if machines
+            .iter()
+            .any(|t| table_name(t).eq_ignore_ascii_case(name))
+        {
+            return Err(format!(
+                "A machine called \"{name}\" is already in config.toml."
+            ));
         }
         let mut table = Table::new();
         table["name"] = value(name);
@@ -65,7 +74,12 @@ pub fn remove_machine(text: &str, machine_id: &str) -> Result<String, String> {
     let mut doc = parse(text)?;
     let machines = machines_mut(&mut doc)?;
     let index = find_machine(machines, machine_id)?;
-    let prefix = machines.get(index).and_then(|t| t.decor().prefix()).and_then(|p| p.as_str()).unwrap_or("").to_string();
+    let prefix = machines
+        .get(index)
+        .and_then(|t| t.decor().prefix())
+        .and_then(|p| p.as_str())
+        .unwrap_or("")
+        .to_string();
     machines.remove(index);
 
     // Comments above the first [[machine]] belong to it in toml_edit, but the part
@@ -74,7 +88,13 @@ pub fn remove_machine(text: &str, machine_id: &str) -> Result<String, String> {
     if !header.is_empty() {
         match machines.get_mut(0) {
             Some(next) => {
-                let rest = next.decor().prefix().and_then(|p| p.as_str()).unwrap_or("").trim_start_matches('\n').to_string();
+                let rest = next
+                    .decor()
+                    .prefix()
+                    .and_then(|p| p.as_str())
+                    .unwrap_or("")
+                    .trim_start_matches('\n')
+                    .to_string();
                 next.decor_mut().set_prefix(format!("{header}{rest}"));
             }
             None => {
@@ -94,8 +114,14 @@ pub fn rename_machine(text: &str, machine_id: &str, name: &str) -> Result<String
     let mut doc = parse(text)?;
     let machines = machines_mut(&mut doc)?;
     let index = find_machine(machines, machine_id)?;
-    if machines.iter().enumerate().any(|(i, t)| i != index && table_name(t).eq_ignore_ascii_case(name)) {
-        return Err(format!("A machine called \"{name}\" is already in config.toml."));
+    if machines
+        .iter()
+        .enumerate()
+        .any(|(i, t)| i != index && table_name(t).eq_ignore_ascii_case(name))
+    {
+        return Err(format!(
+            "A machine called \"{name}\" is already in config.toml."
+        ));
     }
     let table = machines.get_mut(index).ok_or("Machine not found.")?;
     // Keep a comment after the old name (`name = "Box" # the NAS`).
@@ -107,12 +133,19 @@ pub fn rename_machine(text: &str, machine_id: &str, name: &str) -> Result<String
         }
         None => table["name"] = value(name),
     }
-    let explicit = table.get("id").and_then(Item::as_str).is_some_and(|s| !s.trim().is_empty());
+    let explicit = table
+        .get("id")
+        .and_then(Item::as_str)
+        .is_some_and(|s| !s.trim().is_empty());
     if !explicit && crate::util::slug(name) != machine_id {
         table["id"] = value(machine_id);
     }
     let out = finish(doc)?;
-    let kept = Inventory::parse(&out).map_err(|e| e.to_string())?.machines.iter().any(|m| m.id == machine_id && m.name == name);
+    let kept = Inventory::parse(&out)
+        .map_err(|e| e.to_string())?
+        .machines
+        .iter()
+        .any(|m| m.id == machine_id && m.name == name);
     if !kept {
         return Err("Renaming it would change its id, so it wasn't renamed.".into());
     }
@@ -120,11 +153,17 @@ pub fn rename_machine(text: &str, machine_id: &str, name: &str) -> Result<String
 }
 
 /// Records that a machine is a cloud machine (or forgets it, with `None`).
-pub fn set_machine_cloud(text: &str, machine_id: &str, cloud: Option<&crate::config::CloudRef>) -> Result<String, String> {
+pub fn set_machine_cloud(
+    text: &str,
+    machine_id: &str,
+    cloud: Option<&crate::config::CloudRef>,
+) -> Result<String, String> {
     let mut doc = parse(text)?;
     let machines = machines_mut(&mut doc)?;
     let index = find_machine(machines, machine_id)?;
-    let table = machines.get_mut(index).ok_or("That machine isn't in config.toml.")?;
+    let table = machines
+        .get_mut(index)
+        .ok_or("That machine isn't in config.toml.")?;
     match cloud {
         Some(c) => {
             let mut t = toml_edit::InlineTable::new();
@@ -145,11 +184,21 @@ pub fn set_machine_cloud(text: &str, machine_id: &str, cloud: Option<&crate::con
 
 /// Makes a machine one Muxin created as a VM: how ssh reaches it (through its
 /// host, to the port its container publishes) and what it is.
-pub fn set_machine_vm(text: &str, machine_id: &str, port: u16, user: &str, ssh_options: &[String], direct_address: Option<&str>, vm: &crate::config::VmRef) -> Result<String, String> {
+pub fn set_machine_vm(
+    text: &str,
+    machine_id: &str,
+    port: u16,
+    user: &str,
+    ssh_options: &[String],
+    direct_address: Option<&str>,
+    vm: &crate::config::VmRef,
+) -> Result<String, String> {
     let mut doc = parse(text)?;
     let machines = machines_mut(&mut doc)?;
     let index = find_machine(machines, machine_id)?;
-    let table = machines.get_mut(index).ok_or("That machine isn't in config.toml.")?;
+    let table = machines
+        .get_mut(index)
+        .ok_or("That machine isn't in config.toml.")?;
     table["user"] = value(user);
     table["port"] = value(port as i64);
     if !ssh_options.is_empty() {
@@ -202,9 +251,14 @@ pub fn add_runners(text: &str, machine_id: &str, names: &[String]) -> Result<Str
     let table = machines.get_mut(index).ok_or("Machine not found.")?;
     match table.get_mut("runners") {
         Some(item) => {
-            let list = item.as_array_mut().ok_or("`runners` in config.toml isn't a list.")?;
+            let list = item
+                .as_array_mut()
+                .ok_or("`runners` in config.toml isn't a list.")?;
             for n in names {
-                if !list.iter().any(|v| v.as_str().is_some_and(|s| s.eq_ignore_ascii_case(n))) {
+                if !list
+                    .iter()
+                    .any(|v| v.as_str().is_some_and(|s| s.eq_ignore_ascii_case(n)))
+                {
                     list.push(n.as_str());
                 }
             }
@@ -249,7 +303,11 @@ pub fn set_workspaces(text: &str, machine_id: &str, allowed: bool) -> Result<Str
 
 /// Disconnects a machine (`disconnected = true`) or connects it again
 /// (connected is the default, so the key goes).
-pub fn set_disconnected(text: &str, machine_id: &str, disconnected: bool) -> Result<String, String> {
+pub fn set_disconnected(
+    text: &str,
+    machine_id: &str,
+    disconnected: bool,
+) -> Result<String, String> {
     let mut doc = parse(text)?;
     let machines = machines_mut(&mut doc)?;
     let index = find_machine(machines, machine_id)?;
@@ -263,7 +321,12 @@ pub fn set_disconnected(text: &str, machine_id: &str, disconnected: bool) -> Res
 }
 
 fn parse(text: &str) -> Result<DocumentMut, String> {
-    text.parse::<DocumentMut>().map_err(|e| format!("config.toml has a syntax error, so it wasn't changed: {}", e.to_string().trim()))
+    text.parse::<DocumentMut>().map_err(|e| {
+        format!(
+            "config.toml has a syntax error, so it wasn't changed: {}",
+            e.to_string().trim()
+        )
+    })
 }
 
 fn finish(doc: DocumentMut) -> Result<String, String> {
@@ -278,11 +341,17 @@ fn machines_mut(doc: &mut DocumentMut) -> Result<&mut ArrayOfTables, String> {
     }
     doc.get_mut("machine")
         .and_then(Item::as_array_of_tables_mut)
-        .ok_or_else(|| "config.toml defines `machine` in a form Muxin can't edit. Use [[machine]] tables.".to_string())
+        .ok_or_else(|| {
+            "config.toml defines `machine` in a form Muxin can't edit. Use [[machine]] tables."
+                .to_string()
+        })
 }
 
 fn table_name(t: &Table) -> &str {
-    t.get("name").and_then(Item::as_str).map(str::trim).unwrap_or("")
+    t.get("name")
+        .and_then(Item::as_str)
+        .map(str::trim)
+        .unwrap_or("")
 }
 
 /// Index of the table whose id matches, replaying `Inventory::parse`'s id rules
@@ -310,7 +379,10 @@ mod workspace_tests {
     fn toggles_workspaces_keeping_comments() {
         let text = "# fleet\n[[machine]]\nname = \"Box\" # main box\nhost = \"box\"\n";
         let off = set_workspaces(text, "box", false).unwrap();
-        assert!(off.contains("# main box") && off.contains("workspaces = false"), "{off}");
+        assert!(
+            off.contains("# main box") && off.contains("workspaces = false"),
+            "{off}"
+        );
         assert!(!Inventory::parse(&off).unwrap().machines[0].workspaces);
         let on = set_workspaces(&off, "box", true).unwrap();
         assert!(!on.contains("workspaces"), "{on}");
@@ -321,10 +393,17 @@ mod workspace_tests {
     fn disconnects_and_connects() {
         let text = "[[machine]]\nname = \"Box\" # main box\nhost = \"box\"\n";
         let off = set_disconnected(text, "box", true).unwrap();
-        assert!(off.contains("# main box") && off.contains("disconnected = true"), "{off}");
+        assert!(
+            off.contains("# main box") && off.contains("disconnected = true"),
+            "{off}"
+        );
         let m = &Inventory::parse(&off).unwrap().machines[0];
         assert!(m.disconnected && m.is_checkable() && !m.is_connected());
-        assert!(m.refuse_if_disconnected().unwrap_err().contains("Box is disconnected"));
+        assert!(
+            m.refuse_if_disconnected()
+                .unwrap_err()
+                .contains("Box is disconnected")
+        );
         let on = set_disconnected(&off, "box", false).unwrap();
         assert!(!on.contains("disconnected"), "{on}");
         assert!(Inventory::parse(&on).unwrap().machines[0].is_connected());
@@ -349,7 +428,11 @@ mod tests {
         let inv = crate::config::Inventory::parse(&text).unwrap();
         assert_eq!(inv.machines[0].cloud.as_ref(), Some(&cloud));
         let text = super::set_machine_cloud(&text, &id, None).unwrap();
-        assert!(crate::config::Inventory::parse(&text).unwrap().machines[0].cloud.is_none());
+        assert!(
+            crate::config::Inventory::parse(&text).unwrap().machines[0]
+                .cloud
+                .is_none()
+        );
     }
 
     use super::*;
@@ -376,7 +459,10 @@ host = "nas"
         assert!(out.starts_with("# My fleet\n# (hand written)\n"));
         assert!(out.contains("name = \"Mac Studio\"   # the big one"));
         assert!(out.contains("# The NAS doesn't run jobs."));
-        assert!(out.ends_with("[[machine]]\nname = \"Beelink\"\nhost = \"beelink\"\n"), "{out}");
+        assert!(
+            out.ends_with("[[machine]]\nname = \"Beelink\"\nhost = \"beelink\"\n"),
+            "{out}"
+        );
         assert_eq!(Inventory::parse(&out).unwrap().machines.len(), 3);
         assert!(add_machine(&out, "beelink", "x").is_err());
     }
@@ -390,9 +476,17 @@ host = "nas"
         let commented = out.find("# runners = [").unwrap();
         let beelink = out.find("name = \"Beelink\"").unwrap();
         let examples = out.find("# name = \"Forge\"").unwrap();
-        assert!(local < commented && commented < beelink && beelink < examples, "{out}");
+        assert!(
+            local < commented && commented < beelink && beelink < examples,
+            "{out}"
+        );
         assert!(out.contains("host = \"local\"\n# runners = ["), "{out}");
-        assert!(out.contains("]\n\n[[machine]]\nname = \"Beelink\"\nhost = \"beelink\"\n\n# [[machine]]"), "{out}");
+        assert!(
+            out.contains(
+                "]\n\n[[machine]]\nname = \"Beelink\"\nhost = \"beelink\"\n\n# [[machine]]"
+            ),
+            "{out}"
+        );
         assert_eq!(Inventory::parse(&out).unwrap().machines.len(), 2);
         let (out, id) = add_machine("", "First", "local").unwrap();
         assert_eq!(id, "first");
@@ -410,12 +504,26 @@ host = "nas"
 
     #[test]
     fn adds_and_removes_runners() {
-        let out = add_runners(FILE, "mac-studio", &["studio-03".into(), "STUDIO-01".into()]).unwrap();
-        assert!(out.contains(r#"runners = ["studio-01", "studio-02", "studio-03"]"#), "{out}");
+        let out = add_runners(
+            FILE,
+            "mac-studio",
+            &["studio-03".into(), "STUDIO-01".into()],
+        )
+        .unwrap();
+        assert!(
+            out.contains(r#"runners = ["studio-01", "studio-02", "studio-03"]"#),
+            "{out}"
+        );
         let out = add_runners(&out, "nas", &["nas-01".into()]).unwrap();
-        assert_eq!(Inventory::parse(&out).unwrap().machines[1].runners, vec!["nas-01"]);
+        assert_eq!(
+            Inventory::parse(&out).unwrap().machines[1].runners,
+            vec!["nas-01"]
+        );
         let out = remove_runner(&out, "mac-studio", "studio-02").unwrap();
-        assert_eq!(Inventory::parse(&out).unwrap().machines[0].runners, vec!["studio-01", "studio-03"]);
+        assert_eq!(
+            Inventory::parse(&out).unwrap().machines[0].runners,
+            vec!["studio-01", "studio-03"]
+        );
         assert!(out.contains("# the big one"));
     }
 
@@ -425,7 +533,12 @@ host = "nas"
         let inv = Inventory::parse(&out).unwrap();
         assert_eq!(inv.machines.len(), 1);
         assert_eq!(inv.machines[0].name, "NAS");
-        assert!(out.starts_with("# My fleet\n# (hand written)\n\n# The NAS doesn't run jobs.\n[[machine]]"), "{out}");
+        assert!(
+            out.starts_with(
+                "# My fleet\n# (hand written)\n\n# The NAS doesn't run jobs.\n[[machine]]"
+            ),
+            "{out}"
+        );
         assert!(!out.contains("Mac Studio"));
         assert!(remove_machine(FILE, "nope").is_err());
 
@@ -445,7 +558,10 @@ host = "nas"
         let out = rename_machine(FILE, "mac-studio", "Studio").unwrap();
         assert!(out.contains("name = \"Studio\"   # the big one"), "{out}");
         let inv = Inventory::parse(&out).unwrap();
-        assert_eq!((inv.machines[0].id.as_str(), inv.machines[0].name.as_str()), ("mac-studio", "Studio"));
+        assert_eq!(
+            (inv.machines[0].id.as_str(), inv.machines[0].name.as_str()),
+            ("mac-studio", "Studio")
+        );
         assert_eq!(inv.machines[0].runners, vec!["studio-01", "studio-02"]);
         assert!(out.contains("id = \"mac-studio\""), "{out}");
 
@@ -455,9 +571,17 @@ host = "nas"
         assert_eq!(Inventory::parse(&out).unwrap().machines[1].name, "nas");
 
         // Renaming again keeps the id it already pinned.
-        let again = rename_machine(&rename_machine(FILE, "mac-studio", "Studio").unwrap(), "mac-studio", "Big Mac").unwrap();
+        let again = rename_machine(
+            &rename_machine(FILE, "mac-studio", "Studio").unwrap(),
+            "mac-studio",
+            "Big Mac",
+        )
+        .unwrap();
         let inv = Inventory::parse(&again).unwrap();
-        assert_eq!((inv.machines[0].id.as_str(), inv.machines[0].name.as_str()), ("mac-studio", "Big Mac"));
+        assert_eq!(
+            (inv.machines[0].id.as_str(), inv.machines[0].name.as_str()),
+            ("mac-studio", "Big Mac")
+        );
         assert_eq!(again.matches("id = ").count(), 1, "{again}");
 
         assert!(rename_machine(FILE, "mac-studio", "NAS").is_err());
@@ -469,7 +593,13 @@ host = "nas"
         let text = "[[machine]]\nname = \"Box\"\nhost = \"a\"\n\n[[machine]]\nname = \"Box\"\nhost = \"b\"\n";
         let out = rename_machine(text, "box-2", "Spare").unwrap();
         let inv = Inventory::parse(&out).unwrap();
-        assert_eq!(inv.machines.iter().map(|m| (m.id.as_str(), m.name.as_str())).collect::<Vec<_>>(), [("box", "Box"), ("box-2", "Spare")]);
+        assert_eq!(
+            inv.machines
+                .iter()
+                .map(|m| (m.id.as_str(), m.name.as_str()))
+                .collect::<Vec<_>>(),
+            [("box", "Box"), ("box-2", "Spare")]
+        );
     }
 
     #[test]

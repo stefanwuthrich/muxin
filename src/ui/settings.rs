@@ -3,16 +3,18 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use gpui::{AnyElement, App, Context, Entity, Focusable, SharedString, Subscription, Task, Window, div, prelude::*, px};
+use gpui::{
+    AnyElement, App, Context, Entity, Focusable, SharedString, Subscription, Task, Window, div,
+    prelude::*, px,
+};
 
 mod cloud;
 mod prompts;
 mod shell;
 
-
 use super::input::{InputEvent, TextInput};
 use super::kit::{self, Button, ButtonStyle, card, icon, mono, section_title};
-use super::theme::{self as theme_mod, ActiveTheme, Appearance, mono_font, Mode, Theme};
+use super::theme::{self as theme_mod, ActiveTheme, Appearance, Mode, Theme, mono_font};
 use super::themes::{PALETTES, Palette};
 use crate::config::Settings;
 use crate::fleet::Engine;
@@ -32,7 +34,15 @@ pub enum SettingsTab {
 }
 
 impl SettingsTab {
-    const ALL: [SettingsTab; 7] = [SettingsTab::General, SettingsTab::Appearance, SettingsTab::Terminal, SettingsTab::GitHub, SettingsTab::Cloud, SettingsTab::Prompts, SettingsTab::Keyboard];
+    const ALL: [SettingsTab; 7] = [
+        SettingsTab::General,
+        SettingsTab::Appearance,
+        SettingsTab::Terminal,
+        SettingsTab::GitHub,
+        SettingsTab::Cloud,
+        SettingsTab::Prompts,
+        SettingsTab::Keyboard,
+    ];
 
     fn label(self) -> &'static str {
         match self {
@@ -93,24 +103,41 @@ impl SettingsPage {
     pub fn new(engine: Arc<Engine>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let s = engine.settings();
         let add = cx.new(|cx| TextInput::new(cx, "acme  or  acme/api").mono());
-        let poll = cx.new(|cx| TextInput::new(cx, "20").mono().with_text(s.github_poll_seconds.to_string()));
-        let scan = cx.new(|cx| TextInput::new(cx, "10").mono().with_text(s.github.scan_repos.to_string()));
-        let interval = cx.new(|cx| TextInput::new(cx, "15").mono().with_text(s.check_interval_minutes.to_string()));
+        let poll = cx.new(|cx| {
+            TextInput::new(cx, "20")
+                .mono()
+                .with_text(s.github_poll_seconds.to_string())
+        });
+        let scan = cx.new(|cx| {
+            TextInput::new(cx, "10")
+                .mono()
+                .with_text(s.github.scan_repos.to_string())
+        });
+        let interval = cx.new(|cx| {
+            TextInput::new(cx, "15")
+                .mono()
+                .with_text(s.check_interval_minutes.to_string())
+        });
 
-        let mut subs = vec![cx.subscribe_in(&add, window, |this, _, e: &InputEvent, _, cx| match e {
-            InputEvent::Submit => this.add_scope(None, cx),
-            InputEvent::Changed => {
-                this.add_result = None;
-                cx.notify()
-            }
-            InputEvent::Cancel => {}
-        })];
+        let mut subs =
+            vec![
+                cx.subscribe_in(&add, window, |this, _, e: &InputEvent, _, cx| match e {
+                    InputEvent::Submit => this.add_scope(None, cx),
+                    InputEvent::Changed => {
+                        this.add_result = None;
+                        cx.notify()
+                    }
+                    InputEvent::Cancel => {}
+                }),
+            ];
         for input in [&poll, &scan, &interval] {
-            subs.push(cx.subscribe_in(input, window, |this, _, e: &InputEvent, _, cx| {
-                if *e == InputEvent::Submit {
-                    this.save_intervals(cx)
-                }
-            }));
+            subs.push(
+                cx.subscribe_in(input, window, |this, _, e: &InputEvent, _, cx| {
+                    if *e == InputEvent::Submit {
+                        this.save_intervals(cx)
+                    }
+                }),
+            );
         }
 
         let mut rx = engine.subscribe();
@@ -223,7 +250,11 @@ impl SettingsPage {
                 match result {
                     Ok(t) if t.error.is_none() => {
                         let mut s = this.engine.settings();
-                        let list = if t.name.contains('/') { &mut s.github.repos } else { &mut s.github.orgs };
+                        let list = if t.name.contains('/') {
+                            &mut s.github.repos
+                        } else {
+                            &mut s.github.orgs
+                        };
                         if !list.iter().any(|x| x.eq_ignore_ascii_case(&t.name)) {
                             list.push(t.name.clone());
                         }
@@ -231,7 +262,12 @@ impl SettingsPage {
                             Ok(_) => {
                                 this.add_result = Some((
                                     true,
-                                    format!("Watching {} · {} runner{} found", t.name, t.runners, if t.runners == 1 { "" } else { "s" }),
+                                    format!(
+                                        "Watching {} · {} runner{} found",
+                                        t.name,
+                                        t.runners,
+                                        if t.runners == 1 { "" } else { "s" }
+                                    ),
                                     None,
                                 ));
                                 this.add.update(cx, |a, cx| a.set_text("", cx));
@@ -244,7 +280,9 @@ impl SettingsPage {
                         // A missing permission may have just been granted elsewhere: look again.
                         this.load_access(cx);
                     }
-                    Err(e) => this.add_result = Some((false, format!("The check failed: {e}"), None)),
+                    Err(e) => {
+                        this.add_result = Some((false, format!("The check failed: {e}"), None))
+                    }
                 }
                 cx.notify();
             });
@@ -264,7 +302,12 @@ impl SettingsPage {
 
     fn save_intervals(&mut self, cx: &mut Context<Self>) {
         let num = |input: &Entity<TextInput>, what: &str| -> Result<u32, String> {
-            input.read(cx).text().trim().parse::<u32>().map_err(|_| format!("{what} must be a whole number."))
+            input
+                .read(cx)
+                .text()
+                .trim()
+                .parse::<u32>()
+                .map_err(|_| format!("{what} must be a whole number."))
         };
         let parsed = (|| -> Result<Settings, String> {
             let mut s = self.engine.settings();
@@ -278,9 +321,15 @@ impl SettingsPage {
                 self.save_error = None;
                 self.saved_at = Some(Instant::now());
                 // Show the clamped values.
-                self.poll.update(cx, |i, cx| i.set_text(saved.github_poll_seconds.to_string(), cx));
-                self.scan.update(cx, |i, cx| i.set_text(saved.github.scan_repos.to_string(), cx));
-                self.interval.update(cx, |i, cx| i.set_text(saved.check_interval_minutes.to_string(), cx));
+                self.poll.update(cx, |i, cx| {
+                    i.set_text(saved.github_poll_seconds.to_string(), cx)
+                });
+                self.scan.update(cx, |i, cx| {
+                    i.set_text(saved.github.scan_repos.to_string(), cx)
+                });
+                self.interval.update(cx, |i, cx| {
+                    i.set_text(saved.check_interval_minutes.to_string(), cx)
+                });
                 let clear = cx.spawn(async move |this, cx| {
                     cx.background_executor().timer(Duration::from_secs(3)).await;
                     let _ = this.update(cx, |this, cx| {
@@ -303,13 +352,25 @@ impl SettingsPage {
                 .flex()
                 .items_center()
                 .gap(px(12.))
-                .child(note(theme, "triangle-alert", theme.warning, "Not signed in to GitHub."))
+                .child(note(
+                    theme,
+                    "triangle-alert",
+                    theme.warning,
+                    "Not signed in to GitHub.",
+                ))
                 .child(
                     Button::new("gh-sign-in", "Sign in with GitHub")
                         .style(ButtonStyle::Primary)
-                        .on_click(|_, window, cx| window.dispatch_action(Box::new(super::root::SignInGitHub), cx)),
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(super::root::SignInGitHub), cx)
+                        }),
                 )
-                .child(div().text_size(px(11.5)).text_color(theme.text_placeholder).child("Uses the GitHub CLI, or set GITHUB_TOKEN."))
+                .child(
+                    div()
+                        .text_size(px(11.5))
+                        .text_color(theme.text_placeholder)
+                        .child("Uses the GitHub CLI, or set GITHUB_TOKEN."),
+                )
                 .into_any_element()
         } else {
             let who = s
@@ -332,7 +393,13 @@ impl SettingsPage {
             .orgs
             .iter()
             .map(|o| (o.clone(), "layers"))
-            .chain(settings.github.repos.iter().map(|r| (r.clone(), "git-branch")))
+            .chain(
+                settings
+                    .github
+                    .repos
+                    .iter()
+                    .map(|r| (r.clone(), "git-branch")),
+            )
             .collect();
         let rows: Vec<AnyElement> = watched
             .iter()
@@ -340,10 +407,17 @@ impl SettingsPage {
             .map(|(i, (name, icon_name))| {
                 let status = s.github.scopes.iter().find(|sc| &sc.name == name);
                 let (color, text) = match status {
-                    Some(sc) if sc.error.is_some() => (theme.error, sc.error.clone().unwrap_or_default()),
-                    Some(sc) if sc.synced_at.is_some() => {
-                        (theme.text_muted, format!("{} runner{}", sc.runners, if sc.runners == 1 { "" } else { "s" }))
+                    Some(sc) if sc.error.is_some() => {
+                        (theme.error, sc.error.clone().unwrap_or_default())
                     }
+                    Some(sc) if sc.synced_at.is_some() => (
+                        theme.text_muted,
+                        format!(
+                            "{} runner{}",
+                            sc.runners,
+                            if sc.runners == 1 { "" } else { "s" }
+                        ),
+                    ),
                     _ => (theme.text_placeholder, "syncing…".to_string()),
                 };
                 let hint = status.and_then(|sc| sc.hint.clone());
@@ -361,12 +435,26 @@ impl SettingsPage {
                             .items_center()
                             .gap(px(10.))
                             .child(kit::color_tile(icon_name, 20.))
-                            .child(div().font_family(mono_font()).text_size(px(13.)).child(name.clone()))
-                            .child(div().flex_1().truncate().text_size(px(12.)).text_color(color).child(text))
+                            .child(
+                                div()
+                                    .font_family(mono_font())
+                                    .text_size(px(13.))
+                                    .child(name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .truncate()
+                                    .text_size(px(12.))
+                                    .text_color(color)
+                                    .child(text),
+                            )
                             .child(
                                 Button::icon_only(("scope-remove", i), "x")
                                     .tooltip("Stop watching")
-                                    .on_click(cx.listener(move |this, _, _, cx| this.remove_scope(&remove, cx))),
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.remove_scope(&remove, cx)
+                                    })),
                             ),
                     )
                     .children(hint.map(|h| hint_line(theme, i, h)))
@@ -375,9 +463,29 @@ impl SettingsPage {
             .collect();
 
         // Organizations to watch with one click: yours, and ones found in runner configs.
-        let watching = |name: &str| settings.github.orgs.iter().chain(settings.github.repos.iter()).any(|w| w.eq_ignore_ascii_case(name));
-        let mine: Vec<String> = self.access.as_ref().map(|a| a.orgs.clone()).unwrap_or_default().into_iter().filter(|o| !watching(o)).collect();
-        let found: Vec<String> = s.github.detected.iter().filter(|d| !watching(d) && !mine.iter().any(|m| m.eq_ignore_ascii_case(d))).cloned().collect();
+        let watching = |name: &str| {
+            settings
+                .github
+                .orgs
+                .iter()
+                .chain(settings.github.repos.iter())
+                .any(|w| w.eq_ignore_ascii_case(name))
+        };
+        let mine: Vec<String> = self
+            .access
+            .as_ref()
+            .map(|a| a.orgs.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|o| !watching(o))
+            .collect();
+        let found: Vec<String> = s
+            .github
+            .detected
+            .iter()
+            .filter(|d| !watching(d) && !mine.iter().any(|m| m.eq_ignore_ascii_case(d)))
+            .cloned()
+            .collect();
         let grant = self.access.as_ref().and_then(|a| a.grant_command.clone()).filter(|_| !s.demo).map(|cmd| {
             div()
                 .flex()
@@ -425,10 +533,16 @@ impl SettingsPage {
                 .text_size(px(12.))
                 .child(kit::color_icon(theme, "plus", 12., theme.text_muted))
                 .child(name.to_string())
-                .on_click(cx.listener(move |this, _, _, cx| this.add_scope(Some(scope.clone()), cx)))
+                .on_click(
+                    cx.listener(move |this, _, _, cx| this.add_scope(Some(scope.clone()), cx)),
+                )
                 .into_any_element()
         };
-        let my_orgs: Vec<AnyElement> = mine.iter().enumerate().map(|(i, o)| chip(("my-org", i), o, cx)).collect();
+        let my_orgs: Vec<AnyElement> = mine
+            .iter()
+            .enumerate()
+            .map(|(i, o)| chip(("my-org", i), o, cx))
+            .collect();
         let detected: Vec<AnyElement> = found
             .iter()
             .enumerate()
@@ -505,12 +619,23 @@ impl SettingsPage {
     }
 
     /// How often to sync GitHub (`github`) or check the machines (otherwise).
-    fn checks_section(&self, theme: &Theme, github: bool, cx: &mut Context<Self>) -> impl IntoElement {
-        let row = |label: &'static str, input: Entity<TextInput>, unit: &'static str, help: &'static str, first: bool| {
+    fn checks_section(
+        &self,
+        theme: &Theme,
+        github: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let row = |label: &'static str,
+                   input: Entity<TextInput>,
+                   unit: &'static str,
+                   help: &'static str,
+                   first: bool| {
             div()
                 .flex()
                 .items_center()
-                .when(!first, |d| d.border_t_1().border_color(theme.border_variant))
+                .when(!first, |d| {
+                    d.border_t_1().border_color(theme.border_variant)
+                })
                 .gap(px(12.))
                 .px(px(14.))
                 .py(px(10.))
@@ -521,23 +646,56 @@ impl SettingsPage {
                         .flex_1()
                         .min_w(px(0.))
                         .child(div().text_size(px(13.)).child(label))
-                        .child(div().text_size(px(11.5)).text_color(theme.text_placeholder).child(help)),
+                        .child(
+                            div()
+                                .text_size(px(11.5))
+                                .text_color(theme.text_placeholder)
+                                .child(help),
+                        ),
                 )
                 .child(div().w(px(80.)).flex_none().flex().flex_col().child(input))
-                .child(div().w(px(60.)).text_size(px(12.)).text_color(theme.text_muted).child(unit))
+                .child(
+                    div()
+                        .w(px(60.))
+                        .text_size(px(12.))
+                        .text_color(theme.text_muted)
+                        .child(unit),
+                )
         };
         let rows = if github {
             card(theme)
-                .child(row("Sync GitHub every", self.poll.clone(), "seconds", "Asks GitHub for runner and job status. Unchanged answers are free.", true))
-                .child(row("Scan recent repos for jobs", self.scan.clone(), "per org", "The most recently pushed repositories are checked for jobs.", false))
+                .child(row(
+                    "Sync GitHub every",
+                    self.poll.clone(),
+                    "seconds",
+                    "Asks GitHub for runner and job status. Unchanged answers are free.",
+                    true,
+                ))
+                .child(row(
+                    "Scan recent repos for jobs",
+                    self.scan.clone(),
+                    "per org",
+                    "The most recently pushed repositories are checked for jobs.",
+                    false,
+                ))
         } else {
-            card(theme).child(row("Check machines every", self.interval.clone(), "minutes", "A read-only check over ssh. 0: only when you ask.", true))
+            card(theme).child(row(
+                "Check machines every",
+                self.interval.clone(),
+                "minutes",
+                "A read-only check over ssh. 0: only when you ask.",
+                true,
+            ))
         };
         div()
             .flex()
             .flex_col()
             .gap(px(10.))
-            .child(section_title(theme, if github { "Syncing" } else { "Machine checks" }, None))
+            .child(section_title(
+                theme,
+                if github { "Syncing" } else { "Machine checks" },
+                None,
+            ))
             .child(rows)
             .child(
                 div()
@@ -549,13 +707,30 @@ impl SettingsPage {
                             .style(ButtonStyle::Primary)
                             .on_click(cx.listener(|this, _, _, cx| this.save_intervals(cx))),
                     )
-                    .when(self.saved_at.is_some(), |d| d.child(div().text_size(px(12.)).text_color(theme.success).child("Saved")))
-                    .children(self.save_error.clone().map(|e| div().text_size(px(12.)).text_color(theme.error).child(e))),
+                    .when(self.saved_at.is_some(), |d| {
+                        d.child(
+                            div()
+                                .text_size(px(12.))
+                                .text_color(theme.success)
+                                .child("Saved"),
+                        )
+                    })
+                    .children(
+                        self.save_error
+                            .clone()
+                            .map(|e| div().text_size(px(12.)).text_color(theme.error).child(e)),
+                    ),
             )
     }
 
     /// Font size and line height for agent session terminals, with a preview.
-    fn terminal_section(&self, theme: &Theme, family: SharedString, fonts: Vec<SharedString>, cx: &mut Context<Self>) -> impl IntoElement {
+    fn terminal_section(
+        &self,
+        theme: &Theme,
+        family: SharedString,
+        fonts: Vec<SharedString>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let a = cx.global::<Appearance>().clone();
         // Each installed monospace font, in itself.
         let font_chips: Vec<AnyElement> = fonts
@@ -574,26 +749,57 @@ impl SettingsPage {
                     .rounded(px(6.))
                     .border_1()
                     .cursor_pointer()
-                    .border_color(if selected { theme.accent } else { theme.border_variant })
-                    .bg(if selected { theme.accent.opacity(0.10) } else { theme.element })
+                    .border_color(if selected {
+                        theme.accent
+                    } else {
+                        theme.border_variant
+                    })
+                    .bg(if selected {
+                        theme.accent.opacity(0.10)
+                    } else {
+                        theme.element
+                    })
                     .when(!selected, |d| d.hover(|st| st.bg(theme.element_hover)))
                     .font_family(f.clone())
                     .text_size(px(12.5))
-                    .text_color(if selected { theme.text } else { theme.text_muted })
+                    .text_color(if selected {
+                        theme.text
+                    } else {
+                        theme.text_muted
+                    })
                     .child(f)
-                    .on_click(cx.listener(move |_, _, _, cx| theme_mod::update_terminal(cx, |a| a.terminal_font = pick.clone())))
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        theme_mod::update_terminal(cx, |a| a.terminal_font = pick.clone())
+                    }))
                     .into_any_element()
             })
             .collect();
         let (size, line_height) = (a.terminal_font_size, a.terminal_line_height);
-        let stepper = |id: &'static str, value: String, step: fn(&mut Appearance, f32), cx: &mut Context<Self>| {
+        let stepper = |id: &'static str,
+                       value: String,
+                       step: fn(&mut Appearance, f32),
+                       cx: &mut Context<Self>| {
             div()
                 .flex()
                 .items_center()
                 .gap(px(4.))
-                .child(Button::icon_only((id, 0usize), "minus").on_click(cx.listener(move |_, _, _, cx| theme_mod::update_terminal(cx, |a| step(a, -1.)))))
-                .child(div().w(px(56.)).flex().justify_center().font_family(mono_font()).text_size(px(12.5)).child(value))
-                .child(Button::icon_only((id, 1usize), "plus").on_click(cx.listener(move |_, _, _, cx| theme_mod::update_terminal(cx, |a| step(a, 1.)))))
+                .child(Button::icon_only((id, 0usize), "minus").on_click(
+                    cx.listener(move |_, _, _, cx| {
+                        theme_mod::update_terminal(cx, |a| step(a, -1.))
+                    }),
+                ))
+                .child(
+                    div()
+                        .w(px(56.))
+                        .flex()
+                        .justify_center()
+                        .font_family(mono_font())
+                        .text_size(px(12.5))
+                        .child(value),
+                )
+                .child(Button::icon_only((id, 1usize), "plus").on_click(
+                    cx.listener(move |_, _, _, cx| theme_mod::update_terminal(cx, |a| step(a, 1.))),
+                ))
         };
         let preset = |label: &'static str, value: f32, cx: &mut Context<Self>| {
             let selected = (line_height - value).abs() < 0.01;
@@ -606,11 +812,19 @@ impl SettingsPage {
                 .rounded(px(6.))
                 .cursor_pointer()
                 .text_size(px(12.))
-                .text_color(if selected { theme.text } else { theme.text_muted })
-                .when(selected, |d| d.bg(theme.surface).border_1().border_color(theme.border))
+                .text_color(if selected {
+                    theme.text
+                } else {
+                    theme.text_muted
+                })
+                .when(selected, |d| {
+                    d.bg(theme.surface).border_1().border_color(theme.border)
+                })
                 .when(!selected, |d| d.hover(|st| st.text_color(theme.text)))
                 .child(label)
-                .on_click(cx.listener(move |_, _, _, cx| theme_mod::update_terminal(cx, |a| a.terminal_line_height = value)))
+                .on_click(cx.listener(move |_, _, _, cx| {
+                    theme_mod::update_terminal(cx, |a| a.terminal_line_height = value)
+                }))
         };
         let row = |label: &'static str, control: AnyElement, hint: Option<&'static str>| {
             div()
@@ -618,12 +832,30 @@ impl SettingsPage {
                 .items_center()
                 .gap(px(12.))
                 .py(px(8.))
-                .child(div().w(px(110.)).flex_none().text_size(px(12.5)).text_color(theme.text_muted).child(label))
+                .child(
+                    div()
+                        .w(px(110.))
+                        .flex_none()
+                        .text_size(px(12.5))
+                        .text_color(theme.text_muted)
+                        .child(label),
+                )
                 .child(control)
                 .child(div().flex_1())
-                .children(hint.map(|h| div().text_size(px(11.5)).text_color(theme.text_placeholder).child(h)))
+                .children(hint.map(|h| {
+                    div()
+                        .text_size(px(11.5))
+                        .text_color(theme.text_placeholder)
+                        .child(h)
+                }))
         };
-        let size_control = stepper("term-size", format!("{size:.0} pt"), |a, d| a.terminal_font_size += d, cx).into_any_element();
+        let size_control = stepper(
+            "term-size",
+            format!("{size:.0} pt"),
+            |a, d| a.terminal_font_size += d,
+            cx,
+        )
+        .into_any_element();
         let presets = div()
             .flex()
             .items_center()
@@ -632,19 +864,26 @@ impl SettingsPage {
             .child(preset("Normal", 1.3, cx))
             .child(preset("Relaxed", 1.5, cx))
             .child(div().w(px(8.)))
-            .child(stepper("term-line", format!("{line_height:.2}"), |a, d| a.terminal_line_height += d * 0.05, cx))
+            .child(stepper(
+                "term-line",
+                format!("{line_height:.2}"),
+                |a, d| a.terminal_line_height += d * 0.05,
+                cx,
+            ))
             .into_any_element();
         let changed = size != theme_mod::TERMINAL_FONT_SIZE
             || (line_height - theme_mod::TERMINAL_LINE_HEIGHT).abs() > 0.01
             || a.terminal_font != super::terminal::DEFAULT_FONT;
         let reset = changed.then(|| {
-            Button::new("term-reset", "Reset").style(ButtonStyle::Ghost).on_click(cx.listener(|_, _, _, cx| {
-                theme_mod::update_terminal(cx, |a| {
-                    a.terminal_font = super::terminal::DEFAULT_FONT.into();
-                    a.terminal_font_size = theme_mod::TERMINAL_FONT_SIZE;
-                    a.terminal_line_height = theme_mod::TERMINAL_LINE_HEIGHT;
-                })
-            }))
+            Button::new("term-reset", "Reset")
+                .style(ButtonStyle::Ghost)
+                .on_click(cx.listener(|_, _, _, cx| {
+                    theme_mod::update_terminal(cx, |a| {
+                        a.terminal_font = super::terminal::DEFAULT_FONT.into();
+                        a.terminal_font_size = theme_mod::TERMINAL_FONT_SIZE;
+                        a.terminal_line_height = theme_mod::TERMINAL_LINE_HEIGHT;
+                    })
+                }))
         });
         // A few lines in the terminal's font, size and spacing.
         let line_px = (size * line_height).round();
@@ -660,13 +899,28 @@ impl SettingsPage {
             .line_height(px(line_px))
             .text_color(theme.text)
             .child(div().child("~/code/api $ claude \"fix the flaky test\""))
-            .child(div().text_color(theme.success).child("⏺ Read(e2e/checkout.spec.ts)"))
-            .child(div().text_color(theme.text_muted).child("  ⎿  12 passed (4.1s)"));
+            .child(
+                div()
+                    .text_color(theme.success)
+                    .child("⏺ Read(e2e/checkout.spec.ts)"),
+            )
+            .child(
+                div()
+                    .text_color(theme.text_muted)
+                    .child("  ⎿  12 passed (4.1s)"),
+            );
         div()
             .flex()
             .flex_col()
             .gap(px(12.))
-            .child(div().flex().items_center().child(section_title(theme, "Text and cursor", None)).child(div().flex_1()).children(reset))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .child(section_title(theme, "Text and cursor", None))
+                    .child(div().flex_1())
+                    .children(reset),
+            )
             .child(
                 card(theme)
                     .px(px(14.))
@@ -677,17 +931,43 @@ impl SettingsPage {
                             .items_start()
                             .gap(px(12.))
                             .py(px(8.))
-                            .child(div().w(px(110.)).flex_none().pt(px(6.)).text_size(px(12.5)).text_color(theme.text_muted).child("Font"))
-                            .child(div().flex_1().min_w(px(0.)).flex().flex_wrap().gap(px(6.)).children(font_chips)),
+                            .child(
+                                div()
+                                    .w(px(110.))
+                                    .flex_none()
+                                    .pt(px(6.))
+                                    .text_size(px(12.5))
+                                    .text_color(theme.text_muted)
+                                    .child("Font"),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w(px(0.))
+                                    .flex()
+                                    .flex_wrap()
+                                    .gap(px(6.))
+                                    .children(font_chips),
+                            ),
                     )
-                    .child(row("Text size", size_control, Some("⌘+ / ⌘− in a terminal")))
+                    .child(row(
+                        "Text size",
+                        size_control,
+                        Some("⌘+ / ⌘− in a terminal"),
+                    ))
                     .child(row("Line height", presets, None))
                     .child(row(
                         "Cursor",
-                        kit::checkbox(theme, "term-blink", a.terminal_cursor_blink, "Blink", |on, _, cx| {
-                            let on = *on;
-                            theme_mod::update_terminal(cx, |a| a.terminal_cursor_blink = on)
-                        })
+                        kit::checkbox(
+                            theme,
+                            "term-blink",
+                            a.terminal_cursor_blink,
+                            "Blink",
+                            |on, _, cx| {
+                                let on = *on;
+                                theme_mod::update_terminal(cx, |a| a.terminal_cursor_blink = on)
+                            },
+                        )
                         .into_any_element(),
                         Some("While the terminal has focus"),
                     )),
@@ -709,22 +989,54 @@ impl SettingsPage {
                 .rounded(px(7.))
                 .cursor_pointer()
                 .text_size(px(12.5))
-                .text_color(if selected { theme.text } else { theme.text_muted })
-                .when(selected, |d| d.bg(theme.surface).border_1().border_color(theme.border).shadow_sm())
+                .text_color(if selected {
+                    theme.text
+                } else {
+                    theme.text_muted
+                })
+                .when(selected, |d| {
+                    d.bg(theme.surface)
+                        .border_1()
+                        .border_color(theme.border)
+                        .shadow_sm()
+                })
                 .when(!selected, |d| d.hover(|st| st.text_color(theme.text)))
-                .child(kit::color_icon(theme, icon_name, 13., if selected { theme.text_accent } else { theme.text_placeholder }))
+                .child(kit::color_icon(
+                    theme,
+                    icon_name,
+                    13.,
+                    if selected {
+                        theme.text_accent
+                    } else {
+                        theme.text_placeholder
+                    },
+                ))
                 .child(label)
-                .on_click(cx.listener(move |_, _, window, cx| theme_mod::update_appearance(window, cx, |a, _| a.mode = mode)))
+                .on_click(cx.listener(move |_, _, window, cx| {
+                    theme_mod::update_appearance(window, cx, |a, _| a.mode = mode)
+                }))
         };
         let grid = |dark: bool, cx: &mut Context<Self>| {
-            let chosen = if dark { appearance.dark.clone() } else { appearance.light.clone() };
-            let swatches: Vec<AnyElement> = PALETTES.iter().filter(|p| p.dark == dark).map(|p| {
-                let id = p.id;
-                swatch(theme, p, p.id == chosen, theme.id == p.id).on_click(cx.listener(move |_, _, window, cx| {
-                    // Picking a theme you can't currently see switches to it.
-                    theme_mod::update_appearance(window, cx, |a, system| theme_mod::choose_theme(a, id, system))
-                })).into_any_element()
-            }).collect();
+            let chosen = if dark {
+                appearance.dark.clone()
+            } else {
+                appearance.light.clone()
+            };
+            let swatches: Vec<AnyElement> = PALETTES
+                .iter()
+                .filter(|p| p.dark == dark)
+                .map(|p| {
+                    let id = p.id;
+                    swatch(theme, p, p.id == chosen, theme.id == p.id)
+                        .on_click(cx.listener(move |_, _, window, cx| {
+                            // Picking a theme you can't currently see switches to it.
+                            theme_mod::update_appearance(window, cx, |a, system| {
+                                theme_mod::choose_theme(a, id, system)
+                            })
+                        }))
+                        .into_any_element()
+                })
+                .collect();
             swatch_rows(swatches)
         };
         let modes = [
@@ -744,7 +1056,16 @@ impl SettingsPage {
                     .flex()
                     .items_center()
                     .justify_between()
-                    .child(div().flex_1().min_w(px(0.)).text_size(px(12.5)).text_color(theme.text_muted).child("Follow the system, or pin light or dark. Each has its own theme."))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .text_size(px(12.5))
+                            .text_color(theme.text_muted)
+                            .child(
+                                "Follow the system, or pin light or dark. Each has its own theme.",
+                            ),
+                    )
                     .child(
                         div()
                             .flex()
@@ -757,59 +1078,111 @@ impl SettingsPage {
                             .children(modes),
                     ),
             )
-            .child(kit::label(theme, "Dark themes").text_size(px(12.)).text_color(theme.text_muted))
+            .child(
+                kit::label(theme, "Dark themes")
+                    .text_size(px(12.))
+                    .text_color(theme.text_muted),
+            )
             .child(dark_grid)
-            .child(kit::label(theme, "Light themes").text_size(px(12.)).text_color(theme.text_muted))
+            .child(
+                kit::label(theme, "Light themes")
+                    .text_size(px(12.))
+                    .text_color(theme.text_muted),
+            )
             .child(light_grid)
-            .child(kit::label(theme, "Icons").text_size(px(12.)).text_color(theme.text_muted))
+            .child(
+                kit::label(theme, "Icons")
+                    .text_size(px(12.))
+                    .text_color(theme.text_muted),
+            )
             .child(self.icon_styles(theme, &appearance, cx))
     }
 
     /// One card per icon style, each drawn in its own style.
-    fn icon_styles(&self, theme: &Theme, appearance: &Appearance, cx: &mut Context<Self>) -> impl IntoElement {
+    fn icon_styles(
+        &self,
+        theme: &Theme,
+        appearance: &Appearance,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let chosen = kit::IconStyle::from_id(&appearance.icon_style);
-        let sample = [("gauge", kit::tiles::OVERVIEW), ("workflow", kit::tiles::JOBS), ("terminal", kit::tiles::WORKSPACES), ("laptop", kit::tiles::MACOS)];
-        let cards: Vec<AnyElement> = kit::IconStyle::ALL
-            .into_iter()
-            .map(|style| {
-                let look = kit::Look::new(style, theme);
-                let selected = style == chosen;
-                div()
-                    .id(SharedString::from(format!("icon-style-{}", style.id())))
-                    .w(px(118.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(8.))
-                    .p(px(10.))
-                    .rounded(px(9.))
-                    .border_1()
-                    .cursor_pointer()
-                    .border_color(if selected { theme.accent } else { theme.border_variant })
-                    .bg(if selected { theme.accent.opacity(0.08) } else { theme.surface })
-                    .when(!selected, |d| d.hover(|st| st.border_color(theme.border)))
-                    .child(div().flex().gap(px(6.)).children(sample.iter().map(|(name, (from, to))| kit::tile_in(look, name, *from, *to, 20.))))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(5.))
-                            .text_size(px(12.))
-                            .text_color(if selected { theme.text } else { theme.text_muted })
-                            .child(style.label())
-                            .when(selected, |d| d.child(icon("check", 12., theme.text_accent))),
-                    )
-                    .on_click(cx.listener(move |_, _, window, cx| theme_mod::update_appearance(window, cx, |a, _| a.icon_style = style.id().into())))
-                    .into_any_element()
-            })
-            .collect();
+        let sample = [
+            ("gauge", kit::tiles::OVERVIEW),
+            ("workflow", kit::tiles::JOBS),
+            ("terminal", kit::tiles::WORKSPACES),
+            ("laptop", kit::tiles::MACOS),
+        ];
+        let cards: Vec<AnyElement> =
+            kit::IconStyle::ALL
+                .into_iter()
+                .map(|style| {
+                    let look = kit::Look::new(style, theme);
+                    let selected = style == chosen;
+                    div()
+                        .id(SharedString::from(format!("icon-style-{}", style.id())))
+                        .w(px(118.))
+                        .flex()
+                        .flex_col()
+                        .gap(px(8.))
+                        .p(px(10.))
+                        .rounded(px(9.))
+                        .border_1()
+                        .cursor_pointer()
+                        .border_color(if selected {
+                            theme.accent
+                        } else {
+                            theme.border_variant
+                        })
+                        .bg(if selected {
+                            theme.accent.opacity(0.08)
+                        } else {
+                            theme.surface
+                        })
+                        .when(!selected, |d| d.hover(|st| st.border_color(theme.border)))
+                        .child(div().flex().gap(px(6.)).children(
+                            sample.iter().map(|(name, (from, to))| {
+                                kit::tile_in(look, name, *from, *to, 20.)
+                            }),
+                        ))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(5.))
+                                .text_size(px(12.))
+                                .text_color(if selected {
+                                    theme.text
+                                } else {
+                                    theme.text_muted
+                                })
+                                .child(style.label())
+                                .when(selected, |d| d.child(icon("check", 12., theme.text_accent))),
+                        )
+                        .on_click(cx.listener(move |_, _, window, cx| {
+                            theme_mod::update_appearance(window, cx, |a, _| {
+                                a.icon_style = style.id().into()
+                            })
+                        }))
+                        .into_any_element()
+                })
+                .collect();
         div().flex().flex_wrap().gap(px(10.)).children(cards)
     }
 
     /// Tailscale on this computer: whether it's on, and what Muxin uses it for.
     fn tailscale_section(&self, theme: &Theme) -> Option<impl IntoElement> {
         let t = self.snapshot.tailscale.clone()?;
-        let here = if cfg!(target_os = "macos") { "this Mac" } else { "this computer" };
-        let on_it = self.snapshot.machines.iter().filter(|m| m.tailnet.is_some()).count();
+        let here = if cfg!(target_os = "macos") {
+            "this Mac"
+        } else {
+            "this computer"
+        };
+        let on_it = self
+            .snapshot
+            .machines
+            .iter()
+            .filter(|m| m.tailnet.is_some())
+            .count();
         let (glyph, color, title, detail) = if t.running {
             (
                 "circle-check",
@@ -825,9 +1198,19 @@ impl SettingsPage {
                 },
             )
         } else if t.state == "NeedsLogin" {
-            ("circle-alert", theme.warning, format!("Tailscale is signed out on {here}"), "Sign in to reach machines away from home.".to_string())
+            (
+                "circle-alert",
+                theme.warning,
+                format!("Tailscale is signed out on {here}"),
+                "Sign in to reach machines away from home.".to_string(),
+            )
         } else {
-            ("circle-alert", theme.warning, format!("Tailscale is off on {here}"), "Turn it on to reach machines away from home.".to_string())
+            (
+                "circle-alert",
+                theme.warning,
+                format!("Tailscale is off on {here}"),
+                "Turn it on to reach machines away from home.".to_string(),
+            )
         };
         Some(
             div()
@@ -851,10 +1234,18 @@ impl SettingsPage {
                                 .min_w(px(0.))
                                 .gap(px(2.))
                                 .child(div().text_size(px(13.)).child(title))
-                                .child(div().text_size(px(11.5)).text_color(theme.text_placeholder).child(detail)),
+                                .child(
+                                    div()
+                                        .text_size(px(11.5))
+                                        .text_color(theme.text_placeholder)
+                                        .child(detail),
+                                ),
                         )
                         .when(!t.running && super::can_open_tailscale(), |d| {
-                            d.child(Button::new("ts-open", "Open Tailscale").on_click(|_, _, _| super::open_tailscale()))
+                            d.child(
+                                Button::new("ts-open", "Open Tailscale")
+                                    .on_click(|_, _, _| super::open_tailscale()),
+                            )
                         }),
                 ),
         )
@@ -863,8 +1254,18 @@ impl SettingsPage {
     /// Sharing the clipboard with the machines.
     fn clipboard_section(&self, theme: &Theme) -> impl IntoElement {
         let on = self.engine.settings().share_clipboard;
-        let sharing: Vec<String> = self.snapshot.machines.iter().filter(|m| crate::fleet::clipboard::sharing(&m.id)).map(|m| m.name.clone()).collect();
-        let here = if cfg!(target_os = "macos") { "this Mac" } else { "this computer" };
+        let sharing: Vec<String> = self
+            .snapshot
+            .machines
+            .iter()
+            .filter(|m| crate::fleet::clipboard::sharing(&m.id))
+            .map(|m| m.name.clone())
+            .collect();
+        let here = if cfg!(target_os = "macos") {
+            "this Mac"
+        } else {
+            "this computer"
+        };
         let status = match (on, sharing.as_slice()) {
             (false, _) => "Off.".to_string(),
             (true, []) => "No machine with a desktop is connected right now.".to_string(),
@@ -887,7 +1288,11 @@ impl SettingsPage {
                         let _ = engine.update_settings(s);
                         cx.refresh_windows();
                     }))
-                    .child(div().text_size(px(11.5)).text_color(theme.text_placeholder).child(format!("Copy on {here}, paste on your machines, and back. Passwords stay here.")))
+                    .child(div().text_size(px(11.5)).text_color(theme.text_placeholder).child(if cfg!(target_os = "macos") {
+                        format!("Copy on {here}, paste on your machines, and back. Passwords stay here.")
+                    } else {
+                        format!("Copy on {here}, paste on your machines, and back.")
+                    }))
                     .child(div().text_size(px(11.5)).text_color(theme.text_muted).child(status)),
             )
     }
@@ -921,9 +1326,14 @@ impl SettingsPage {
         let chosen = self.engine.settings().editor;
         let installed = crate::fleet::editor::installed();
         let mut options: Vec<(String, String)> = vec![(String::new(), "First installed".into())];
-        options.extend(installed.iter().map(|e| (e.id.to_string(), e.name.to_string())));
+        options.extend(
+            installed
+                .iter()
+                .map(|e| (e.id.to_string(), e.name.to_string())),
+        );
         let detail = if installed.is_empty() {
-            "No editor found: Muxin opens folders in Zed, Cursor or VS Code (with Remote - SSH).".to_string()
+            "No editor found: Muxin opens folders in Zed, Cursor or VS Code (with Remote - SSH)."
+                .to_string()
         } else {
             "Open in editor opens a machine’s folder over ssh in the editor you pick from its list. The one chosen here comes first, and `muxin edit` uses it.".to_string()
         };
@@ -942,32 +1352,60 @@ impl SettingsPage {
                     .py(px(12.))
                     .gap(px(8.))
                     // As wide as its choices (a row keeps it from stretching).
-                    .child(div().flex().child(div().flex().gap(px(2.)).p(px(2.)).rounded(px(7.)).bg(theme.element).children(options.into_iter().map(|(id, name)| {
-                        let on = chosen == id;
-                        let engine = self.engine.clone();
+                    .child(
+                        div().flex().child(
+                            div()
+                                .flex()
+                                .gap(px(2.))
+                                .p(px(2.))
+                                .rounded(px(7.))
+                                .bg(theme.element)
+                                .children(options.into_iter().map(|(id, name)| {
+                                    let on = chosen == id;
+                                    let engine = self.engine.clone();
+                                    div()
+                                        .id(SharedString::from(format!(
+                                            "editor-{}",
+                                            if id.is_empty() { "auto" } else { id.as_str() }
+                                        )))
+                                        .px(px(10.))
+                                        .h(px(24.))
+                                        .flex()
+                                        .items_center()
+                                        .rounded(px(5.))
+                                        .cursor_pointer()
+                                        .text_size(px(12.))
+                                        .text_color(if on {
+                                            theme.text
+                                        } else {
+                                            theme.text_placeholder
+                                        })
+                                        .when(on, |d| d.bg(theme.element_selected))
+                                        .when(!on, |d| d.hover(|st| st.bg(theme.ghost_hover)))
+                                        .gap(px(6.))
+                                        .children(
+                                            crate::fleet::editor::icon(&id).map(|png| {
+                                                gpui::img(png).size(px(14.)).flex_none()
+                                            }),
+                                        )
+                                        .child(name)
+                                        .on_click(move |_, _, cx| {
+                                            let mut s = engine.settings();
+                                            s.editor = id.clone();
+                                            let _ = engine.update_settings(s);
+                                            cx.refresh_windows();
+                                        })
+                                })),
+                        ),
+                    )
+                    .child(
                         div()
-                            .id(SharedString::from(format!("editor-{}", if id.is_empty() { "auto" } else { id.as_str() })))
-                            .px(px(10.))
-                            .h(px(24.))
-                            .flex()
-                            .items_center()
-                            .rounded(px(5.))
-                            .cursor_pointer()
-                            .text_size(px(12.))
-                            .text_color(if on { theme.text } else { theme.text_placeholder })
-                            .when(on, |d| d.bg(theme.element_selected))
-                            .when(!on, |d| d.hover(|st| st.bg(theme.ghost_hover)))
-                            .gap(px(6.))
-                            .children(crate::fleet::editor::icon(&id).map(|png| gpui::img(png).size(px(14.)).flex_none()))
-                            .child(name)
-                            .on_click(move |_, _, cx| {
-                                let mut s = engine.settings();
-                                s.editor = id.clone();
-                                let _ = engine.update_settings(s);
-                                cx.refresh_windows();
-                            })
-                    }))))
-                    .child(div().w_full().min_w(px(0.)).text_size(px(11.5)).text_color(theme.text_placeholder).child(detail)),
+                            .w_full()
+                            .min_w(px(0.))
+                            .text_size(px(11.5))
+                            .text_color(theme.text_placeholder)
+                            .child(detail),
+                    ),
             )
     }
 
@@ -1019,19 +1457,58 @@ impl Render for SettingsPage {
                     .rounded(px(7.))
                     .cursor_pointer()
                     .text_size(px(13.))
-                    .text_color(if selected { theme.text } else { theme.text_muted })
-                    .when(selected, |d| d.bg(theme.surface).border_1().border_color(theme.border).shadow_sm())
+                    .text_color(if selected {
+                        theme.text
+                    } else {
+                        theme.text_muted
+                    })
+                    .when(selected, |d| {
+                        d.bg(theme.surface)
+                            .border_1()
+                            .border_color(theme.border)
+                            .shadow_sm()
+                    })
                     .when(!selected, |d| d.hover(|st| st.text_color(theme.text)))
-                    .child(icon(tab.icon(), 14., if selected { theme.text } else { theme.text_placeholder }))
+                    .child(icon(
+                        tab.icon(),
+                        14.,
+                        if selected {
+                            theme.text
+                        } else {
+                            theme.text_placeholder
+                        },
+                    ))
                     .child(tab.label())
                     .on_click(cx.listener(move |this, _, _, cx| this.show_tab(tab, cx)))
                     .into_any_element()
             })
             .collect();
-        let bar = div().flex_none().px(px(28.)).pt(px(18.)).pb(px(14.)).border_b_1().border_color(theme.border_variant).child(
-            div().flex().w_full().max_w(px(760.)).gap(px(2.)).p(px(3.)).rounded(px(9.)).bg(theme.element).border_1().border_color(theme.border_variant).children(tabs),
-        );
-        let body = div().w_full().max_w(px(760.)).flex().flex_col().gap(px(28.));
+        let bar = div()
+            .flex_none()
+            .px(px(28.))
+            .pt(px(18.))
+            .pb(px(14.))
+            .border_b_1()
+            .border_color(theme.border_variant)
+            .child(
+                div()
+                    .flex()
+                    .w_full()
+                    .max_w(px(760.))
+                    .gap(px(2.))
+                    .p(px(3.))
+                    .rounded(px(9.))
+                    .bg(theme.element)
+                    .border_1()
+                    .border_color(theme.border_variant)
+                    .children(tabs),
+            );
+        let body = div()
+            .w_full()
+            .max_w(px(760.))
+            .flex()
+            .flex_col()
+            .gap(px(28.));
         let body = match self.tab {
             SettingsTab::General => body
                 .child(self.shell_section(&theme, cx))
@@ -1042,18 +1519,33 @@ impl Render for SettingsPage {
                 .child(self.checks_section(&theme, false, cx))
                 .child(self.inventory_section(&theme)),
             SettingsTab::Appearance => body.child(self.appearance_section(&theme, cx)),
-            SettingsTab::Terminal => body.child(self.terminal_section(&theme, super::terminal::font_family(window), super::terminal::monospace_families(window), cx)),
-            SettingsTab::GitHub => body.child(self.github_section(&theme, cx)).child(self.checks_section(&theme, true, cx)),
-            SettingsTab::Cloud => body.child(self.cloud_usage_section(&theme, cx)).child(self.cloud_section(&theme, cx)),
+            SettingsTab::Terminal => body.child(self.terminal_section(
+                &theme,
+                super::terminal::font_family(window),
+                super::terminal::monospace_families(window),
+                cx,
+            )),
+            SettingsTab::GitHub => body
+                .child(self.github_section(&theme, cx))
+                .child(self.checks_section(&theme, true, cx)),
+            SettingsTab::Cloud => body
+                .child(self.cloud_usage_section(&theme, cx))
+                .child(self.cloud_section(&theme, cx)),
             SettingsTab::Prompts => body.child(self.prompts_section(&theme, cx)),
             SettingsTab::Keyboard => body.child(self.keyboard_section(&theme, cx)),
         };
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .child(bar)
-            .child(div().id("settings-page").flex_1().min_h(px(0.)).overflow_y_scroll().track_scroll(&self.scroll).px(px(28.)).pt(px(22.)).pb(px(40.)).child(body))
+        div().size_full().flex().flex_col().child(bar).child(
+            div()
+                .id("settings-page")
+                .flex_1()
+                .min_h(px(0.))
+                .overflow_y_scroll()
+                .track_scroll(&self.scroll)
+                .px(px(28.))
+                .pt(px(22.))
+                .pb(px(40.))
+                .child(body),
+        )
     }
 }
 
@@ -1062,7 +1554,15 @@ impl SettingsPage {
     fn keyboard_section(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         use super::shortcuts::{self, ALL};
         let any_changed = !cx.global::<theme_mod::Appearance>().shortcuts.is_empty();
-        let row = |label: SharedString| div().flex().items_center().gap(px(8.)).min_h(px(34.)).text_size(px(12.5)).child(div().flex_1().text_color(theme.text_muted).child(label));
+        let row = |label: SharedString| {
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .min_h(px(34.))
+                .text_size(px(12.5))
+                .child(div().flex_1().text_color(theme.text_muted).child(label))
+        };
 
         // ⌘1…⌘9: one modifier for all nine.
         let chosen = shortcuts::machine_modifier(cx);
@@ -1080,8 +1580,16 @@ impl SettingsPage {
                     .justify_center()
                     .rounded(px(5.))
                     .border_1()
-                    .border_color(if on { theme.accent } else { theme.border_variant })
-                    .bg(if on { theme.accent.opacity(0.12) } else { theme.element })
+                    .border_color(if on {
+                        theme.accent
+                    } else {
+                        theme.border_variant
+                    })
+                    .bg(if on {
+                        theme.accent.opacity(0.12)
+                    } else {
+                        theme.element
+                    })
                     .cursor_pointer()
                     .font_family(mono_font())
                     .text_size(px(12.))
@@ -1118,20 +1626,40 @@ impl SettingsPage {
                     .font_family(mono_font())
                     .text_size(px(12.))
                     .map(|d| match (recording, keys.is_empty()) {
-                        (true, _) => d.border_color(theme.accent).bg(theme.accent.opacity(0.12)).text_color(theme.text_accent).child("Press keys…"),
-                        (false, true) => d.border_color(theme.border_variant).bg(theme.element).text_color(theme.text_placeholder).child("None"),
-                        (false, false) => d.border_color(theme.border_variant).bg(theme.element).text_color(theme.text).child(keys.clone()),
+                        (true, _) => d
+                            .border_color(theme.accent)
+                            .bg(theme.accent.opacity(0.12))
+                            .text_color(theme.text_accent)
+                            .child("Press keys…"),
+                        (false, true) => d
+                            .border_color(theme.border_variant)
+                            .bg(theme.element)
+                            .text_color(theme.text_placeholder)
+                            .child("None"),
+                        (false, false) => d
+                            .border_color(theme.border_variant)
+                            .bg(theme.element)
+                            .text_color(theme.text)
+                            .child(keys.clone()),
                     })
                     .on_click(cx.listener(move |this, _, _, cx| this.record(id, cx)));
                 let reset = if shortcuts::changed(cx, sc.id) {
-                    Button::icon_only(("sc-reset", i), "rotate-ccw").tooltip("Back to the default").on_click(cx.listener(move |this, _, _, cx| this.reset_shortcut(id, cx))).into_any_element()
+                    Button::icon_only(("sc-reset", i), "rotate-ccw")
+                        .tooltip("Back to the default")
+                        .on_click(cx.listener(move |this, _, _, cx| this.reset_shortcut(id, cx)))
+                        .into_any_element()
                 } else {
                     div().w(px(26.)).into_any_element()
                 };
-                row(sc.label.into()).child(chip).child(reset).into_any_element()
+                row(sc.label.into())
+                    .child(chip)
+                    .child(reset)
+                    .into_any_element()
             })
             .collect();
-        let fixed = row("Terminal text size".into()).child(kit::kbd(theme, "⌘+  ⌘−  ⌘0")).child(div().w(px(26.)));
+        let fixed = row("Terminal text size".into())
+            .child(kit::kbd(theme, "⌘+  ⌘−  ⌘0"))
+            .child(div().w(px(26.)));
 
         div()
             .flex()
@@ -1144,11 +1672,30 @@ impl SettingsPage {
                     .child(section_title(theme, "Shortcuts", None))
                     .child(div().flex_1())
                     .when(any_changed, |d| {
-                        d.child(Button::new("sc-reset-all", "Reset all").style(ButtonStyle::Ghost).on_click(cx.listener(|this, _, _, cx| this.reset_all_shortcuts(cx))))
+                        d.child(
+                            Button::new("sc-reset-all", "Reset all")
+                                .style(ButtonStyle::Ghost)
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.reset_all_shortcuts(cx)),
+                                ),
+                        )
                     }),
             )
-            .child(div().text_size(px(12.5)).text_color(theme.text_placeholder).child(if cfg!(target_os = "macos") { "Hold ⌘ or ⌃ to see them anywhere." } else { "Hold Ctrl to see them anywhere." }))
-            .children(self.shortcut_note.clone().map(|n| note(theme, "info", theme.info, n)))
+            .child(
+                div()
+                    .text_size(px(12.5))
+                    .text_color(theme.text_placeholder)
+                    .child(if cfg!(target_os = "macos") {
+                        "Hold ⌘ or ⌃ to see them anywhere."
+                    } else {
+                        "Hold Ctrl to see them anywhere."
+                    }),
+            )
+            .children(
+                self.shortcut_note
+                    .clone()
+                    .map(|n| note(theme, "info", theme.info, n)),
+            )
             .child(
                 card(theme)
                     .px(px(14.))
@@ -1205,9 +1752,21 @@ impl SettingsPage {
                 self.recording = None;
             }
             _ => match shortcuts::from_press(k) {
-                None => self.shortcut_note = Some(if cfg!(target_os = "macos") { "Add ⌘, ⌃ or ⌥." } else { "Add Ctrl or Alt." }.into()),
+                None => {
+                    self.shortcut_note = Some(
+                        if cfg!(target_os = "macos") {
+                            "Add ⌘, ⌃ or ⌥."
+                        } else {
+                            "Add Ctrl or Alt."
+                        }
+                        .into(),
+                    )
+                }
                 Some(keys) => match shortcuts::used_by(cx, &keys, id) {
-                    Some((MACHINES, what)) => self.shortcut_note = Some(format!("{} goes to {what}.", shortcuts::label(&keys))),
+                    Some((MACHINES, what)) => {
+                        self.shortcut_note =
+                            Some(format!("{} goes to {what}.", shortcuts::label(&keys)))
+                    }
                     taken => {
                         if let Some((other, what)) = taken {
                             shortcuts::set(cx, other, "");
@@ -1225,7 +1784,11 @@ impl SettingsPage {
 
     fn reset_shortcut(&mut self, id: &'static str, cx: &mut Context<Self>) {
         use super::shortcuts::{self, ALL, MACHINES};
-        let default = ALL.iter().find(|s| s.id == id).map(|s| s.default).unwrap_or_default();
+        let default = ALL
+            .iter()
+            .find(|s| s.id == id)
+            .map(|s| s.default)
+            .unwrap_or_default();
         self.shortcut_note = None;
         match shortcuts::used_by(cx, default, id) {
             Some((MACHINES, what)) => {
@@ -1258,19 +1821,33 @@ impl SettingsPage {
         shortcuts::set(cx, MACHINES, modifier);
         let mut freed = Vec::new();
         for n in 1..=9 {
-            if let Some((other, what)) = shortcuts::machine_keys(cx, n).and_then(|k| shortcuts::used_by(cx, &k, MACHINES)) {
+            if let Some((other, what)) =
+                shortcuts::machine_keys(cx, n).and_then(|k| shortcuts::used_by(cx, &k, MACHINES))
+            {
                 shortcuts::set(cx, other, "");
                 freed.push(what);
             }
         }
         shortcuts::apply(cx);
-        self.shortcut_note = (!freed.is_empty()).then(|| format!("Removed from {}.", freed.join(", ")));
+        self.shortcut_note =
+            (!freed.is_empty()).then(|| format!("Removed from {}.", freed.join(", ")));
         cx.notify();
     }
 }
 
-fn note(_theme: &Theme, icon_name: &'static str, color: gpui::Hsla, text: impl Into<SharedString>) -> impl IntoElement {
-    div().flex().items_center().gap(px(8.)).text_size(px(12.5)).child(icon(icon_name, 14., color)).child(text.into())
+fn note(
+    _theme: &Theme,
+    icon_name: &'static str,
+    color: gpui::Hsla,
+    text: impl Into<SharedString>,
+) -> impl IntoElement {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(8.))
+        .text_size(px(12.5))
+        .child(icon(icon_name, 14., color))
+        .child(text.into())
 }
 
 /// A fix to run: copyable, and a button when it's a GitHub permission Muxin can ask for.
@@ -1282,15 +1859,29 @@ fn hint_line(theme: &Theme, i: usize, hint: String) -> impl IntoElement {
         .items_center()
         .gap(px(6.))
         .pl(px(24.))
-        .child(mono(hint).text_size(px(12.)).px(px(6.)).py(px(2.)).rounded(px(4.)).bg(theme.element).text_color(theme.text_muted))
-        .child(Button::icon_only(("hint-copy", i), "copy").tooltip("Copy").on_click(move |_, _, cx| {
-            cx.write_to_clipboard(gpui::ClipboardItem::new_string(copy.clone()))
-        }))
+        .child(
+            mono(hint)
+                .text_size(px(12.))
+                .px(px(6.))
+                .py(px(2.))
+                .rounded(px(4.))
+                .bg(theme.element)
+                .text_color(theme.text_muted),
+        )
+        .child(
+            Button::icon_only(("hint-copy", i), "copy")
+                .tooltip("Copy")
+                .on_click(move |_, _, cx| {
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(copy.clone()))
+                }),
+        )
         .when(grant, |d| {
             d.child(
                 Button::new(("hint-grant", i), "Grant access")
                     .style(ButtonStyle::Primary)
-                    .on_click(|_, window, cx| window.dispatch_action(Box::new(super::root::GrantGitHubAccess), cx)),
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(super::root::GrantGitHubAccess), cx)
+                    }),
             )
         })
 }
@@ -1315,7 +1906,11 @@ fn swatch(theme: &Theme, p: &Palette, chosen: bool, showing: bool) -> gpui::Stat
                 .rounded(px(10.))
                 .overflow_hidden()
                 .border_2()
-                .border_color(if chosen { theme.accent } else { theme.border_variant })
+                .border_color(if chosen {
+                    theme.accent
+                } else {
+                    theme.border_variant
+                })
                 .hover(|st| st.border_color(if chosen { theme.accent } else { theme.border }))
                 .child(
                     div()
@@ -1354,7 +1949,21 @@ fn swatch(theme: &Theme, p: &Palette, chosen: bool, showing: bool) -> gpui::Stat
                                 .gap(px(4.))
                                 .px(px(7.))
                                 .child(bar(46., t.text.opacity(0.85)))
-                                .child(div().flex().gap(px(3.)).child(div().size(px(6.)).rounded(px(1.5)).bg(t.accent)).child(div().size(px(6.)).rounded(px(1.5)).bg(t.success)).child(div().size(px(6.)).rounded(px(1.5)).bg(t.success)).child(div().size(px(6.)).rounded(px(1.5)).border_1().border_color(t.text_placeholder))),
+                                .child(
+                                    div()
+                                        .flex()
+                                        .gap(px(3.))
+                                        .child(div().size(px(6.)).rounded(px(1.5)).bg(t.accent))
+                                        .child(div().size(px(6.)).rounded(px(1.5)).bg(t.success))
+                                        .child(div().size(px(6.)).rounded(px(1.5)).bg(t.success))
+                                        .child(
+                                            div()
+                                                .size(px(6.))
+                                                .rounded(px(1.5))
+                                                .border_1()
+                                                .border_color(t.text_placeholder),
+                                        ),
+                                ),
                         )
                         .child(
                             div()

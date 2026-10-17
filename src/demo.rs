@@ -15,8 +15,10 @@ const ORG: &str = "acme";
 /// The demo's machines: a small studio's Macs, a Linux server and laptop, a
 /// NAS, a MacBook that's usually asleep, and a cloud machine created days ago.
 fn inventory_text(now: DateTime<Utc>) -> String {
-    let created = (now - chrono::Duration::days(3) - chrono::Duration::hours(5)).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    let vm_created = (now - chrono::Duration::days(1)).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let created = (now - chrono::Duration::days(3) - chrono::Duration::hours(5))
+        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let vm_created =
+        (now - chrono::Duration::days(1)).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     format!(
         r#"[[machine]]
 name = "Forge"
@@ -97,17 +99,167 @@ struct Hardware {
 }
 
 const HARDWARE: &[Hardware] = &[
-    Hardware { id: "forge", os: "darwin", arch: "arm64", os_version: "macOS 26.1", cores: 16, mem_gb: 64, base_mem: 0.27, disk_total_gb: 2000, disk_free_gb: 1240.0, up_hours: 9 * 24 + 4, reachable: true, desktop: true, docker: Some("29.0.1"), sudo: None },
-    Hardware { id: "orbit", os: "darwin", arch: "arm64", os_version: "macOS 26.1", cores: 12, mem_gb: 24, base_mem: 0.44, disk_total_gb: 512, disk_free_gb: 203.0, up_hours: 2 * 24 + 18, reachable: true, desktop: true, docker: None, sudo: None },
-    Hardware { id: "beacon", os: "linux", arch: "x86_64", os_version: "Ubuntu 24.04.3 LTS", cores: 12, mem_gb: 96, base_mem: 0.14, disk_total_gb: 2000, disk_free_gb: 1610.0, up_hours: 31 * 24 + 2, reachable: true, desktop: false, docker: Some("29.1.3"), sudo: Some("password") },
-    Hardware { id: "pebble", os: "linux", arch: "x86_64", os_version: "Fedora Linux 42 (Workstation Edition)", cores: 8, mem_gb: 32, base_mem: 0.36, disk_total_gb: 1000, disk_free_gb: 512.0, up_hours: 6, reachable: true, desktop: true, docker: Some("28.5.2"), sudo: Some("passwordless") },
-    Hardware { id: "dev-1", os: "linux", arch: "x86_64", os_version: "Ubuntu 24.04.3 LTS", cores: 2, mem_gb: 4, base_mem: 0.31, disk_total_gb: 80, disk_free_gb: 61.0, up_hours: 3 * 24 + 5, reachable: true, desktop: false, docker: Some("29.1.3"), sudo: Some("passwordless") },
-    Hardware { id: "harbor", os: "darwin", arch: "arm64", os_version: "macOS 26.1", cores: 12, mem_gb: 36, base_mem: 0.3, disk_total_gb: 1000, disk_free_gb: 470.0, up_hours: 3, reachable: false, desktop: true, docker: None, sudo: None },
-    Hardware { id: "win-test", os: "windows", arch: "AMD64", os_version: "Microsoft Windows 11 Pro", cores: 4, mem_gb: 8, base_mem: 0.38, disk_total_gb: 64, disk_free_gb: 38.0, up_hours: 22, reachable: true, desktop: true, docker: None, sudo: None },
-    Hardware { id: "sandbox", os: "linux", arch: "aarch64", os_version: "Ubuntu 24.04.3 LTS", cores: 4, mem_gb: 8, base_mem: 0.12, disk_total_gb: 2000, disk_free_gb: 1240.0, up_hours: 20, reachable: true, desktop: false, docker: None, sudo: Some("passwordless") },
-    Hardware { id: "vault", os: "linux", arch: "aarch64", os_version: "Debian GNU/Linux 12 (bookworm)", cores: 4, mem_gb: 8, base_mem: 0.22, disk_total_gb: 4000, disk_free_gb: 41.0, up_hours: 54 * 24 + 11, reachable: true, desktop: false, docker: Some("28.5.1"), sudo: Some("password") },
+    Hardware {
+        id: "forge",
+        os: "darwin",
+        arch: "arm64",
+        os_version: "macOS 26.1",
+        cores: 16,
+        mem_gb: 64,
+        base_mem: 0.27,
+        disk_total_gb: 2000,
+        disk_free_gb: 1240.0,
+        up_hours: 9 * 24 + 4,
+        reachable: true,
+        desktop: true,
+        docker: Some("29.0.1"),
+        sudo: None,
+    },
+    Hardware {
+        id: "orbit",
+        os: "darwin",
+        arch: "arm64",
+        os_version: "macOS 26.1",
+        cores: 12,
+        mem_gb: 24,
+        base_mem: 0.44,
+        disk_total_gb: 512,
+        disk_free_gb: 203.0,
+        up_hours: 2 * 24 + 18,
+        reachable: true,
+        desktop: true,
+        docker: None,
+        sudo: None,
+    },
+    Hardware {
+        id: "beacon",
+        os: "linux",
+        arch: "x86_64",
+        os_version: "Ubuntu 24.04.3 LTS",
+        cores: 12,
+        mem_gb: 96,
+        base_mem: 0.14,
+        disk_total_gb: 2000,
+        disk_free_gb: 1610.0,
+        up_hours: 31 * 24 + 2,
+        reachable: true,
+        desktop: false,
+        docker: Some("29.1.3"),
+        sudo: Some("password"),
+    },
+    Hardware {
+        id: "pebble",
+        os: "linux",
+        arch: "x86_64",
+        os_version: "Fedora Linux 42 (Workstation Edition)",
+        cores: 8,
+        mem_gb: 32,
+        base_mem: 0.36,
+        disk_total_gb: 1000,
+        disk_free_gb: 512.0,
+        up_hours: 6,
+        reachable: true,
+        desktop: true,
+        docker: Some("28.5.2"),
+        sudo: Some("passwordless"),
+    },
+    Hardware {
+        id: "dev-1",
+        os: "linux",
+        arch: "x86_64",
+        os_version: "Ubuntu 24.04.3 LTS",
+        cores: 2,
+        mem_gb: 4,
+        base_mem: 0.31,
+        disk_total_gb: 80,
+        disk_free_gb: 61.0,
+        up_hours: 3 * 24 + 5,
+        reachable: true,
+        desktop: false,
+        docker: Some("29.1.3"),
+        sudo: Some("passwordless"),
+    },
+    Hardware {
+        id: "harbor",
+        os: "darwin",
+        arch: "arm64",
+        os_version: "macOS 26.1",
+        cores: 12,
+        mem_gb: 36,
+        base_mem: 0.3,
+        disk_total_gb: 1000,
+        disk_free_gb: 470.0,
+        up_hours: 3,
+        reachable: false,
+        desktop: true,
+        docker: None,
+        sudo: None,
+    },
+    Hardware {
+        id: "win-test",
+        os: "windows",
+        arch: "AMD64",
+        os_version: "Microsoft Windows 11 Pro",
+        cores: 4,
+        mem_gb: 8,
+        base_mem: 0.38,
+        disk_total_gb: 64,
+        disk_free_gb: 38.0,
+        up_hours: 22,
+        reachable: true,
+        desktop: true,
+        docker: None,
+        sudo: None,
+    },
+    Hardware {
+        id: "sandbox",
+        os: "linux",
+        arch: "aarch64",
+        os_version: "Ubuntu 24.04.3 LTS",
+        cores: 4,
+        mem_gb: 8,
+        base_mem: 0.12,
+        disk_total_gb: 2000,
+        disk_free_gb: 1240.0,
+        up_hours: 20,
+        reachable: true,
+        desktop: false,
+        docker: None,
+        sudo: Some("passwordless"),
+    },
+    Hardware {
+        id: "vault",
+        os: "linux",
+        arch: "aarch64",
+        os_version: "Debian GNU/Linux 12 (bookworm)",
+        cores: 4,
+        mem_gb: 8,
+        base_mem: 0.22,
+        disk_total_gb: 4000,
+        disk_free_gb: 41.0,
+        up_hours: 54 * 24 + 11,
+        reachable: true,
+        desktop: false,
+        docker: Some("28.5.1"),
+        sudo: Some("password"),
+    },
     // Not in the demo's machines; tests add it to try Windows.
-    Hardware { id: "test-windows", os: "windows", arch: "AMD64", os_version: "Microsoft Windows 11 Pro", cores: 8, mem_gb: 32, base_mem: 0.33, disk_total_gb: 1000, disk_free_gb: 700.0, up_hours: 30, reachable: true, desktop: false, docker: None, sudo: None },
+    Hardware {
+        id: "test-windows",
+        os: "windows",
+        arch: "AMD64",
+        os_version: "Microsoft Windows 11 Pro",
+        cores: 8,
+        mem_gb: 32,
+        base_mem: 0.33,
+        disk_total_gb: 1000,
+        disk_free_gb: 700.0,
+        up_hours: 30,
+        reachable: true,
+        desktop: false,
+        docker: None,
+        sudo: None,
+    },
 ];
 
 struct Template {
@@ -120,18 +272,88 @@ struct Template {
 }
 
 const TEMPLATES: &[Template] = &[
-    Template { repo: "acme/desktop", workflow: "CI", name: "build (macos-arm64)", labels: &["self-hosted", "macOS", "ARM64"], min_secs: 90, max_secs: 300 },
-    Template { repo: "acme/desktop", workflow: "CI", name: "test (macos)", labels: &["self-hosted", "macOS"], min_secs: 60, max_secs: 180 },
-    Template { repo: "acme/desktop", workflow: "Release", name: "notarize", labels: &["self-hosted", "macOS", "ARM64"], min_secs: 120, max_secs: 240 },
-    Template { repo: "acme/api", workflow: "CI", name: "test", labels: &["self-hosted", "Linux", "X64"], min_secs: 45, max_secs: 150 },
-    Template { repo: "acme/api", workflow: "Deploy", name: "deploy (staging)", labels: &["self-hosted", "Linux"], min_secs: 30, max_secs: 90 },
-    Template { repo: "acme/web", workflow: "CI", name: "e2e (chromium)", labels: &["self-hosted", "Linux", "X64"], min_secs: 90, max_secs: 240 },
-    Template { repo: "acme/web", workflow: "CI", name: "lint", labels: &["self-hosted", "Linux"], min_secs: 20, max_secs: 60 },
-    Template { repo: "acme/mobile", workflow: "Release", name: "archive (ios)", labels: &["self-hosted", "macOS", "ARM64"], min_secs: 180, max_secs: 420 },
-    Template { repo: "acme/models", workflow: "Nightly", name: "train (small)", labels: &["self-hosted", "Linux", "X64"], min_secs: 120, max_secs: 360 },
+    Template {
+        repo: "acme/desktop",
+        workflow: "CI",
+        name: "build (macos-arm64)",
+        labels: &["self-hosted", "macOS", "ARM64"],
+        min_secs: 90,
+        max_secs: 300,
+    },
+    Template {
+        repo: "acme/desktop",
+        workflow: "CI",
+        name: "test (macos)",
+        labels: &["self-hosted", "macOS"],
+        min_secs: 60,
+        max_secs: 180,
+    },
+    Template {
+        repo: "acme/desktop",
+        workflow: "Release",
+        name: "notarize",
+        labels: &["self-hosted", "macOS", "ARM64"],
+        min_secs: 120,
+        max_secs: 240,
+    },
+    Template {
+        repo: "acme/api",
+        workflow: "CI",
+        name: "test",
+        labels: &["self-hosted", "Linux", "X64"],
+        min_secs: 45,
+        max_secs: 150,
+    },
+    Template {
+        repo: "acme/api",
+        workflow: "Deploy",
+        name: "deploy (staging)",
+        labels: &["self-hosted", "Linux"],
+        min_secs: 30,
+        max_secs: 90,
+    },
+    Template {
+        repo: "acme/web",
+        workflow: "CI",
+        name: "e2e (chromium)",
+        labels: &["self-hosted", "Linux", "X64"],
+        min_secs: 90,
+        max_secs: 240,
+    },
+    Template {
+        repo: "acme/web",
+        workflow: "CI",
+        name: "lint",
+        labels: &["self-hosted", "Linux"],
+        min_secs: 20,
+        max_secs: 60,
+    },
+    Template {
+        repo: "acme/mobile",
+        workflow: "Release",
+        name: "archive (ios)",
+        labels: &["self-hosted", "macOS", "ARM64"],
+        min_secs: 180,
+        max_secs: 420,
+    },
+    Template {
+        repo: "acme/models",
+        workflow: "Nightly",
+        name: "train (small)",
+        labels: &["self-hosted", "Linux", "X64"],
+        min_secs: 120,
+        max_secs: 360,
+    },
 ];
 
-const BRANCHES: &[&str] = &["main", "main", "main", "feat/machine-cards", "fix/flaky-e2e", "release/2.4"];
+const BRANCHES: &[&str] = &[
+    "main",
+    "main",
+    "main",
+    "feat/machine-cards",
+    "fix/flaky-e2e",
+    "release/2.4",
+];
 const ACTORS: &[&str] = &["dependabot[bot]", "maya", "theo", "sam", "priya"];
 
 struct SimRunner {
@@ -171,7 +393,8 @@ pub struct World {
     /// config.toml for the demo, edited in memory by add/remove machine and installs.
     inventory: Mutex<String>,
     /// Files in the demo's agent workspaces, by workspace id (see fleet::workspaces).
-    pub(crate) workspace_files: Mutex<std::collections::HashMap<String, crate::fleet::workspaces::DemoTree>>,
+    pub(crate) workspace_files:
+        Mutex<std::collections::HashMap<String, crate::fleet::workspaces::DemoTree>>,
 }
 
 /// Machines added in the demo get these specs.
@@ -195,26 +418,40 @@ const GENERIC: Hardware = Hardware {
 /// The containers the demo's VMs run in, on their hosts.
 fn demo_containers(machine_id: &str) -> Vec<crate::probe::PublishedContainer> {
     use crate::probe::{PublishedContainer, PublishedPort};
-    let port = |ip: &str, host_port: u16, target: &str| PublishedPort { host_ip: ip.into(), host_port, target: target.into() };
+    let port = |ip: &str, host_port: u16, target: &str| PublishedPort {
+        host_ip: ip.into(),
+        host_port,
+        target: target.into(),
+    };
     match machine_id {
         "beacon" => vec![PublishedContainer {
             name: "muxen-win-test".into(),
             state: "running".into(),
             image: "dockurr/windows".into(),
-            ports: vec![port("127.0.0.1", 2201, "22/tcp"), port("127.0.0.1", 8007, "8006/tcp"), port("", 47830, "47821/udp")],
+            ports: vec![
+                port("127.0.0.1", 2201, "22/tcp"),
+                port("127.0.0.1", 8007, "8006/tcp"),
+                port("", 47830, "47821/udp"),
+            ],
         }],
         "forge" => vec![PublishedContainer {
             name: "muxen-sandbox".into(),
             state: "running".into(),
             image: "ubuntu:24.04".into(),
-            ports: vec![port("127.0.0.1", 2202, "22/tcp"), port("", 47831, "47821/udp")],
+            ports: vec![
+                port("127.0.0.1", 2202, "22/tcp"),
+                port("", 47831, "47821/udp"),
+            ],
         }],
         _ => Vec::new(),
     }
 }
 
 fn hardware(machine_id: &str) -> &'static Hardware {
-    HARDWARE.iter().find(|h| h.id == machine_id).unwrap_or(&GENERIC)
+    HARDWARE
+        .iter()
+        .find(|h| h.id == machine_id)
+        .unwrap_or(&GENERIC)
 }
 
 impl World {
@@ -223,30 +460,68 @@ impl World {
         let mac = || labels(&["self-hosted", "macOS", "ARM64"]);
         let mut runners: Vec<SimRunner> = Vec::new();
         let mut add = |name: &str, machine: Option<&str>, l: Vec<String>, version: &'static str| {
-            runners.push(SimRunner { name: name.into(), machine: machine.map(String::from), labels: l, online: true, job: None, version, docker: false });
+            runners.push(SimRunner {
+                name: name.into(),
+                machine: machine.map(String::from),
+                labels: l,
+                online: true,
+                job: None,
+                version,
+                docker: false,
+            });
         };
         for i in 1..=3 {
             add(&format!("forge-{i:02}"), Some("forge"), mac(), "2.329.0");
         }
         add("orbit-01", Some("orbit"), mac(), "2.329.0");
         add("orbit-02", Some("orbit"), mac(), "2.325.0");
-        add("beacon-01", Some("beacon"), labels(&["self-hosted", "Linux", "X64"]), "2.329.0");
-        add("pebble-01", Some("pebble"), labels(&["self-hosted", "Linux", "X64"]), "2.329.0");
+        add(
+            "beacon-01",
+            Some("beacon"),
+            labels(&["self-hosted", "Linux", "X64"]),
+            "2.329.0",
+        );
+        add(
+            "pebble-01",
+            Some("pebble"),
+            labels(&["self-hosted", "Linux", "X64"]),
+            "2.329.0",
+        );
         // Registered on GitHub, but not in config.toml.
-        add("spot-x64-7", None, labels(&["self-hosted", "Linux", "X64", "spot"]), "2.329.0");
+        add(
+            "spot-x64-7",
+            None,
+            labels(&["self-hosted", "Linux", "X64", "spot"]),
+            "2.329.0",
+        );
 
-        let mut sim = Sim { rng: now.timestamp_nanos_opt().unwrap_or(1) as u64 | 1, last_tick: now, next_id: 9_000_100, runners, jobs: Vec::new() };
+        let mut sim = Sim {
+            rng: now.timestamp_nanos_opt().unwrap_or(1) as u64 | 1,
+            last_tick: now,
+            next_id: 9_000_100,
+            runners,
+            jobs: Vec::new(),
+        };
         // A stopped runner, to show what that looks like.
         if let Some(r) = sim.runners.iter_mut().find(|r| r.name == "forge-03") {
             r.online = false;
         }
         // Start mid-afternoon: a few jobs already running, one that no runner can take.
-        for (t, runner, ago) in [(0, "forge-01", 70), (7, "forge-02", 140), (1, "orbit-01", 35), (3, "beacon-01", 20)] {
+        for (t, runner, ago) in [
+            (0, "forge-01", 70),
+            (7, "forge-02", 140),
+            (1, "orbit-01", 35),
+            (3, "beacon-01", 20),
+        ] {
             let id = sim.new_job(t, now - chrono::Duration::seconds(ago + 5));
             let job = sim.jobs.iter_mut().find(|j| j.id == id).unwrap();
             job.started_at = Some(now - chrono::Duration::seconds(ago));
             job.runner = Some(runner.into());
-            sim.runners.iter_mut().find(|r| r.name == runner).unwrap().job = Some(id);
+            sim.runners
+                .iter_mut()
+                .find(|r| r.name == runner)
+                .unwrap()
+                .job = Some(id);
         }
         let gpu = sim.new_job(8, now - chrono::Duration::minutes(6));
         if let Some(j) = sim.jobs.iter_mut().find(|j| j.id == gpu) {
@@ -261,7 +536,9 @@ impl World {
 
     pub fn inventory(&self) -> Inventory {
         let text = self.inventory.lock().unwrap();
-        Inventory::parse(&text).unwrap_or_else(|_| Inventory::parse(&inventory_text(Utc::now())).expect("demo inventory parses"))
+        Inventory::parse(&text).unwrap_or_else(|_| {
+            Inventory::parse(&inventory_text(Utc::now())).expect("demo inventory parses")
+        })
     }
 
     pub fn settings(&self) -> Settings {
@@ -281,7 +558,10 @@ impl World {
                 checked_at: Utc::now(),
                 duration_ms: 8000,
                 ok: false,
-                error: Some(format!("ssh: connect to host {} port 22: Operation timed out", spec.host)),
+                error: Some(format!(
+                    "ssh: connect to host {} port 22: Operation timed out",
+                    spec.host
+                )),
                 os: Some(hw.os.into()),
                 arch: Some(hw.arch.into()),
                 os_version: Some(hw.os_version.into()),
@@ -301,10 +581,19 @@ impl World {
             .runners
             .iter()
             .filter(|r| r.machine.as_deref() == Some(spec.id.as_str()))
-            .map(|r| (r.name.clone(), r.online, r.job.is_some(), r.version, r.docker))
+            .map(|r| {
+                (
+                    r.name.clone(),
+                    r.online,
+                    r.job.is_some(),
+                    r.version,
+                    r.docker,
+                )
+            })
             .collect();
         let busy = mine.iter().filter(|r| r.2).count() as f64;
-        let cpu = (3.0 + busy * 38.0 / (hw.cores as f64 / 8.0).max(1.0) + sim.noise(6.0)).clamp(1.0, 99.0);
+        let cpu = (3.0 + busy * 38.0 / (hw.cores as f64 / 8.0).max(1.0) + sim.noise(6.0))
+            .clamp(1.0, 99.0);
         let mem_total = hw.mem_gb * 1024 * 1024 * 1024;
         let mem = (hw.base_mem + busy * 0.07 + sim.noise(0.02)).clamp(0.05, 0.97);
         let mut pid = 3000 + sim.range(0, 500) as u32;
@@ -351,12 +640,23 @@ impl World {
             duration_ms: delay,
             ok: true,
             error: None,
-            shell: Some(if hw.os == "windows" { Shell::Powershell } else { Shell::Sh }),
+            shell: Some(if hw.os == "windows" {
+                Shell::Powershell
+            } else {
+                Shell::Sh
+            }),
             hostname: Some(spec.id.clone()),
             os: Some(hw.os.into()),
             arch: Some(hw.arch.into()),
             os_version: Some(hw.os_version.into()),
-            form_factor: Some(if matches!(hw.id, "pebble" | "harbor") { "laptop" } else { "desktop" }.into()),
+            form_factor: Some(
+                if matches!(hw.id, "pebble" | "harbor") {
+                    "laptop"
+                } else {
+                    "desktop"
+                }
+                .into(),
+            ),
             desktop: Some(hw.desktop),
             cores: Some(hw.cores),
             cpu_pct: Some((cpu * 10.0).round() / 10.0),
@@ -370,14 +670,23 @@ impl World {
                 _ => "/".into(),
             }),
             uptime_sec: Some(hw.up_hours * 3600 + (now.timestamp() % 3600) as u64),
-            load: if hw.os == "windows" { Vec::new() } else { vec![busy * 1.6 + 0.4, busy * 1.4 + 0.5, busy * 1.2 + 0.6] },
+            load: if hw.os == "windows" {
+                Vec::new()
+            } else {
+                vec![busy * 1.6 + 0.4, busy * 1.4 + 0.5, busy * 1.2 + 0.6]
+            },
             runners,
             docker: hw.docker.map(String::from),
             docker_error: None,
             sudo: hw.sudo.map(String::from),
             last_seen_at: Some(now),
             // A network card each (Harbor, asleep, can be woken), and a reboot waiting on Pebble.
-            mac: Some(format!("3c:22:fb:{:02x}:{:02x}:{:02x}", hw.id.len() * 7, hw.cores, hw.disk_total_gb % 256)),
+            mac: Some(format!(
+                "3c:22:fb:{:02x}:{:02x}:{:02x}",
+                hw.id.len() * 7,
+                hw.cores,
+                hw.disk_total_gb % 256
+            )),
             lan_ip: Some(format!("192.168.1.{}", 10 + hw.id.len())),
             lan_broadcast: Some("192.168.1.255".into()),
             reboot_required: hw.id == "pebble",
@@ -398,13 +707,23 @@ impl World {
         let now = Utc::now();
         let mut sim = self.sim.lock().unwrap();
         sim.tick(now);
-        let watching_acme = settings.github.orgs.iter().any(|o| o.eq_ignore_ascii_case(ORG));
+        let watching_acme = settings
+            .github
+            .orgs
+            .iter()
+            .any(|o| o.eq_ignore_ascii_case(ORG));
         let scopes = settings
             .github
             .orgs
             .iter()
             .map(|o| (ScopeKind::Org, o.clone()))
-            .chain(settings.github.repos.iter().map(|r| (ScopeKind::Repo, r.clone())))
+            .chain(
+                settings
+                    .github
+                    .repos
+                    .iter()
+                    .map(|r| (ScopeKind::Repo, r.clone())),
+            )
             .map(|(kind, name)| ScopeData {
                 runners: if kind == ScopeKind::Org && name.eq_ignore_ascii_case(ORG) {
                     sim.runners
@@ -441,10 +760,25 @@ impl World {
                         workflow: t.workflow.into(),
                         repo: t.repo.into(),
                         branch: Some(j.branch.into()),
-                        event: Some(if j.branch == "main" { "push" } else { "pull_request" }.into()),
+                        event: Some(
+                            if j.branch == "main" {
+                                "push"
+                            } else {
+                                "pull_request"
+                            }
+                            .into(),
+                        ),
                         actor: Some(j.actor.into()),
-                        url: format!("https://github.com/{}/actions/runs/{}/job/{}", t.repo, j.run_id, j.id),
-                        status: if j.started_at.is_some() { "in_progress" } else { "queued" }.into(),
+                        url: format!(
+                            "https://github.com/{}/actions/runs/{}/job/{}",
+                            t.repo, j.run_id, j.id
+                        ),
+                        status: if j.started_at.is_some() {
+                            "in_progress"
+                        } else {
+                            "queued"
+                        }
+                        .into(),
                         labels: j.labels.clone(),
                         runner_name: j.runner.clone(),
                         created_at: j.created_at,
@@ -464,11 +798,23 @@ impl World {
             scopes,
             jobs,
             scanned_repos: if watching_acme {
-                ["acme/desktop", "acme/api", "acme/web", "acme/mobile", "acme/infra"].map(String::from).to_vec()
+                [
+                    "acme/desktop",
+                    "acme/api",
+                    "acme/web",
+                    "acme/mobile",
+                    "acme/infra",
+                ]
+                .map(String::from)
+                .to_vec()
             } else {
                 Vec::new()
             },
-            rate: Some(Rate { limit: 5000, remaining, reset_at: now + chrono::Duration::minutes(37) }),
+            rate: Some(Rate {
+                limit: 5000,
+                remaining,
+                reset_at: now + chrono::Duration::minutes(37),
+            }),
             latest_runner_version: Some("2.329.0".into()),
         }
     }
@@ -477,7 +823,10 @@ impl World {
     // Control operations (see crate::ops), simulated.
 
     /// Applies an edit to the demo's config.toml text.
-    pub fn edit_inventory(&self, edit: impl FnOnce(&str) -> Result<String, String>) -> Result<(), String> {
+    pub fn edit_inventory(
+        &self,
+        edit: impl FnOnce(&str) -> Result<String, String>,
+    ) -> Result<(), String> {
         let mut text = self.inventory.lock().unwrap();
         *text = edit(&text)?;
         Ok(())
@@ -488,7 +837,9 @@ impl World {
         if hardware(machine_id).reachable {
             Ok(())
         } else {
-            Err(format!("ssh: connect to host {host} port 22: Operation timed out"))
+            Err(format!(
+                "ssh: connect to host {host} port 22: Operation timed out"
+            ))
         }
     }
 
@@ -500,23 +851,41 @@ impl World {
             "windows" => "win",
             _ => "linux",
         };
-        let arch = if hw.arch.eq_ignore_ascii_case("arm64") { "arm64" } else { "x64" };
+        let arch = if hw.arch.eq_ignore_ascii_case("arm64") {
+            "arm64"
+        } else {
+            "x64"
+        };
         (os, arch)
     }
 
     /// Adds runners to the simulation; `docker` makes them container runners.
-    pub fn install_runners(&self, machine_id: &str, names: &[String], extra_labels: &[String], docker: bool) {
+    pub fn install_runners(
+        &self,
+        machine_id: &str,
+        names: &[String],
+        extra_labels: &[String],
+        docker: bool,
+    ) {
         let hw = hardware(machine_id);
         let os = match hw.os {
             "darwin" => "macOS",
             "windows" => "Windows",
             _ => "Linux",
         };
-        let arch = if hw.arch.eq_ignore_ascii_case("arm64") { "ARM64" } else { "X64" };
+        let arch = if hw.arch.eq_ignore_ascii_case("arm64") {
+            "ARM64"
+        } else {
+            "X64"
+        };
         let mut sim = self.sim.lock().unwrap();
         for name in names {
             // A container runner's OS is Linux whatever the host is.
-            let mut l = if docker { labels(&["self-hosted", "Linux", arch]) } else { labels(&["self-hosted", os, arch]) };
+            let mut l = if docker {
+                labels(&["self-hosted", "Linux", arch])
+            } else {
+                labels(&["self-hosted", os, arch])
+            };
             l.extend(extra_labels.iter().cloned());
             sim.runners.push(SimRunner {
                 name: name.clone(),
@@ -533,7 +902,11 @@ impl World {
     /// Start (online) or stop (offline) a runner. Stopping hands its job back to the queue.
     pub fn set_runner_online(&self, name: &str, online: bool) {
         let mut sim = self.sim.lock().unwrap();
-        if let Some(i) = sim.runners.iter().position(|r| r.name.eq_ignore_ascii_case(name)) {
+        if let Some(i) = sim
+            .runners
+            .iter()
+            .position(|r| r.name.eq_ignore_ascii_case(name))
+        {
             if !online {
                 sim.requeue(i);
             }
@@ -543,7 +916,11 @@ impl World {
 
     pub fn remove_runner(&self, name: &str) {
         let mut sim = self.sim.lock().unwrap();
-        if let Some(i) = sim.runners.iter().position(|r| r.name.eq_ignore_ascii_case(name)) {
+        if let Some(i) = sim
+            .runners
+            .iter()
+            .position(|r| r.name.eq_ignore_ascii_case(name))
+        {
             sim.requeue(i);
             sim.runners.remove(i);
         }
@@ -553,20 +930,36 @@ impl World {
     pub fn diag_log(&self, name: &str) -> Vec<String> {
         let now = Utc::now();
         let sim = self.sim.lock().unwrap();
-        let runner = sim.runners.iter().find(|r| r.name.eq_ignore_ascii_case(name));
+        let runner = sim
+            .runners
+            .iter()
+            .find(|r| r.name.eq_ignore_ascii_case(name));
         let online = runner.is_some_and(|r| r.online);
-        let job = runner.and_then(|r| r.job).and_then(|id| sim.jobs.iter().find(|j| j.id == id));
-        let hw = runner.and_then(|r| r.machine.as_deref()).map(hardware).unwrap_or(&GENERIC);
+        let job = runner
+            .and_then(|r| r.job)
+            .and_then(|id| sim.jobs.iter().find(|j| j.id == id));
+        let hw = runner
+            .and_then(|r| r.machine.as_deref())
+            .map(hardware)
+            .unwrap_or(&GENERIC);
         let arm = hw.arch.eq_ignore_ascii_case("arm64");
         let (bin, built, runtime) = match hw.os {
             "windows" => (
                 format!("C:\\actions-runner\\{name}\\bin"),
-                format!("Windows ({}) - win-{}", if arm { "ARM64" } else { "X64" }, if arm { "arm64" } else { "x64" }),
+                format!(
+                    "Windows ({}) - win-{}",
+                    if arm { "ARM64" } else { "X64" },
+                    if arm { "arm64" } else { "x64" }
+                ),
                 "Microsoft Windows 10.0.26100".to_string(),
             ),
             "linux" => (
                 format!("/home/ci/actions-runner/{name}/bin"),
-                format!("Linux ({}) - linux-{}", if arm { "ARM64" } else { "X64" }, if arm { "arm64" } else { "x64" }),
+                format!(
+                    "Linux ({}) - linux-{}",
+                    if arm { "ARM64" } else { "X64" },
+                    if arm { "arm64" } else { "x64" }
+                ),
                 "Linux 6.8.0-45-generic #45-Ubuntu SMP".to_string(),
             ),
             _ => (
@@ -575,22 +968,47 @@ impl World {
                 "Darwin 25.1.0 Darwin Kernel Version 25.1.0".to_string(),
             ),
         };
-        let at = |secs_ago: i64| (now - chrono::Duration::seconds(secs_ago)).format("%Y-%m-%d %H:%M:%SZ").to_string();
+        let at = |secs_ago: i64| {
+            (now - chrono::Duration::seconds(secs_ago))
+                .format("%Y-%m-%d %H:%M:%SZ")
+                .to_string()
+        };
         let mut lines = vec![
-            format!("[{} INFO HostContext] Well known directory 'Bin': '{bin}'", at(5400)),
+            format!(
+                "[{} INFO HostContext] Well known directory 'Bin': '{bin}'",
+                at(5400)
+            ),
             format!("[{} INFO Listener] Runner is built for {built}.", at(5400)),
-            format!("[{} INFO Listener] RuntimeInformation: {runtime}.", at(5400)),
+            format!(
+                "[{} INFO Listener] RuntimeInformation: {runtime}.",
+                at(5400)
+            ),
             format!("[{} INFO Listener] Version: 2.329.0", at(5400)),
-            format!("[{} INFO Listener] Commit: 6b5f7cf8a5e0c4c3b1c0d6e2", at(5400)),
+            format!(
+                "[{} INFO Listener] Commit: 6b5f7cf8a5e0c4c3b1c0d6e2",
+                at(5400)
+            ),
             format!("[{} INFO ConfigurationStore] HasCredentials()", at(5399)),
-            format!("[{} INFO CredentialManager] GetCredentialProvider", at(5399)),
+            format!(
+                "[{} INFO CredentialManager] GetCredentialProvider",
+                at(5399)
+            ),
             format!("[{} INFO RunnerServer] EstablishVssConnection", at(5398)),
             format!("[{} INFO MessageListener] Connect to server.", at(5398)),
             format!("[{} INFO MessageListener] Create session.", at(5397)),
             format!("[{} INFO MessageListener] Session created.", at(5396)),
-            format!("[{} INFO Terminal] WRITE LINE: √ Connected to GitHub", at(5396)),
-            format!("[{} INFO Terminal] WRITE LINE: Current runner version: '2.329.0'", at(5395)),
-            format!("[{} INFO Terminal] WRITE LINE: Listening for Jobs", at(5395)),
+            format!(
+                "[{} INFO Terminal] WRITE LINE: √ Connected to GitHub",
+                at(5396)
+            ),
+            format!(
+                "[{} INFO Terminal] WRITE LINE: Current runner version: '2.329.0'",
+                at(5395)
+            ),
+            format!(
+                "[{} INFO Terminal] WRITE LINE: Listening for Jobs",
+                at(5395)
+            ),
         ];
         let past_job = match hw.os {
             "windows" => "test (windows)",
@@ -599,30 +1017,79 @@ impl World {
         };
         for k in 0..4 {
             let t = 4200 - k * 900;
-            lines.push(format!("[{} INFO MessageListener] Message '{}' received from session.", at(t), 1000 + k));
-            lines.push(format!("[{} INFO JobDispatcher] Job request {} for plan 6f3c… received.", at(t), 18_000_200 + k));
-            lines.push(format!("[{} INFO JobDispatcher] Start renew job request {}.", at(t - 1), 18_000_200 + k));
-            lines.push(format!("[{} INFO Terminal] WRITE LINE: Running job: {past_job}", at(t - 1)));
-            lines.push(format!("[{} INFO JobDispatcher] Worker finished for job. Code: 100", at(t - 240)));
-            lines.push(format!("[{} INFO Terminal] WRITE LINE: Job {past_job} completed with result: Succeeded", at(t - 240)));
+            lines.push(format!(
+                "[{} INFO MessageListener] Message '{}' received from session.",
+                at(t),
+                1000 + k
+            ));
+            lines.push(format!(
+                "[{} INFO JobDispatcher] Job request {} for plan 6f3c… received.",
+                at(t),
+                18_000_200 + k
+            ));
+            lines.push(format!(
+                "[{} INFO JobDispatcher] Start renew job request {}.",
+                at(t - 1),
+                18_000_200 + k
+            ));
+            lines.push(format!(
+                "[{} INFO Terminal] WRITE LINE: Running job: {past_job}",
+                at(t - 1)
+            ));
+            lines.push(format!(
+                "[{} INFO JobDispatcher] Worker finished for job. Code: 100",
+                at(t - 240)
+            ));
+            lines.push(format!(
+                "[{} INFO Terminal] WRITE LINE: Job {past_job} completed with result: Succeeded",
+                at(t - 240)
+            ));
         }
         match (online, job) {
-            (false, _) => lines.push(format!("[{} INFO Listener] Runner execution has been cancelled. Exiting.", at(30))),
+            (false, _) => lines.push(format!(
+                "[{} INFO Listener] Runner execution has been cancelled. Exiting.",
+                at(30)
+            )),
             (true, Some(j)) => {
                 let t = &TEMPLATES[j.template];
-                lines.push(format!("[{} INFO JobDispatcher] Job request {} for plan 9a1d… received.", at(20), j.id));
-                lines.push(format!("[{} INFO Terminal] WRITE LINE: Running job: {}", at(19), t.name));
+                lines.push(format!(
+                    "[{} INFO JobDispatcher] Job request {} for plan 9a1d… received.",
+                    at(20),
+                    j.id
+                ));
+                lines.push(format!(
+                    "[{} INFO Terminal] WRITE LINE: Running job: {}",
+                    at(19),
+                    t.name
+                ));
             }
-            (true, None) => lines.push(format!("[{} INFO MessageListener] No message retrieved from session, keep polling.", at(15))),
+            (true, None) => lines.push(format!(
+                "[{} INFO MessageListener] No message retrieved from session, keep polling.",
+                at(15)
+            )),
         }
         lines
     }
 
     pub fn test_scope(&self, scope: &str) -> ScopeTest {
         let name = crate::config::strip_github_url(scope);
-        let kind = if name.contains('/') { ScopeKind::Repo } else { ScopeKind::Org };
-        let runners = if name.eq_ignore_ascii_case(ORG) { self.sim.lock().unwrap().runners.len() } else { 0 };
-        ScopeTest { kind, name, runners, error: None, hint: None }
+        let kind = if name.contains('/') {
+            ScopeKind::Repo
+        } else {
+            ScopeKind::Org
+        };
+        let runners = if name.eq_ignore_ascii_case(ORG) {
+            self.sim.lock().unwrap().runners.len()
+        } else {
+            0
+        };
+        ScopeTest {
+            kind,
+            name,
+            runners,
+            error: None,
+            hint: None,
+        }
     }
 }
 
@@ -687,7 +1154,10 @@ impl Sim {
         let finished: Vec<u64> = self
             .jobs
             .iter()
-            .filter(|j| j.started_at.is_some_and(|s| (now - s).num_seconds() >= j.duration))
+            .filter(|j| {
+                j.started_at
+                    .is_some_and(|s| (now - s).num_seconds() >= j.duration)
+            })
             .map(|j| j.id)
             .collect();
         self.jobs.retain(|j| !finished.contains(&j.id));
@@ -706,7 +1176,9 @@ impl Sim {
             }
         }
 
-        let mut queued: Vec<usize> = (0..self.jobs.len()).filter(|&i| self.jobs[i].started_at.is_none()).collect();
+        let mut queued: Vec<usize> = (0..self.jobs.len())
+            .filter(|&i| self.jobs[i].started_at.is_none())
+            .collect();
         queued.sort_by_key(|&i| self.jobs[i].created_at);
         for i in queued {
             // Runners take a few seconds to pick a job up.
@@ -717,7 +1189,11 @@ impl Sim {
             let candidates: Vec<usize> = (0..self.runners.len())
                 .filter(|&r| {
                     let rr = &self.runners[r];
-                    rr.online && rr.job.is_none() && job_labels.iter().all(|l| rr.labels.iter().any(|x| x.eq_ignore_ascii_case(l)))
+                    rr.online
+                        && rr.job.is_none()
+                        && job_labels
+                            .iter()
+                            .all(|l| rr.labels.iter().any(|x| x.eq_ignore_ascii_case(l)))
                 })
                 .collect();
             if candidates.is_empty() {
@@ -755,7 +1231,14 @@ impl World {
     /// Seeded sessions: a busy Claude and an idle Codex on the Mac Studio, OpenCode on the NUC.
     pub fn sessions(&self, machine_id: &str) -> MachineSessions {
         let now = Utc::now();
-        let session = |name: &str, agent: &str, agent_name: &str, title: &str, cwd: &str, busy: bool, mins: i64, clients: u32| SessionInfo {
+        let session = |name: &str,
+                       agent: &str,
+                       agent_name: &str,
+                       title: &str,
+                       cwd: &str,
+                       busy: bool,
+                       mins: i64,
+                       clients: u32| SessionInfo {
             id: format!("{machine_id}/{name}"),
             machine_id: machine_id.into(),
             name: name.into(),
@@ -778,14 +1261,53 @@ impl World {
             "forge" => (
                 vec!["claude", "codex", "opencode"],
                 vec![
-                    session("claude-7f3a", "claude", "Claude Code", "Checkout fix", "/Users/ci/code/checkout", true, 12, 1),
-                    session("shell-2b81", "shell", "Shell", "Shell · checkout", "/Users/ci/code/checkout", false, 31, 0),
+                    session(
+                        "claude-7f3a",
+                        "claude",
+                        "Claude Code",
+                        "Checkout fix",
+                        "/Users/ci/code/checkout",
+                        true,
+                        12,
+                        1,
+                    ),
+                    session(
+                        "shell-2b81",
+                        "shell",
+                        "Shell",
+                        "Shell · checkout",
+                        "/Users/ci/code/checkout",
+                        false,
+                        31,
+                        0,
+                    ),
                 ],
             ),
-            "orbit" => (vec!["claude", "codex"], vec![session("codex-19be", "codex", "Codex", "Codex · ios-app", "/Users/ci/code/ios-app", false, 48, 0)]),
+            "orbit" => (
+                vec!["claude", "codex"],
+                vec![session(
+                    "codex-19be",
+                    "codex",
+                    "Codex",
+                    "Codex · ios-app",
+                    "/Users/ci/code/ios-app",
+                    false,
+                    48,
+                    0,
+                )],
+            ),
             "beacon" => (
                 vec!["claude", "opencode"],
-                vec![session("opencode-c40d", "opencode", "OpenCode", "OpenCode · api", "/home/ci/api", true, 5, 0)],
+                vec![session(
+                    "opencode-c40d",
+                    "opencode",
+                    "OpenCode",
+                    "OpenCode · api",
+                    "/home/ci/api",
+                    true,
+                    5,
+                    0,
+                )],
             ),
             "pebble" | "dev-1" | "sandbox" => (vec!["claude", "codex"], Vec::new()),
             "win-test" => (vec!["claude"], Vec::new()),
@@ -796,7 +1318,12 @@ impl World {
             agent_version: Some("0.1.0".into()),
             agents: agents.into_iter().map(String::from).collect(),
             agents_checked_at: Some(now),
-            gh: Some(crate::fleet::model::GhCli { installed: true, logged_in: machine_id != "beacon", account: (machine_id != "beacon").then(|| "octocat".into()), path: None }),
+            gh: Some(crate::fleet::model::GhCli {
+                installed: true,
+                logged_in: machine_id != "beacon",
+                account: (machine_id != "beacon").then(|| "octocat".into()),
+                path: None,
+            }),
             sessions,
             events: Vec::new(),
             error: None,
@@ -805,33 +1332,68 @@ impl World {
 
     /// Git checkouts on the machines, where the sessions work and next to them.
     pub fn checkouts(&self, machine_id: &str) -> Vec<crate::fleet::model::Checkout> {
-        let checkout = |path: &str, repo: &str, branch: &str, dirty: u32, subject: &str, mins: i64| crate::fleet::model::Checkout {
-            machine_id: machine_id.into(),
-            path: path.into(),
-            repo: Some(repo.into()),
-            remote: Some(format!("git@github.com:{repo}.git")),
-            branch: branch.into(),
-            upstream: Some(format!("origin/{branch}")),
-            ahead: 0,
-            behind: 0,
-            dirty,
-            last_commit_at: Some(Utc::now() - chrono::Duration::minutes(mins)),
-            last_commit: subject.into(),
-        };
+        let checkout =
+            |path: &str, repo: &str, branch: &str, dirty: u32, subject: &str, mins: i64| {
+                crate::fleet::model::Checkout {
+                    machine_id: machine_id.into(),
+                    path: path.into(),
+                    repo: Some(repo.into()),
+                    remote: Some(format!("git@github.com:{repo}.git")),
+                    branch: branch.into(),
+                    upstream: Some(format!("origin/{branch}")),
+                    ahead: 0,
+                    behind: 0,
+                    dirty,
+                    last_commit_at: Some(Utc::now() - chrono::Duration::minutes(mins)),
+                    last_commit: subject.into(),
+                }
+            };
         match machine_id {
             "forge" => vec![
-                checkout("/Users/ci/code/checkout", "acme/shop", "fix-coupon-total", 1, "Apply coupons before tax", 40),
-                checkout("/Users/ci/code/web", "acme/web", "main", 0, "Faster product pages", 300),
+                checkout(
+                    "/Users/ci/code/checkout",
+                    "acme/shop",
+                    "fix-coupon-total",
+                    1,
+                    "Apply coupons before tax",
+                    40,
+                ),
+                checkout(
+                    "/Users/ci/code/web",
+                    "acme/web",
+                    "main",
+                    0,
+                    "Faster product pages",
+                    300,
+                ),
             ],
-            "orbit" => vec![checkout("/Users/ci/code/ios-app", "acme/ios-app", "main", 0, "Offline mode, first cut", 120)],
-            "beacon" => vec![checkout("/home/ci/api", "acme/api", "rate-limits", 0, "Rate limits per API key", 25)],
+            "orbit" => vec![checkout(
+                "/Users/ci/code/ios-app",
+                "acme/ios-app",
+                "main",
+                0,
+                "Offline mode, first cut",
+                120,
+            )],
+            "beacon" => vec![checkout(
+                "/home/ci/api",
+                "acme/api",
+                "rate-limits",
+                0,
+                "Rate limits per API key",
+                25,
+            )],
             _ => Vec::new(),
         }
     }
 
     /// What the seeded sessions' work changed: a pull request with checks
     /// still running, a worktree with no pull request yet, one failing a check.
-    pub fn git(&self, machine_id: &str, folders: &[String]) -> Vec<(String, crate::fleet::sessions::git::GitStatus)> {
+    pub fn git(
+        &self,
+        machine_id: &str,
+        folders: &[String],
+    ) -> Vec<(String, crate::fleet::sessions::git::GitStatus)> {
         use crate::fleet::sessions::git::GitStatus;
         use crate::github::hub::{BranchPull, Checks};
         let pull = |number: u64, title: &str, repo: &str, checks: Checks| BranchPull {
@@ -841,7 +1403,11 @@ impl World {
             url: format!("https://github.com/{repo}/pull/{number}"),
             checks,
         };
-        let status = |branch: &str, repo: &str, (files, added, removed, commits, uncommitted): (u32, u32, u32, u32, u32), worktree: bool, pull: Option<BranchPull>| GitStatus {
+        let status = |branch: &str,
+                      repo: &str,
+                      (files, added, removed, commits, uncommitted): (u32, u32, u32, u32, u32),
+                      worktree: bool,
+                      pull: Option<BranchPull>| GitStatus {
             root: String::new(),
             branch: branch.into(),
             base: Some("origin/main".into()),
@@ -865,19 +1431,64 @@ impl World {
                         "acme/shop",
                         (4, 86, 23, 2, 1),
                         false,
-                        Some(pull(142, "Fix the checkout total when a coupon is applied", "acme/shop", Checks { total: 6, passed: 5, pending: 1, ..Default::default() })),
+                        Some(pull(
+                            142,
+                            "Fix the checkout total when a coupon is applied",
+                            "acme/shop",
+                            Checks {
+                                total: 6,
+                                passed: 5,
+                                pending: 1,
+                                ..Default::default()
+                            },
+                        )),
                     ),
-                    ("orbit", "/Users/ci/code/ios-app") => status("offline-mode", "acme/ios-app", (7, 312, 45, 3, 0), true, None),
+                    ("orbit", "/Users/ci/code/ios-app") => status(
+                        "offline-mode",
+                        "acme/ios-app",
+                        (7, 312, 45, 3, 0),
+                        true,
+                        None,
+                    ),
                     ("orbit", "/Users/ci/muxen/workspaces/ws-9c4e71") => GitStatus {
-                        pull: Some(BranchPull { state: "merged".into(), ..pull(77, "Share a list from the share sheet", "acme/ios-app", Checks { total: 3, passed: 3, ..Default::default() }) }),
-                        ..status("share-sheet", "acme/ios-app", (6, 204, 31, 3, 0), true, None)
+                        pull: Some(BranchPull {
+                            state: "merged".into(),
+                            ..pull(
+                                77,
+                                "Share a list from the share sheet",
+                                "acme/ios-app",
+                                Checks {
+                                    total: 3,
+                                    passed: 3,
+                                    ..Default::default()
+                                },
+                            )
+                        }),
+                        ..status(
+                            "share-sheet",
+                            "acme/ios-app",
+                            (6, 204, 31, 3, 0),
+                            true,
+                            None,
+                        )
                     },
                     ("beacon", "/home/ci/api") => status(
                         "rate-limits",
                         "acme/api",
                         (5, 140, 12, 4, 0),
                         false,
-                        Some(pull(318, "Rate limits for the public API", "acme/api", Checks { total: 4, passed: 3, failed: 1, failing: vec!["lint".into()], ..Default::default() })),
+                        Some(pull(
+                            318,
+                            "Rate limits for the public API",
+                            "acme/api",
+                            Checks {
+                                total: 4,
+                                passed: 3,
+                                failed: 1,
+                                failing: vec!["lint".into()],
+                                ..Default::default()
+                            },
+                        )),
                     ),
                     _ => return None,
                 };
@@ -886,7 +1497,14 @@ impl World {
             .collect()
     }
 
-    pub fn start_session(&self, spec: &MachineSpec, kind: &AgentKind, name: &str, cwd: &str, title: &str) -> SessionInfo {
+    pub fn start_session(
+        &self,
+        spec: &MachineSpec,
+        kind: &AgentKind,
+        name: &str,
+        cwd: &str,
+        title: &str,
+    ) -> SessionInfo {
         SessionInfo {
             id: format!("{}/{name}", spec.id),
             machine_id: spec.id.clone(),
@@ -902,13 +1520,21 @@ impl World {
             clients: 0,
             created_at: Some(Utc::now()),
             last_output_at: Some(Utc::now()),
-            attach_command: format!("ssh -t {} ~/.muxen/bin/muxen-agent attach {name}", spec.host),
+            attach_command: format!(
+                "ssh -t {} ~/.muxen/bin/muxen-agent attach {name}",
+                spec.host
+            ),
             persistent: true,
             git: None,
         }
     }
 
-    pub fn control_session(&self, _machine_id: &str, name: &str, action: &Control) -> Result<String, String> {
+    pub fn control_session(
+        &self,
+        _machine_id: &str,
+        name: &str,
+        action: &Control,
+    ) -> Result<String, String> {
         Ok(match action {
             Control::Read { .. } => demo_screen_text(name),
             _ => String::new(),
@@ -931,16 +1557,30 @@ pub fn demo_screen_text(name: &str) -> String {
 pub mod github {
     use chrono::{Duration as Ago, Utc};
 
-    use crate::github::hub::{Checks, Comment, Detail, Inbox, Item, Label, PullInfo, Repo, RepoItems, Review, Run, Viewer};
+    use crate::github::hub::{
+        Checks, Comment, Detail, Inbox, Item, Label, PullInfo, Repo, RepoItems, Review, Run, Viewer,
+    };
 
     pub const LOGIN: &str = "jordan";
 
     fn label(name: &str, color: &str) -> Label {
-        Label { name: name.into(), color: color.into() }
+        Label {
+            name: name.into(),
+            color: color.into(),
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn item(repo: &str, number: u64, title: &str, pull: bool, author: &str, labels: Vec<Label>, comments: u32, minutes_ago: i64) -> Item {
+    fn item(
+        repo: &str,
+        number: u64,
+        title: &str,
+        pull: bool,
+        author: &str,
+        labels: Vec<Label>,
+        comments: u32,
+        minutes_ago: i64,
+    ) -> Item {
         let updated = Utc::now() - Ago::minutes(minutes_ago);
         Item {
             repo: repo.into(),
@@ -955,11 +1595,22 @@ pub mod github {
             comments,
             created_at: updated - Ago::hours(30),
             updated_at: updated,
-            html_url: format!("https://github.com/{repo}/{}/{number}", if pull { "pull" } else { "issues" }),
+            html_url: format!(
+                "https://github.com/{repo}/{}/{number}",
+                if pull { "pull" } else { "issues" }
+            ),
         }
     }
 
-    fn repo(full_name: &str, description: &str, private: bool, language: &str, stars: u32, open_issues: u32, hours_ago: i64) -> Repo {
+    fn repo(
+        full_name: &str,
+        description: &str,
+        private: bool,
+        language: &str,
+        stars: u32,
+        open_issues: u32,
+        hours_ago: i64,
+    ) -> Repo {
         Repo {
             full_name: full_name.into(),
             description: Some(description.into()),
@@ -978,18 +1629,78 @@ pub mod github {
     }
 
     pub fn viewer() -> Viewer {
-        Viewer { login: LOGIN.into(), name: Some("Jordan Lee".into()), html_url: format!("https://github.com/{LOGIN}") }
+        Viewer {
+            login: LOGIN.into(),
+            name: Some("Jordan Lee".into()),
+            html_url: format!("https://github.com/{LOGIN}"),
+        }
     }
 
     pub fn repos() -> Vec<Repo> {
         vec![
-            repo("acme/api", "Billing, accounts and the public API", true, "Go", 48, 12, 1),
-            repo("acme/web", "The customer dashboard", true, "TypeScript", 23, 8, 2),
-            repo("acme/desktop", "The desktop app for macOS, Windows and Linux", false, "Rust", 1310, 41, 5),
-            repo("acme/ios", "The iPhone and iPad app", true, "Swift", 12, 6, 20),
-            repo("acme/infra", "Terraform and deploy scripts", true, "HCL", 4, 2, 48),
-            repo("jordan/dotfiles", "My shell, editor and terminal setup", false, "Shell", 31, 0, 96),
-            repo("jordan/blog", "jordanlee.dev", false, "TypeScript", 6, 1, 200),
+            repo(
+                "acme/api",
+                "Billing, accounts and the public API",
+                true,
+                "Go",
+                48,
+                12,
+                1,
+            ),
+            repo(
+                "acme/web",
+                "The customer dashboard",
+                true,
+                "TypeScript",
+                23,
+                8,
+                2,
+            ),
+            repo(
+                "acme/desktop",
+                "The desktop app for macOS, Windows and Linux",
+                false,
+                "Rust",
+                1310,
+                41,
+                5,
+            ),
+            repo(
+                "acme/ios",
+                "The iPhone and iPad app",
+                true,
+                "Swift",
+                12,
+                6,
+                20,
+            ),
+            repo(
+                "acme/infra",
+                "Terraform and deploy scripts",
+                true,
+                "HCL",
+                4,
+                2,
+                48,
+            ),
+            repo(
+                "jordan/dotfiles",
+                "My shell, editor and terminal setup",
+                false,
+                "Shell",
+                31,
+                0,
+                96,
+            ),
+            repo(
+                "jordan/blog",
+                "jordanlee.dev",
+                false,
+                "TypeScript",
+                6,
+                1,
+                200,
+            ),
         ]
     }
 
@@ -997,41 +1708,136 @@ pub mod github {
         Inbox {
             viewer: viewer(),
             review_requests: vec![
-                item("acme/web", 91, "Checkout: show tax before the total", true, "mira", vec![label("frontend", "1d76db")], 3, 40),
-                item("acme/api", 418, "Retry failed webhooks with backoff", true, "devon", vec![label("backend", "5319e7")], 1, 130),
-                item("acme/desktop", 1302, "Remember each window's size per display", true, "lena", vec![label("enhancement", "a2eeef")], 6, 1500),
+                item(
+                    "acme/web",
+                    91,
+                    "Checkout: show tax before the total",
+                    true,
+                    "mira",
+                    vec![label("frontend", "1d76db")],
+                    3,
+                    40,
+                ),
+                item(
+                    "acme/api",
+                    418,
+                    "Retry failed webhooks with backoff",
+                    true,
+                    "devon",
+                    vec![label("backend", "5319e7")],
+                    1,
+                    130,
+                ),
+                item(
+                    "acme/desktop",
+                    1302,
+                    "Remember each window's size per display",
+                    true,
+                    "lena",
+                    vec![label("enhancement", "a2eeef")],
+                    6,
+                    1500,
+                ),
             ],
             assigned: vec![
-                item("acme/api", 412, "Coupon total is wrong after tax", false, "sam", vec![label("bug", "d73a4a"), label("billing", "fbca04")], 5, 190),
-                item("acme/web", 87, "Empty state for the orders page", false, "mira", vec![label("design", "c5def5")], 2, 1300),
-                item("acme/desktop", 1290, "Crash when a monitor is unplugged", false, "kai", vec![label("bug", "d73a4a"), label("crash", "b60205")], 9, 2900),
+                item(
+                    "acme/api",
+                    412,
+                    "Coupon total is wrong after tax",
+                    false,
+                    "sam",
+                    vec![label("bug", "d73a4a"), label("billing", "fbca04")],
+                    5,
+                    190,
+                ),
+                item(
+                    "acme/web",
+                    87,
+                    "Empty state for the orders page",
+                    false,
+                    "mira",
+                    vec![label("design", "c5def5")],
+                    2,
+                    1300,
+                ),
+                item(
+                    "acme/desktop",
+                    1290,
+                    "Crash when a monitor is unplugged",
+                    false,
+                    "kai",
+                    vec![label("bug", "d73a4a"), label("crash", "b60205")],
+                    9,
+                    2900,
+                ),
             ],
-            authored: vec![item("acme/api", 415, "Cache the plan lookup per request", true, LOGIN, vec![label("performance", "0e8a16")], 0, 300)],
+            authored: vec![item(
+                "acme/api",
+                415,
+                "Cache the plan lookup per request",
+                true,
+                LOGIN,
+                vec![label("performance", "0e8a16")],
+                0,
+                300,
+            )],
         }
     }
 
     /// Everything in the inbox and a few more, by repository.
     fn all() -> Vec<Item> {
         let i = inbox();
-        let mut out: Vec<Item> = i.review_requests.into_iter().chain(i.assigned).chain(i.authored).collect();
-        out.push(item("acme/api", 409, "Rate limits per API key", false, "devon", vec![label("enhancement", "a2eeef")], 4, 4000));
-        out.push(item("acme/desktop", 1287, "Tray icon is blurry on Linux", false, "noor", vec![label("bug", "d73a4a"), label("linux", "fef2c0")], 2, 5000));
+        let mut out: Vec<Item> = i
+            .review_requests
+            .into_iter()
+            .chain(i.assigned)
+            .chain(i.authored)
+            .collect();
+        out.push(item(
+            "acme/api",
+            409,
+            "Rate limits per API key",
+            false,
+            "devon",
+            vec![label("enhancement", "a2eeef")],
+            4,
+            4000,
+        ));
+        out.push(item(
+            "acme/desktop",
+            1287,
+            "Tray icon is blurry on Linux",
+            false,
+            "noor",
+            vec![label("bug", "d73a4a"), label("linux", "fef2c0")],
+            2,
+            5000,
+        ));
         out
     }
 
     pub fn repo_items(full_name: &str) -> RepoItems {
-        let (pulls, issues) = all().into_iter().filter(|i| i.repo.eq_ignore_ascii_case(full_name)).partition(|i| i.pull_request);
+        let (pulls, issues) = all()
+            .into_iter()
+            .filter(|i| i.repo.eq_ignore_ascii_case(full_name))
+            .partition(|i| i.pull_request);
         RepoItems { issues, pulls }
     }
 
     pub fn repo_named(full_name: &str) -> Option<Repo> {
-        repos().into_iter().find(|r| r.full_name.eq_ignore_ascii_case(full_name))
+        repos()
+            .into_iter()
+            .find(|r| r.full_name.eq_ignore_ascii_case(full_name))
     }
 
     pub fn runs(full_name: &str) -> Vec<Run> {
         let run = |name: &str, conclusion: Option<&str>, title: &str, minutes: i64| Run {
             name: name.into(),
-            status: if conclusion.is_some() { "completed".into() } else { "in_progress".into() },
+            status: if conclusion.is_some() {
+                "completed".into()
+            } else {
+                "in_progress".into()
+            },
             conclusion: conclusion.map(str::to_string),
             branch: "main".into(),
             event: "push".into(),
@@ -1039,19 +1845,46 @@ pub mod github {
             created_at: Utc::now() - Ago::minutes(minutes),
             html_url: format!("https://github.com/{full_name}/actions"),
         };
-        vec![run("CI", None, "Cache the plan lookup per request", 4), run("CI", Some("success"), "Retry failed webhooks with backoff", 95), run("Deploy", Some("success"), "Release 2.14", 600)]
+        vec![
+            run("CI", None, "Cache the plan lookup per request", 4),
+            run(
+                "CI",
+                Some("success"),
+                "Retry failed webhooks with backoff",
+                95,
+            ),
+            run("Deploy", Some("success"), "Release 2.14", 600),
+        ]
     }
 
     pub fn detail(full_name: &str, number: u64) -> Option<Detail> {
-        let item = all().into_iter().find(|i| i.repo.eq_ignore_ascii_case(full_name) && i.number == number)?;
+        let item = all()
+            .into_iter()
+            .find(|i| i.repo.eq_ignore_ascii_case(full_name) && i.number == number)?;
         let body = if item.pull_request {
             format!("{}.\n\nTested on staging; screenshots below.", item.title)
         } else {
             "Steps:\n1. Add a 10% coupon to an order over $100\n2. Check out with tax on\n\nThe coupon comes off after tax instead of before, so the total is a few cents off.".to_string()
         };
         // As many comments as the list says it has.
-        let said = [("sam", "Seen on three orders today."), ("devon", "The discount runs after tax in pricing.go."), ("mira", "Same thing on the web checkout."), ("kai", "Support has two tickets about it."), ("sam", "Can we get this into Friday's release?")];
-        let comments = said.iter().cycle().take(item.comments as usize).enumerate().map(|(k, (author, body))| Comment { author: author.to_string(), body: body.to_string(), created_at: Utc::now() - Ago::hours(20 - 3 * k as i64) }).collect();
+        let said = [
+            ("sam", "Seen on three orders today."),
+            ("devon", "The discount runs after tax in pricing.go."),
+            ("mira", "Same thing on the web checkout."),
+            ("kai", "Support has two tickets about it."),
+            ("sam", "Can we get this into Friday's release?"),
+        ];
+        let comments = said
+            .iter()
+            .cycle()
+            .take(item.comments as usize)
+            .enumerate()
+            .map(|(k, (author, body))| Comment {
+                author: author.to_string(),
+                body: body.to_string(),
+                created_at: Utc::now() - Ago::hours(20 - 3 * k as i64),
+            })
+            .collect();
         let pull = item.pull_request.then(|| PullInfo {
             head: "feature".into(),
             head_repo: Some(item.repo.clone()),
@@ -1060,9 +1893,21 @@ pub mod github {
             additions: 84,
             deletions: 17,
             changed_files: 6,
-            checks: Checks { total: 4, passed: 4, ..Default::default() },
-            reviews: vec![Review { author: "devon".into(), state: "APPROVED".into() }],
+            checks: Checks {
+                total: 4,
+                passed: 4,
+                ..Default::default()
+            },
+            reviews: vec![Review {
+                author: "devon".into(),
+                state: "APPROVED".into(),
+            }],
         });
-        Some(Detail { item, body, comments, pull })
+        Some(Detail {
+            item,
+            body,
+            comments,
+            pull,
+        })
     }
 }

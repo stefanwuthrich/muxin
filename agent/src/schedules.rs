@@ -26,7 +26,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-const MARK_BEGIN: &str = "# muxen schedules: managed by Muxen (edits between these lines are replaced)";
+const MARK_BEGIN: &str =
+    "# muxen schedules: managed by Muxen (edits between these lines are replaced)";
 const MARK_END: &str = "# end of muxen schedules";
 /// Runs kept per schedule.
 const KEEP_RUNS: usize = 30;
@@ -40,30 +41,56 @@ fn dir() -> PathBuf {
 }
 
 fn valid_id(id: &str) -> bool {
-    id.starts_with("s-") && id.len() <= 40 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    id.starts_with("s-")
+        && id.len() <= 40
+        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
 fn exe() -> String {
-    let name = if cfg!(windows) { "muxen-agent.exe" } else { "muxen-agent" };
-    crate::home_dir().join("bin").join(name).display().to_string()
+    let name = if cfg!(windows) {
+        "muxen-agent.exe"
+    } else {
+        "muxen-agent"
+    };
+    crate::home_dir()
+        .join("bin")
+        .join(name)
+        .display()
+        .to_string()
 }
 
 fn read(id: &str) -> Option<Value> {
-    std::fs::read_to_string(dir().join(format!("{id}.json"))).ok().and_then(|t| serde_json::from_str(&t).ok())
+    std::fs::read_to_string(dir().join(format!("{id}.json")))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
 }
 
 fn all() -> Vec<Value> {
     let mut out: Vec<Value> = std::fs::read_dir(dir())
-        .map(|d| d.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "json")).filter_map(|e| std::fs::read_to_string(e.path()).ok()).filter_map(|t| serde_json::from_str(&t).ok()).collect())
+        .map(|d| {
+            d.flatten()
+                .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+                .filter_map(|e| std::fs::read_to_string(e.path()).ok())
+                .filter_map(|t| serde_json::from_str(&t).ok())
+                .collect()
+        })
         .unwrap_or_default();
-    out.sort_by(|a: &Value, b: &Value| a["name"].as_str().unwrap_or("").cmp(b["name"].as_str().unwrap_or("")));
+    out.sort_by(|a: &Value, b: &Value| {
+        a["name"]
+            .as_str()
+            .unwrap_or("")
+            .cmp(b["name"].as_str().unwrap_or(""))
+    });
     out
 }
 
 /// The last runs of a schedule, newest first.
 fn runs(id: &str, n: usize) -> Vec<Value> {
     let text = std::fs::read_to_string(dir().join(id).join("runs.jsonl")).unwrap_or_default();
-    let mut v: Vec<Value> = text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    let mut v: Vec<Value> = text
+        .lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect();
     v.reverse();
     v.truncate(n);
     v
@@ -158,15 +185,24 @@ pub fn log(req: &Value) -> Value {
     }
     let list = runs(id, KEEP_RUNS);
     let pick = match req["started"].as_i64() {
-        Some(t) => list.iter().find(|r| r["started"].as_i64() == Some(t)).cloned(),
+        Some(t) => list
+            .iter()
+            .find(|r| r["started"].as_i64() == Some(t))
+            .cloned(),
         None => list.first().cloned(),
     };
-    let output = pick.as_ref().and_then(|r| r["started"].as_i64()).map(|t| tail(&dir().join(id).join(format!("{t}.log")), 64 * 1024)).unwrap_or_default();
+    let output = pick
+        .as_ref()
+        .and_then(|r| r["started"].as_i64())
+        .map(|t| tail(&dir().join(id).join(format!("{t}.log")), 64 * 1024))
+        .unwrap_or_default();
     json!({ "ok": true, "runs": list, "run": pick, "output": output })
 }
 
 fn tail(path: &std::path::Path, max: u64) -> String {
-    let Ok(mut f) = std::fs::File::open(path) else { return String::new() };
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return String::new();
+    };
     let len = f.metadata().map(|m| m.len()).unwrap_or(0);
     if len > max {
         use std::io::Seek;
@@ -188,7 +224,10 @@ fn check(s: &Value) -> Result<(), String> {
             let n = w["n"].as_u64().unwrap_or(0);
             let max = if w["every"] == "minutes" { 59 } else { 23 };
             if n == 0 || n > max {
-                return Err(format!("every {n} {}: pick 1 to {max}", w["every"].as_str().unwrap_or("")));
+                return Err(format!(
+                    "every {n} {}: pick 1 to {max}",
+                    w["every"].as_str().unwrap_or("")
+                ));
             }
         }
         "day" | "weekdays" => {}
@@ -200,7 +239,13 @@ fn check(s: &Value) -> Result<(), String> {
         return Err("a time like 09:00".into());
     }
     match s["what"]["kind"].as_str().unwrap_or("") {
-        "command" if s["what"]["command"].as_str().is_none_or(|c| c.trim().is_empty()) => Err("a command to run".into()),
+        "command"
+            if s["what"]["command"]
+                .as_str()
+                .is_none_or(|c| c.trim().is_empty()) =>
+        {
+            Err("a command to run".into())
+        }
         "agent" if s["what"]["run"].as_str().is_none() => Err("an agent to start".into()),
         "command" | "agent" => Ok(()),
         other => Err(format!("unknown kind \"{other}\"")),
@@ -219,7 +264,20 @@ fn days(w: &Value) -> Vec<u32> {
     let names = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
     match w["every"].as_str() {
         Some("weekdays") => vec![1, 2, 3, 4, 5],
-        _ => w["days"].as_array().map(|a| a.iter().filter_map(|d| d.as_str()).filter_map(|d| names.iter().position(|n| d.to_ascii_lowercase().starts_with(n))).map(|i| i as u32).collect()).unwrap_or_default(),
+        _ => w["days"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|d| d.as_str())
+                    .filter_map(|d| {
+                        names
+                            .iter()
+                            .position(|n| d.to_ascii_lowercase().starts_with(n))
+                    })
+                    .map(|i| i as u32)
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
 }
 
@@ -231,7 +289,14 @@ fn cron_time(w: &Value) -> Option<String> {
         "minutes" => format!("*/{n} * * * *"),
         "hours" => format!("{m} */{n} * * *"),
         "day" => format!("{m} {h} * * *"),
-        "weekdays" | "week" => format!("{m} {h} * * {}", days(w).iter().map(u32::to_string).collect::<Vec<_>>().join(",")),
+        "weekdays" | "week" => format!(
+            "{m} {h} * * {}",
+            days(w)
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
         _ => return None,
     })
 }
@@ -246,7 +311,13 @@ fn scheduler() -> (Option<&'static str>, Option<String>) {
     } else if cfg!(target_os = "macos") {
         (Some("launchd"), None)
     } else if crate::root::tool("crontab").is_none() {
-        (None, Some("this machine has no cron: install it (apt install cron, or dnf install cronie)".into()))
+        (
+            None,
+            Some(
+                "this machine has no cron: install it (apt install cron, or dnf install cronie)"
+                    .into(),
+            ),
+        )
     } else if !cron_running() {
         (None, Some("cron isn't running here (a container has none): start it, e.g. sudo systemctl enable --now cron".into()))
     } else {
@@ -257,13 +328,21 @@ fn scheduler() -> (Option<&'static str>, Option<String>) {
 /// A cron daemon is running (Linux: one named cron or crond in /proc).
 fn cron_running() -> bool {
     std::fs::read_dir("/proc")
-        .map(|d| d.flatten().any(|e| std::fs::read_to_string(e.path().join("comm")).is_ok_and(|c| matches!(c.trim(), "cron" | "crond" | "cronie" | "fcron"))))
+        .map(|d| {
+            d.flatten().any(|e| {
+                std::fs::read_to_string(e.path().join("comm"))
+                    .is_ok_and(|c| matches!(c.trim(), "cron" | "crond" | "cronie" | "fcron"))
+            })
+        })
         .unwrap_or(true)
 }
 
 /// Registers every schedule here (and drops what's gone), in one go.
 fn register_all() -> Result<(), String> {
-    let schedules: Vec<Value> = all().into_iter().filter(|s| s["enabled"].as_bool() != Some(false)).collect();
+    let schedules: Vec<Value> = all()
+        .into_iter()
+        .filter(|s| s["enabled"].as_bool() != Some(false))
+        .collect();
     #[cfg(windows)]
     {
         for s in all() {
@@ -279,12 +358,18 @@ fn register_all() -> Result<(), String> {
     }
     #[allow(unreachable_code)]
     if cfg!(target_os = "macos") {
-        let labels: Vec<String> = schedules.iter().filter_map(|s| s["id"].as_str()).map(label).collect();
+        let labels: Vec<String> = schedules
+            .iter()
+            .filter_map(|s| s["id"].as_str())
+            .map(label)
+            .collect();
         // Ones turned off or removed.
         if let Ok(entries) = std::fs::read_dir(launch_agents()) {
             for e in entries.flatten() {
                 let name = e.file_name().to_string_lossy().to_string();
-                if let Some(l) = name.strip_suffix(".plist").filter(|l| l.starts_with(LABEL_PREFIX))
+                if let Some(l) = name
+                    .strip_suffix(".plist")
+                    .filter(|l| l.starts_with(LABEL_PREFIX))
                     && !labels.iter().any(|x| x == l)
                 {
                     launchd_remove(l);
@@ -298,7 +383,14 @@ fn register_all() -> Result<(), String> {
     }
     let lines: Vec<String> = schedules
         .iter()
-        .filter_map(|s| Some(format!("{} {} schedule-run {} >/dev/null 2>&1", cron_time(&s["when"])?, exe(), s["id"].as_str()?)))
+        .filter_map(|s| {
+            Some(format!(
+                "{} {} schedule-run {} >/dev/null 2>&1",
+                cron_time(&s["when"])?,
+                exe(),
+                s["id"].as_str()?
+            ))
+        })
         .collect();
     cron_write(&lines)
 }
@@ -306,7 +398,10 @@ fn register_all() -> Result<(), String> {
 fn unregister(id: &str) {
     #[cfg(windows)]
     {
-        let _ = crate::win::ps(&format!("Unregister-ScheduledTask -TaskName {} -TaskPath '\\Muxen\\' -Confirm:$false -ErrorAction SilentlyContinue", crate::win::quote(&task_name(id))));
+        let _ = crate::win::ps(&format!(
+            "Unregister-ScheduledTask -TaskName {} -TaskPath '\\Muxen\\' -Confirm:$false -ErrorAction SilentlyContinue",
+            crate::win::quote(&task_name(id))
+        ));
         return;
     }
     #[allow(unreachable_code)]
@@ -319,7 +414,13 @@ fn unregister(id: &str) {
 /// The user's crontab with Muxen's block replaced by `lines`.
 fn cron_write(lines: &[String]) -> Result<(), String> {
     let crontab = crate::root::tool("crontab").ok_or_else(|| scheduler().1.unwrap_or_default())?;
-    let current = Command::new(&crontab).arg("-l").output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default();
+    let current = Command::new(&crontab)
+        .arg("-l")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
     // Nothing of Muxen's there, and nothing to add: leave it alone.
     if lines.is_empty() && !current.contains(MARK_BEGIN) {
         return Ok(());
@@ -346,12 +447,25 @@ fn cron_write(lines: &[String]) -> Result<(), String> {
         out.push_str(MARK_END);
         out.push('\n');
     }
-    let mut child = Command::new(&crontab).arg("-").stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().map_err(|e| format!("couldn't run crontab: {e}"))?;
+    let mut child = Command::new(&crontab)
+        .arg("-")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("couldn't run crontab: {e}"))?;
     if let Some(mut stdin) = child.stdin.take() {
         let _ = stdin.write_all(out.as_bytes());
     }
     let o = child.wait_with_output().map_err(|e| e.to_string())?;
-    if o.status.success() { Ok(()) } else { Err(format!("crontab refused it: {}", String::from_utf8_lossy(&o.stderr).trim())) }
+    if o.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "crontab refused it: {}",
+            String::from_utf8_lossy(&o.stderr).trim()
+        ))
+    }
 }
 
 const LABEL_PREFIX: &str = "com.lumarylabs.muxen.schedule.";
@@ -369,13 +483,36 @@ fn launchd_add(s: &Value) -> Result<(), String> {
     let w = &s["when"];
     let (h, m) = at(w).unwrap_or((0, 0));
     let n = w["n"].as_u64().unwrap_or(1);
-    let dict = |pairs: &[(&str, u32)]| format!("<dict>{}</dict>", pairs.iter().map(|(k, v)| format!("<key>{k}</key><integer>{v}</integer>")).collect::<String>());
+    let dict = |pairs: &[(&str, u32)]| {
+        format!(
+            "<dict>{}</dict>",
+            pairs
+                .iter()
+                .map(|(k, v)| format!("<key>{k}</key><integer>{v}</integer>"))
+                .collect::<String>()
+        )
+    };
     let timing = match w["every"].as_str().unwrap_or("") {
         "minutes" => format!("<key>StartInterval</key><integer>{}</integer>", n * 60),
         "hours" if n == 1 => format!("<key>StartCalendarInterval</key>{}", dict(&[("Minute", m)])),
-        "hours" => format!("<key>StartCalendarInterval</key><array>{}</array>", (0..24).step_by(n as usize).map(|hr| dict(&[("Hour", hr), ("Minute", m)])).collect::<String>()),
-        "day" => format!("<key>StartCalendarInterval</key>{}", dict(&[("Hour", h), ("Minute", m)])),
-        _ => format!("<key>StartCalendarInterval</key><array>{}</array>", days(w).iter().map(|d| dict(&[("Weekday", *d), ("Hour", h), ("Minute", m)])).collect::<String>()),
+        "hours" => format!(
+            "<key>StartCalendarInterval</key><array>{}</array>",
+            (0..24)
+                .step_by(n as usize)
+                .map(|hr| dict(&[("Hour", hr), ("Minute", m)]))
+                .collect::<String>()
+        ),
+        "day" => format!(
+            "<key>StartCalendarInterval</key>{}",
+            dict(&[("Hour", h), ("Minute", m)])
+        ),
+        _ => format!(
+            "<key>StartCalendarInterval</key><array>{}</array>",
+            days(w)
+                .iter()
+                .map(|d| dict(&[("Weekday", *d), ("Hour", h), ("Minute", m)]))
+                .collect::<String>()
+        ),
     };
     let l = label(id);
     let body = format!(
@@ -398,7 +535,10 @@ fn launchd_add(s: &Value) -> Result<(), String> {
     // with), else their background one (nobody signed in to the screen).
     for domain in [format!("gui/{}", uid()), format!("user/{}", uid())] {
         let _ = quiet("launchctl", &["bootout", &format!("{domain}/{l}")]);
-        if quiet("launchctl", &["bootstrap", &domain, &plist.display().to_string()]) {
+        if quiet(
+            "launchctl",
+            &["bootstrap", &domain, &plist.display().to_string()],
+        ) {
             return Ok(());
         }
     }
@@ -423,7 +563,13 @@ fn uid() -> u32 {
 }
 
 fn quiet(program: &str, args: &[&str]) -> bool {
-    Command::new(program).args(args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success())
+    Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -440,12 +586,31 @@ fn windows_task(s: &Value) -> Result<(), String> {
     let (h, m) = at(w).unwrap_or((0, 0));
     let n = w["n"].as_u64().unwrap_or(1);
     let time = format!("'{h:02}:{m:02}'");
-    let names = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    let names = [
+        "Sunday",
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+    ];
     let trigger = match w["every"].as_str().unwrap_or("") {
-        "minutes" => format!("New-ScheduledTaskTrigger -Once -At (Get-Date).Date -RepetitionInterval (New-TimeSpan -Minutes {n})"),
-        "hours" => format!("New-ScheduledTaskTrigger -Once -At ((Get-Date).Date.AddMinutes({m})) -RepetitionInterval (New-TimeSpan -Hours {n})"),
+        "minutes" => format!(
+            "New-ScheduledTaskTrigger -Once -At (Get-Date).Date -RepetitionInterval (New-TimeSpan -Minutes {n})"
+        ),
+        "hours" => format!(
+            "New-ScheduledTaskTrigger -Once -At ((Get-Date).Date.AddMinutes({m})) -RepetitionInterval (New-TimeSpan -Hours {n})"
+        ),
         "day" => format!("New-ScheduledTaskTrigger -Daily -At {time}"),
-        _ => format!("New-ScheduledTaskTrigger -Weekly -DaysOfWeek {} -At {time}", days(w).iter().map(|d| names[*d as usize]).collect::<Vec<_>>().join(",")),
+        _ => format!(
+            "New-ScheduledTaskTrigger -Weekly -DaysOfWeek {} -At {time}",
+            days(w)
+                .iter()
+                .map(|d| names[*d as usize])
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
     };
     let script = format!(
         "$exe = {exe}\n\
@@ -458,7 +623,9 @@ fn windows_task(s: &Value) -> Result<(), String> {
         exe = crate::win::quote(&exe()),
         task = crate::win::quote(&task_name(id)),
     );
-    crate::win::ps(&script).map(|_| ()).map_err(|e| format!("Task Scheduler didn't take it: {e}"))
+    crate::win::ps(&script)
+        .map(|_| ())
+        .map_err(|e| format!("Task Scheduler didn't take it: {e}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -470,8 +637,12 @@ fn lock_path(id: &str) -> PathBuf {
 
 /// A run of it is going on now (its lock names a live process).
 fn running(id: &str) -> bool {
-    let Ok(text) = std::fs::read_to_string(lock_path(id)) else { return false };
-    let Ok(pid) = text.trim().parse::<u32>() else { return false };
+    let Ok(text) = std::fs::read_to_string(lock_path(id)) else {
+        return false;
+    };
+    let Ok(pid) = text.trim().parse::<u32>() else {
+        return false;
+    };
     alive(pid)
 }
 
@@ -482,7 +653,10 @@ fn alive(pid: u32) -> bool {
 
 #[cfg(windows)]
 fn alive(pid: u32) -> bool {
-    Command::new("tasklist").args(["/FI", &format!("PID eq {pid}"), "/NH"]).output().is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()))
+    Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+        .output()
+        .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()))
 }
 
 /// `muxen-agent schedule-run <id>`: what the scheduler runs.
@@ -517,7 +691,11 @@ pub fn run(id: &str) -> i32 {
             json!({ "started": started, "ok": code == Some(0), "exit_code": code, "seconds": clock.elapsed().as_secs() })
         }
     };
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(folder.join("runs.jsonl")) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(folder.join("runs.jsonl"))
+    {
         let _ = writeln!(f, "{record}");
     }
     trim(&folder);
@@ -528,7 +706,12 @@ pub fn run(id: &str) -> i32 {
 /// Runs the command in the user's login shell, its output to `log`.
 fn run_command(what: &Value, log: &std::path::Path) -> Option<i32> {
     let command = what["command"].as_str().unwrap_or("");
-    let cwd = crate::sys::expand_home(what["cwd"].as_str().filter(|c| !c.trim().is_empty()).unwrap_or("~"));
+    let cwd = crate::sys::expand_home(
+        what["cwd"]
+            .as_str()
+            .filter(|c| !c.trim().is_empty())
+            .unwrap_or("~"),
+    );
     let out = std::fs::File::create(log).ok()?;
     let err = out.try_clone().ok()?;
     let shell = crate::detect::user_shell();
@@ -538,7 +721,14 @@ fn run_command(what: &Value, log: &std::path::Path) -> Option<i32> {
     } else {
         cmd.args(["-l", "-c", command]);
     }
-    cmd.current_dir(if cwd.is_dir() { cwd } else { crate::sys::user_home() }).stdin(Stdio::null()).stdout(out).stderr(err);
+    cmd.current_dir(if cwd.is_dir() {
+        cwd
+    } else {
+        crate::sys::user_home()
+    })
+    .stdin(Stdio::null())
+    .stdout(out)
+    .stderr(err);
     let mut child = cmd.spawn().ok()?;
     let started = Instant::now();
     loop {
@@ -547,7 +737,11 @@ fn run_command(what: &Value, log: &std::path::Path) -> Option<i32> {
             Ok(None) if started.elapsed() > MAX_RUN => {
                 let _ = child.kill();
                 if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(log) {
-                    let _ = writeln!(f, "\n[muxen: ended after {} hours]", MAX_RUN.as_secs() / 3600);
+                    let _ = writeln!(
+                        f,
+                        "\n[muxen: ended after {} hours]",
+                        MAX_RUN.as_secs() / 3600
+                    );
                 }
                 return None;
             }
@@ -564,16 +758,29 @@ fn start_session(s: &Value) -> Result<String, String> {
     let agent = what["agent"].as_str().unwrap_or("shell");
     // Its own name each run: the schedule's id and the time.
     let id = s["id"].as_str().unwrap_or("s-0").trim_start_matches("s-");
-    let name = format!("{agent}-{}{}", &id[..id.len().min(4)], crate::now() % 100_000);
-    let title = what["title"].as_str().filter(|t| !t.is_empty()).or(s["name"].as_str()).unwrap_or("Scheduled");
+    let name = format!(
+        "{agent}-{}{}",
+        &id[..id.len().min(4)],
+        crate::now() % 100_000
+    );
+    let title = what["title"]
+        .as_str()
+        .filter(|t| !t.is_empty())
+        .or(s["name"].as_str())
+        .unwrap_or("Scheduled");
     let req = json!({ "op": "start", "name": name, "agent": agent, "title": title, "cwd": what["cwd"].as_str().unwrap_or("~"), "run": what["run"].as_str().unwrap_or("") });
     let reply = crate::client::handle(&req);
     if reply["ok"].as_bool() != Some(true) {
-        return Err(reply["error"].as_str().unwrap_or("the session didn't start").to_string());
+        return Err(reply["error"]
+            .as_str()
+            .unwrap_or("the session didn't start")
+            .to_string());
     }
     if let Some(text) = what["send"].as_str().filter(|t| !t.is_empty()) {
         std::thread::sleep(Duration::from_secs(3));
-        let _ = crate::client::handle(&json!({ "op": "send", "name": name, "text": text, "enter": true }));
+        let _ = crate::client::handle(
+            &json!({ "op": "send", "name": name, "text": text, "enter": true }),
+        );
     }
     Ok(name)
 }
@@ -588,7 +795,10 @@ fn trim(folder: &std::path::Path) {
     }
     let (old, keep) = lines.split_at(lines.len() - KEEP_RUNS);
     for l in old {
-        if let Some(t) = serde_json::from_str::<Value>(l).ok().and_then(|v| v["started"].as_i64()) {
+        if let Some(t) = serde_json::from_str::<Value>(l)
+            .ok()
+            .and_then(|v| v["started"].as_i64())
+        {
             let _ = std::fs::remove_file(folder.join(format!("{t}.log")));
         }
     }
@@ -603,10 +813,19 @@ mod tests {
     fn turns_schedules_into_cron_times() {
         let w = |v: Value| cron_time(&v).unwrap();
         assert_eq!(w(json!({ "every": "minutes", "n": 15 })), "*/15 * * * *");
-        assert_eq!(w(json!({ "every": "hours", "n": 2, "at": "00:30" })), "30 */2 * * *");
+        assert_eq!(
+            w(json!({ "every": "hours", "n": 2, "at": "00:30" })),
+            "30 */2 * * *"
+        );
         assert_eq!(w(json!({ "every": "day", "at": "09:05" })), "5 9 * * *");
-        assert_eq!(w(json!({ "every": "weekdays", "at": "18:00" })), "0 18 * * 1,2,3,4,5");
-        assert_eq!(w(json!({ "every": "week", "days": ["mon", "Thursday"], "at": "07:00" })), "0 7 * * 1,4");
+        assert_eq!(
+            w(json!({ "every": "weekdays", "at": "18:00" })),
+            "0 18 * * 1,2,3,4,5"
+        );
+        assert_eq!(
+            w(json!({ "every": "week", "days": ["mon", "Thursday"], "at": "07:00" })),
+            "0 7 * * 1,4"
+        );
     }
 
     #[test]

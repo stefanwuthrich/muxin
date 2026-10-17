@@ -64,7 +64,17 @@ impl ListeningPort {
 
     /// What it is, in a few words: its page's title, else the program or container.
     pub fn name(&self) -> String {
-        self.title.clone().or_else(|| self.container.clone()).filter(|t| !t.is_empty()).unwrap_or_else(|| if self.process.is_empty() { "Unknown program".into() } else { self.process.clone() })
+        self.title
+            .clone()
+            .or_else(|| self.container.clone())
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| {
+                if self.process.is_empty() {
+                    "Unknown program".into()
+                } else {
+                    self.process.clone()
+                }
+            })
     }
 }
 
@@ -96,37 +106,56 @@ fn forwards() -> &'static Running {
 impl Engine {
     /// What's listening on a machine, web servers first.
     pub async fn ports(self: &Arc<Self>, machine_id: &str) -> Result<Vec<ListeningPort>, String> {
-        let (spec, probe) = self.machine(machine_id).ok_or_else(|| format!("No machine called {machine_id}."))?;
+        let (spec, probe) = self
+            .machine(machine_id)
+            .ok_or_else(|| format!("No machine called {machine_id}."))?;
         if self.demo_world().is_some() {
             return Ok(demo());
         }
         super::sessions::agent::ensure(&spec, probe.as_ref()).await?;
         let reply = super::sessions::agent::ctl(&spec, &json!({ "op": "ports" })).await?;
-        serde_json::from_value(reply["ports"].clone()).map_err(|_| format!("{} listed its ports in a way Muxin can't read.", spec.name))
+        serde_json::from_value(reply["ports"].clone())
+            .map_err(|_| format!("{} listed its ports in a way Muxin can't read.", spec.name))
     }
 
     /// Just the ports something listens on there (a quick look, no asking).
     pub async fn listening(self: &Arc<Self>, machine_id: &str) -> Result<Vec<u16>, String> {
-        let (spec, probe) = self.machine(machine_id).ok_or_else(|| format!("No machine called {machine_id}."))?;
+        let (spec, probe) = self
+            .machine(machine_id)
+            .ok_or_else(|| format!("No machine called {machine_id}."))?;
         if self.demo_world().is_some() {
             return Ok(demo().iter().map(|p| p.port).collect());
         }
         super::sessions::agent::ensure(&spec, probe.as_ref()).await?;
         let reply = super::sessions::agent::ctl(&spec, &json!({ "op": "listening" })).await?;
-        serde_json::from_value(reply["ports"].clone()).map_err(|_| format!("{} listed its ports in a way Muxin can't read.", spec.name))
+        serde_json::from_value(reply["ports"].clone())
+            .map_err(|_| format!("{} listed its ports in a way Muxin can't read.", spec.name))
     }
 
     /// The ports forwarded to this computer.
     pub fn forwards(&self) -> Vec<Forward> {
-        let mut out: Vec<Forward> = forwards().lock().unwrap().values().map(|(f, _)| f.clone()).collect();
+        let mut out: Vec<Forward> = forwards()
+            .lock()
+            .unwrap()
+            .values()
+            .map(|(f, _)| f.clone())
+            .collect();
         out.sort_by(|a, b| (&a.machine_id, a.port).cmp(&(&b.machine_id, b.port)));
         out
     }
 
     /// Opens a machine's port on this computer, at localhost:`local` (the
     /// same number when free, else the next free one). Already open: as it is.
-    pub async fn forward(self: &Arc<Self>, machine_id: &str, port: u16, host: Option<&str>, local: Option<u16>) -> Result<Forward, String> {
-        let (spec, _) = self.machine(machine_id).ok_or_else(|| format!("No machine called {machine_id}."))?;
+    pub async fn forward(
+        self: &Arc<Self>,
+        machine_id: &str,
+        port: u16,
+        host: Option<&str>,
+        local: Option<u16>,
+    ) -> Result<Forward, String> {
+        let (spec, _) = self
+            .machine(machine_id)
+            .ok_or_else(|| format!("No machine called {machine_id}."))?;
         if let Some((f, _)) = forwards().lock().unwrap().get(&(spec.id.clone(), port)) {
             return Ok(f.clone());
         }
@@ -134,7 +163,10 @@ impl Engine {
             return Err("The demo doesn't open ports.".into());
         }
         if spec.is_local() {
-            return Err(format!("{} is this computer: it's at localhost:{port} already.", spec.name));
+            return Err(format!(
+                "{} is this computer: it's at localhost:{port} already.",
+                spec.name
+            ));
         }
         if !spec.is_checkable() {
             return Err(format!("{} has no host to connect to.", spec.name));
@@ -148,13 +180,24 @@ impl Engine {
                 break;
             }
         }
-        let (listener, local_port) = listener.ok_or_else(|| format!("No free port here from {start} up."))?;
-        let forward = Forward { machine_id: spec.id.clone(), port, host: host.filter(|h| !h.is_empty()).unwrap_or("127.0.0.1").to_string(), local_port };
+        let (listener, local_port) =
+            listener.ok_or_else(|| format!("No free port here from {start} up."))?;
+        let forward = Forward {
+            machine_id: spec.id.clone(),
+            port,
+            host: host
+                .filter(|h| !h.is_empty())
+                .unwrap_or("127.0.0.1")
+                .to_string(),
+            local_port,
+        };
         let me = self.clone();
         let f = forward.clone();
         let task = self.runtime().spawn(async move {
             loop {
-                let Ok((socket, _)) = listener.accept().await else { break };
+                let Ok((socket, _)) = listener.accept().await else {
+                    break;
+                };
                 let (me, f) = (me.clone(), f.clone());
                 tokio::spawn(async move {
                     if let Err(e) = pipe(&me, &f, socket).await {
@@ -163,13 +206,20 @@ impl Engine {
                 });
             }
         });
-        forwards().lock().unwrap().insert((spec.id.clone(), port), (forward.clone(), task.abort_handle()));
+        forwards().lock().unwrap().insert(
+            (spec.id.clone(), port),
+            (forward.clone(), task.abort_handle()),
+        );
         Ok(forward)
     }
 
     /// Stops forwarding a port (connections already open end too).
     pub fn stop_forward(&self, machine_id: &str, port: u16) -> bool {
-        match forwards().lock().unwrap().remove(&(machine_id.to_string(), port)) {
+        match forwards()
+            .lock()
+            .unwrap()
+            .remove(&(machine_id.to_string(), port))
+        {
             Some((_, task)) => {
                 task.abort();
                 true
@@ -182,16 +232,23 @@ impl Engine {
 /// One connection to a forwarded port: a channel on the machine's link, the
 /// agent joined to the port there, bytes both ways until either side ends.
 async fn pipe(engine: &Arc<Engine>, f: &Forward, socket: TcpStream) -> Result<(), String> {
-    let (spec, probe) = engine.machine(&f.machine_id).ok_or("The machine is gone.")?;
+    let (spec, probe) = engine
+        .machine(&f.machine_id)
+        .ok_or("The machine is gone.")?;
     super::sessions::agent::ensure(&spec, probe.as_ref()).await?;
-    let link = link::get(&spec).await.ok_or_else(|| format!("Can't reach the agent on {}.", spec.name))?;
+    let link = link::get(&spec)
+        .await
+        .ok_or_else(|| format!("Can't reach the agent on {}.", spec.name))?;
     let (channel, mut frames) = link.open_channel();
     let request = json!({ "op": "tcp", "channel": channel, "port": f.port, "host": f.host });
     match link.request(request, Duration::from_secs(10)).await {
         Ok(r) if r["ok"].as_bool() == Some(true) => {}
         Ok(r) => {
             link.close_channel(channel);
-            return Err(r["error"].as_str().unwrap_or("The machine couldn't connect to it.").to_string());
+            return Err(r["error"]
+                .as_str()
+                .unwrap_or("The machine couldn't connect to it.")
+                .to_string());
         }
         Err(e) => {
             link.close_channel(channel);
@@ -245,7 +302,12 @@ fn demo() -> Vec<ListeningPort> {
         title: title.map(str::to_string),
         ..Default::default()
     };
-    vec![p(3000, "node", Some("Beacon dashboard"), true), p(5173, "node", Some("Vite + React"), true), p(8080, "nginx", Some("Welcome to nginx!"), true), p(5432, "postgres", None, false)]
+    vec![
+        p(3000, "node", Some("Beacon dashboard"), true),
+        p(5173, "node", Some("Vite + React"), true),
+        p(8080, "nginx", Some("Welcome to nginx!"), true),
+        p(5432, "postgres", None, false),
+    ]
 }
 
 #[cfg(test)]
@@ -254,17 +316,48 @@ mod tests {
 
     #[test]
     fn tells_sites_from_other_ports() {
-        let site = ListeningPort { port: 5173, web: true, status: Some(200), title: Some("Vite App".into()), address: "::1".into(), ..Default::default() };
+        let site = ListeningPort {
+            port: 5173,
+            web: true,
+            status: Some(200),
+            title: Some("Vite App".into()),
+            address: "::1".into(),
+            ..Default::default()
+        };
         assert!(site.is_site() && site.local_only());
         assert_eq!(site.name(), "Vite App");
-        let api = ListeningPort { port: 6463, web: true, status: Some(404), process: "Discord Helper".into(), address: "0.0.0.0".into(), ..Default::default() };
+        let api = ListeningPort {
+            port: 6463,
+            web: true,
+            status: Some(404),
+            process: "Discord Helper".into(),
+            address: "0.0.0.0".into(),
+            ..Default::default()
+        };
         assert!(!api.is_site() && !api.local_only());
         assert_eq!(api.name(), "Discord Helper");
-        let wsd = ListeningPort { port: 5357, web: true, status: Some(503), title: Some("Service Unavailable".into()), process: "System".into(), address: "0.0.0.0".into(), ..Default::default() };
+        let wsd = ListeningPort {
+            port: 5357,
+            web: true,
+            status: Some(503),
+            title: Some("Service Unavailable".into()),
+            process: "System".into(),
+            address: "0.0.0.0".into(),
+            ..Default::default()
+        };
         assert!(!wsd.is_site(), "Windows' own services aren't sites");
-        let db = ListeningPort { port: 5432, container: Some("shop-db-1".into()), ..Default::default() };
+        let db = ListeningPort {
+            port: 5432,
+            container: Some("shop-db-1".into()),
+            ..Default::default()
+        };
         assert_eq!(db.name(), "shop-db-1");
-        let f = Forward { machine_id: "beelink".into(), port: 8080, host: "127.0.0.1".into(), local_port: 8081 };
+        let f = Forward {
+            machine_id: "beelink".into(),
+            port: 8080,
+            host: "127.0.0.1".into(),
+            local_port: 8081,
+        };
         assert_eq!(f.url(), "http://localhost:8081");
     }
 }

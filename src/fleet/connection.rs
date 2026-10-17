@@ -41,15 +41,22 @@ impl Engine {
     /// Muxin closes its link and stops checking it and looking at its
     /// sessions (they go on there) until it's connected again; it's saved in
     /// config.toml (`disconnected = true`), so it lasts. Connecting checks it.
-    pub fn set_connected(self: &Arc<Self>, machine_id: &str, connected: bool) -> Result<(), String> {
-        let (spec, _) = self.machine(machine_id).ok_or_else(|| format!("No machine called {machine_id}."))?;
+    pub fn set_connected(
+        self: &Arc<Self>,
+        machine_id: &str,
+        connected: bool,
+    ) -> Result<(), String> {
+        let (spec, _) = self
+            .machine(machine_id)
+            .ok_or_else(|| format!("No machine called {machine_id}."))?;
         if !spec.is_checkable() {
             return Err(format!("{} has no host to connect to.", spec.name));
         }
         if spec.disconnected != connected {
             return Ok(());
         }
-        let edit = |text: &str| crate::ops::inventory_edit::set_disconnected(text, &spec.id, !connected);
+        let edit =
+            |text: &str| crate::ops::inventory_edit::set_disconnected(text, &spec.id, !connected);
         match self.demo_world() {
             Some(w) => w.edit_inventory(edit)?,
             None => crate::ops::inventory_edit::edit_file(self.inventory_path(), edit)?,
@@ -66,15 +73,23 @@ impl Engine {
 
     /// How Muxin reaches the machine right now (measured, connecting if needed).
     pub async fn connection(self: &Arc<Self>, machine_id: &str) -> Result<Connection, String> {
-        let (spec, _) = self.machine(machine_id).ok_or_else(|| format!("No machine called {machine_id}."))?;
+        let (spec, _) = self
+            .machine(machine_id)
+            .ok_or_else(|| format!("No machine called {machine_id}."))?;
         let paired = direct::paired(&spec.id);
         let mut out = Connection {
             machine_id: spec.id.clone(),
             via: "none".into(),
             direct: paired.is_some(),
-            address: paired.as_ref().map(|p| match spec.direct_address.as_deref().filter(|a| !a.trim().is_empty()) {
-                Some(a) => format!("{} (UDP, forwarded)", a.trim()),
-                None => format!("{}:{} (UDP)", p.host, p.port),
+            address: paired.as_ref().map(|p| {
+                match spec
+                    .direct_address
+                    .as_deref()
+                    .filter(|a| !a.trim().is_empty())
+                {
+                    Some(a) => format!("{} (UDP, forwarded)", a.trim()),
+                    None => format!("{}:{} (UDP)", p.host, p.port),
+                }
             }),
             latency_ms: None,
             network: None,
@@ -95,7 +110,10 @@ impl Engine {
         out.tailscale = self.current().tailscale.clone();
         if let Some(l) = link::get(&spec).await {
             let started = Instant::now();
-            if l.request(json!({ "op": "ping" }), Duration::from_secs(10)).await.is_ok() {
+            if l.request(json!({ "op": "ping" }), Duration::from_secs(10))
+                .await
+                .is_ok()
+            {
                 out.latency_ms = Some((started.elapsed().as_secs_f64() * 10_000.).round() / 10.);
                 out.via = l.transport().into();
                 out.network = l.network().map(str::to_string);
@@ -105,21 +123,43 @@ impl Engine {
         // Through another machine (ProxyJump to its own loopback): ssh's last
         // hop is "this computer" to that one; the network that counts is the
         // one to it.
-        let parent = self.current().machines.iter().find(|m| m.id == spec.id).and_then(|m| m.parent.clone());
-        if let Some(p) = parent.clone().filter(|_| out.network.as_deref() == Some("This computer") && !spec.is_local()) {
-            out.network = link::current(&p.machine_id).and_then(|l| l.network().map(str::to_string));
+        let parent = self
+            .current()
+            .machines
+            .iter()
+            .find(|m| m.id == spec.id)
+            .and_then(|m| m.parent.clone());
+        if let Some(p) = parent
+            .clone()
+            .filter(|_| out.network.as_deref() == Some("This computer") && !spec.is_local())
+        {
+            out.network =
+                link::current(&p.machine_id).and_then(|l| l.network().map(str::to_string));
             out.peer = None;
         }
         // Inside another machine with no port forwarded to it: direct can't get in.
-        let shut_in = parent.as_ref().is_some_and(|p| p.inside()) && spec.direct_address.as_deref().is_none_or(|a| a.trim().is_empty());
+        let shut_in = parent.as_ref().is_some_and(|p| p.inside())
+            && spec
+                .direct_address
+                .as_deref()
+                .is_none_or(|a| a.trim().is_empty());
         if out.direct && out.via == "ssh" && shut_in {
             let host = parent.map(|p| p.name).unwrap_or_default();
-            out.note = Some(format!("{host} doesn't forward a UDP port to it, so it's ssh. VMs Muxin makes now get one."));
+            out.note = Some(format!(
+                "{host} doesn't forward a UDP port to it, so it's ssh. VMs Muxin makes now get one."
+            ));
         } else if out.direct && out.via == "ssh" {
             // A Mac blocks the agent's network until Local Network access is allowed there.
-            let mac = self.current().machines.iter().any(|m| m.id == spec.id && m.platform.starts_with("darwin"));
+            let mac = self
+                .current()
+                .machines
+                .iter()
+                .any(|m| m.id == spec.id && m.platform.starts_with("darwin"));
             out.note = Some(if mac {
-                format!("On {}, allow muxen-agent under Privacy & Security › Local Network.", spec.name)
+                format!(
+                    "On {}, allow muxen-agent under Privacy & Security › Local Network.",
+                    spec.name
+                )
             } else {
                 "Direct didn't connect (UDP 47821 blocked?), so it's ssh.".into()
             });
@@ -128,14 +168,25 @@ impl Engine {
         // long way. Away from home that's expected; but when Tailscale itself
         // reaches the machine on this network, something here blocked us.
         // (A machine reached at an address of its own has no local way to look for.)
-        let lan = if spec.direct_address.is_some() { Vec::new() } else { paired.as_ref().map(|p| p.lan.clone()).unwrap_or_default() };
-        let long_way = out.via == "direct" && !lan.is_empty() && out.network.as_deref().is_some_and(|n| n != "Local network");
-        let here = out.tailnet.as_ref().is_some_and(|d| d.path == "direct" && same_network(d, &lan));
+        let lan = if spec.direct_address.is_some() {
+            Vec::new()
+        } else {
+            paired.as_ref().map(|p| p.lan.clone()).unwrap_or_default()
+        };
+        let long_way = out.via == "direct"
+            && !lan.is_empty()
+            && out.network.as_deref().is_some_and(|n| n != "Local network");
+        let here = out
+            .tailnet
+            .as_ref()
+            .is_some_and(|d| d.path == "direct" && same_network(d, &lan));
         if long_way && (here || out.tailnet.is_none()) {
             // Try the short way now (on a fresh socket if need be), then say
             // what's what.
             self.move_home(machine_id).await;
-            if let Some(l) = link::current(machine_id).filter(|l| l.network() == Some("Local network")) {
+            if let Some(l) =
+                link::current(machine_id).filter(|l| l.network() == Some("Local network"))
+            {
                 out.network = l.network().map(str::to_string);
                 out.peer = l.peer().map(|a| a.ip().to_string());
             } else {
@@ -144,7 +195,13 @@ impl Engine {
         }
         if out.via == "direct" && out.network.as_deref() == Some("Tailscale") {
             if let Some(d) = out.tailnet.as_ref().filter(|d| d.path == "relay") {
-                out.note = Some(format!("Relayed by Tailscale{}: slower.", d.relay.as_ref().map(|r| format!(" ({r})")).unwrap_or_default()));
+                out.note = Some(format!(
+                    "Relayed by Tailscale{}: slower.",
+                    d.relay
+                        .as_ref()
+                        .map(|r| format!(" ({r})"))
+                        .unwrap_or_default()
+                ));
             }
         }
         Ok(out)
@@ -152,10 +209,19 @@ impl Engine {
 
     /// Pairs with the machine's agent so Muxin connects to it directly
     /// (QUIC) instead of through ssh; or undoes that.
-    pub async fn set_direct(self: &Arc<Self>, machine_id: &str, enabled: bool) -> Result<Connection, String> {
-        let (spec, probe) = self.machine(machine_id).ok_or_else(|| format!("No machine called {machine_id}."))?;
+    pub async fn set_direct(
+        self: &Arc<Self>,
+        machine_id: &str,
+        enabled: bool,
+    ) -> Result<Connection, String> {
+        let (spec, probe) = self
+            .machine(machine_id)
+            .ok_or_else(|| format!("No machine called {machine_id}."))?;
         if spec.is_local() {
-            return Err("This computer is reached without a network; it doesn't need a direct connection.".into());
+            return Err(
+                "This computer is reached without a network; it doesn't need a direct connection."
+                    .into(),
+            );
         }
         if self.demo_world().is_some() {
             return self.connection(&spec.id).await;
@@ -163,7 +229,9 @@ impl Engine {
         agent::ensure(&spec, probe.as_ref()).await?;
         if !enabled {
             if let Some(l) = link::get(&spec).await {
-                let _ = l.request(json!({ "op": "unpair" }), Duration::from_secs(30)).await;
+                let _ = l
+                    .request(json!({ "op": "unpair" }), Duration::from_secs(30))
+                    .await;
             }
             direct::save(&spec.id, None)?;
             link::reset(&spec.id);
@@ -174,21 +242,58 @@ impl Engine {
         let app = direct::app_fingerprint()?;
         direct::save(&spec.id, None)?;
         link::reset(&spec.id);
-        let l = link::get(&spec).await.ok_or_else(|| format!("Couldn't reach the agent on {}.", spec.name))?;
-        let reply = l.request(json!({ "op": "pair", "client": app }), Duration::from_secs(60)).await?;
+        let l = link::get(&spec)
+            .await
+            .ok_or_else(|| format!("Couldn't reach the agent on {}.", spec.name))?;
+        let reply = l
+            .request(
+                json!({ "op": "pair", "client": app }),
+                Duration::from_secs(60),
+            )
+            .await?;
         if reply["ok"].as_bool() != Some(true) {
-            return Err(reply["error"].as_str().unwrap_or("The agent couldn't set up direct connections.").to_string());
+            return Err(reply["error"]
+                .as_str()
+                .unwrap_or("The agent couldn't set up direct connections.")
+                .to_string());
         }
         let fingerprint = reply["fingerprint"].as_str().unwrap_or("").to_string();
         let port = reply["port"].as_u64().unwrap_or(0) as u16;
-        let host = direct::resolve_host(&spec).await.unwrap_or_else(|| spec.host.rsplit('@').next().unwrap_or(&spec.host).to_string());
-        let list = |k: &str| -> Vec<String> { reply[k].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default() };
+        let host = direct::resolve_host(&spec).await.unwrap_or_else(|| {
+            spec.host
+                .rsplit('@')
+                .next()
+                .unwrap_or(&spec.host)
+                .to_string()
+        });
+        let list = |k: &str| -> Vec<String> {
+            reply[k]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
         let (lan, tailnet) = (list("addresses"), list("tailnet"));
-        direct::save(&spec.id, Some(direct::Paired { fingerprint, host, port, lan, tailnet }))?;
+        direct::save(
+            &spec.id,
+            Some(direct::Paired {
+                fingerprint,
+                host,
+                port,
+                lan,
+                tailnet,
+            }),
+        )?;
         // The listener may take a moment to start.
         for _ in 0..6 {
             link::reset(&spec.id);
-            if link::get(&spec).await.is_some_and(|l| l.transport() == "direct") {
+            if link::get(&spec)
+                .await
+                .is_some_and(|l| l.transport() == "direct")
+            {
                 break;
             }
             direct::save(&spec.id, direct::paired(&spec.id))?;
@@ -207,5 +312,6 @@ impl Engine {
 /// on the same network as this computer.
 fn same_network(d: &super::model::TailnetDevice, lan: &[String]) -> bool {
     // Tailscale's own direct address isn't in what we keep; it's read fresh.
-    super::tailscale::cached_direct_addr(&d.dns_name).is_some_and(|a| lan.iter().any(|l| a.starts_with(&format!("{l}:"))))
+    super::tailscale::cached_direct_addr(&d.dns_name)
+        .is_some_and(|a| lan.iter().any(|l| a.starts_with(&format!("{l}:"))))
 }

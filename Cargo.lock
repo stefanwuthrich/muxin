@@ -3593,6 +3593,9 @@ dependencies = [
  "serde_json",
  "socket2",
  "tokio",
+ "wayland-client",
+ "wayland-protocols 0.32.13",
+ "wayland-protocols-wlr",
  "windows-sys 0.61.2",
  "x11rb",
 ]
@@ -3611,6 +3614,7 @@ dependencies = [
  "futures",
  "gpui",
  "image",
+ "libc",
  "mdns-sd",
  "objc",
  "quinn",
@@ -3630,8 +3634,12 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "unicode-segmentation",
+ "wayland-client",
+ "wayland-protocols 0.32.13",
+ "wayland-protocols-wlr",
  "windows-sys 0.61.2",
  "winresource",
+ "x11rb",
 ]
 
 [[package]]
@@ -6892,6 +6900,19 @@ dependencies = [
  "wayland-backend",
  "wayland-client",
  "wayland-protocols 0.31.2",
+ "wayland-scanner",
+]
+
+[[package]]
+name = "wayland-protocols-wlr"
+version = "0.3.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb04e52f7836d7c7976c78ca0250d61e33873c34156a2a1fc9474828ec268234"
+dependencies = [
+ "bitflags 2.13.2",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols 0.32.13",
  "wayland-scanner",
 ]
 

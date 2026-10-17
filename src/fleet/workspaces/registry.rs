@@ -68,7 +68,10 @@ pub fn update<R>(
     let _lock = Lock::acquire(&lock_path(path))?;
     let mut list = load(path);
     let result = f(&mut list);
-    let file = RegistryFile { version: 1, workspaces: list };
+    let file = RegistryFile {
+        version: 1,
+        workspaces: list,
+    };
     let bytes = serde_json::to_vec_pretty(&file).map_err(|e| e.to_string())?;
     write_atomic(path, &bytes).map_err(|e| format!("Couldn't save workspaces: {e:#}"))?;
     let mtime = std::fs::metadata(path).and_then(|m| m.modified()).ok();
@@ -99,13 +102,19 @@ impl Lock {
             match OpenOptions::new().write(true).create_new(true).open(path) {
                 Ok(_) => return Ok(Lock(path.to_path_buf())),
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    let age = std::fs::metadata(path).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok());
+                    let age = std::fs::metadata(path)
+                        .and_then(|m| m.modified())
+                        .ok()
+                        .and_then(|t| t.elapsed().ok());
                     if age.is_some_and(|a| a > STALE_LOCK) {
                         let _ = std::fs::remove_file(path);
                         continue;
                     }
                     if started.elapsed() > LOCK_WAIT {
-                        return Err(format!("{} is locked by another Muxin process.", display_path(path)));
+                        return Err(format!(
+                            "{} is locked by another Muxin process.",
+                            display_path(path)
+                        ));
                     }
                     std::thread::sleep(Duration::from_millis(15));
                 }
@@ -178,7 +187,10 @@ mod tests {
         assert_eq!(loaded[0].background_pids, vec![42]);
         // The info fields sit at the top level next to the bookkeeping.
         let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.contains("\"machineId\": \"box\"") && text.contains("\"backgroundPids\""), "{text}");
+        assert!(
+            text.contains("\"machineId\": \"box\"") && text.contains("\"backgroundPids\""),
+            "{text}"
+        );
         assert!(!lock_path(&path).exists(), "lock released");
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
@@ -208,7 +220,12 @@ mod tests {
         std::fs::write(&lock, "").unwrap();
         // Make it look old.
         let old = std::time::SystemTime::now() - Duration::from_secs(60);
-        std::fs::File::options().write(true).open(&lock).unwrap().set_modified(old).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&lock)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
         assert!(update(&path, |l| l.push(record("ws-bbbbbb"))).is_ok());
         assert_eq!(load(&path).len(), 1);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());

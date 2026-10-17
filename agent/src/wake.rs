@@ -5,7 +5,10 @@ use serde_json::{Value, json};
 
 /// Six 0xFF, then the network card's address sixteen times.
 pub fn packet(mac: &str) -> Option<Vec<u8>> {
-    let bytes: Vec<u8> = mac.split([':', '-']).map(|b| u8::from_str_radix(b, 16).ok()).collect::<Option<_>>()?;
+    let bytes: Vec<u8> = mac
+        .split([':', '-'])
+        .map(|b| u8::from_str_radix(b, 16).ok())
+        .collect::<Option<_>>()?;
     if bytes.len() != 6 {
         return None;
     }
@@ -34,7 +37,11 @@ pub fn wake(req: &Value) -> Value {
             }
         }
     }
-    if sent { json!({ "ok": true }) } else { json!({ "ok": false, "error": "Couldn't send on this network." }) }
+    if sent {
+        json!({ "ok": true })
+    } else {
+        json!({ "ok": false, "error": "Couldn't send on this network." })
+    }
 }
 
 #[cfg(test)]

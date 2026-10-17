@@ -3,19 +3,19 @@
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, SharedString, Subscription,
-    Window, div, prelude::*, px,
+    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
+    SharedString, Subscription, Window, div, prelude::*, px,
 };
 
 use super::github::Load;
 use super::input::{InputEvent, TextInput};
 use super::kit::{self, Button, ButtonStyle, checkbox, icon, label};
-use super::theme::{ActiveTheme, mono_font, Theme};
+use super::theme::{ActiveTheme, Theme, mono_font};
 use crate::fleet::Engine;
 use crate::fleet::files::Listing;
+use crate::fleet::model::Snapshot;
 use crate::fleet::sessions::{AGENTS, StartSession};
 use crate::fleet::workspaces::{CreateWorkspace, DEFAULT_IMAGE, WorkspaceIsolation};
-use crate::fleet::model::Snapshot;
 use crate::ops::{InstallRequest, NewMachine, ssh_hosts};
 
 pub enum DialogEvent {
@@ -37,12 +37,20 @@ pub enum DialogEvent {
     /// Set up the workspace first, then start the session in its folder.
     StartInWorkspace(CreateWorkspace, StartSession),
     /// Make a VM first, then (a workspace in it and) the session there.
-    StartInNewVm(crate::ops::vm::VmCreate, Option<CreateWorkspace>, StartSession),
+    StartInNewVm(
+        crate::ops::vm::VmCreate,
+        Option<CreateWorkspace>,
+        StartSession,
+    ),
     /// A virtual monitor was added: (machine, display) to show.
     DisplayAdded(String, String),
 }
 
-pub(super) fn frame(theme: &Theme, title: impl Into<SharedString>, intro: Option<SharedString>) -> gpui::Div {
+pub(super) fn frame(
+    theme: &Theme,
+    title: impl Into<SharedString>,
+    intro: Option<SharedString>,
+) -> gpui::Div {
     div()
         .w(px(500.))
         .flex()
@@ -55,18 +63,42 @@ pub(super) fn frame(theme: &Theme, title: impl Into<SharedString>, intro: Option
         .border_color(theme.border)
         .shadow_lg()
         .text_color(theme.text)
-        .child(div().text_size(px(16.)).font_weight(FontWeight::SEMIBOLD).child(title.into()))
-        .children(intro.map(|t| div().text_size(px(12.5)).text_color(theme.text_muted).child(t)))
+        .child(
+            div()
+                .text_size(px(16.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(title.into()),
+        )
+        .children(intro.map(|t| {
+            div()
+                .text_size(px(12.5))
+                .text_color(theme.text_muted)
+                .child(t)
+        }))
 }
 
-pub(super) fn field(theme: &Theme, name: &'static str, input: impl IntoElement, help: Option<&'static str>) -> impl IntoElement {
+pub(super) fn field(
+    theme: &Theme,
+    name: &'static str,
+    input: impl IntoElement,
+    help: Option<&'static str>,
+) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
         .gap(px(6.))
-        .child(label(theme, name).text_size(px(12.)).text_color(theme.text_muted))
+        .child(
+            label(theme, name)
+                .text_size(px(12.))
+                .text_color(theme.text_muted),
+        )
         .child(input)
-        .children(help.map(|h| div().text_size(px(11.5)).text_color(theme.text_placeholder).child(h)))
+        .children(help.map(|h| {
+            div()
+                .text_size(px(11.5))
+                .text_color(theme.text_placeholder)
+                .child(h)
+        }))
 }
 
 pub(super) fn error_line(theme: &Theme, error: &Option<String>) -> Option<impl IntoElement> {
@@ -86,7 +118,12 @@ pub(super) fn error_line(theme: &Theme, error: &Option<String>) -> Option<impl I
 }
 
 pub(super) fn footer(children: Vec<AnyElement>) -> impl IntoElement {
-    div().flex().justify_end().gap(px(8.)).pt(px(4.)).children(children)
+    div()
+        .flex()
+        .justify_end()
+        .gap(px(8.))
+        .pt(px(4.))
+        .children(children)
 }
 
 // ---------------------------------------------------------------------------
@@ -111,8 +148,14 @@ impl EventEmitter<DialogEvent> for AddMachineDialog {}
 impl AddMachineDialog {
     pub fn new(engine: Arc<Engine>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let name = cx.new(|cx| TextInput::new(cx, "Mac Studio"));
-        let host = cx.new(|cx| TextInput::new(cx, "ci@mac-studio.local, an ~/.ssh/config alias, or local").mono());
-        let on_input = |this: &mut Self, _: &Entity<TextInput>, e: &InputEvent, _: &mut Window, cx: &mut Context<Self>| match e {
+        let host = cx.new(|cx| {
+            TextInput::new(cx, "ci@mac-studio.local, an ~/.ssh/config alias, or local").mono()
+        });
+        let on_input = |this: &mut Self,
+                        _: &Entity<TextInput>,
+                        e: &InputEvent,
+                        _: &mut Window,
+                        cx: &mut Context<Self>| match e {
             InputEvent::Submit => this.submit(cx),
             InputEvent::Cancel => cx.emit(DialogEvent::Dismissed),
             InputEvent::Changed => {
@@ -120,7 +163,10 @@ impl AddMachineDialog {
                 cx.notify()
             }
         };
-        let subs = vec![cx.subscribe_in(&name, window, on_input), cx.subscribe_in(&host, window, on_input)];
+        let subs = vec![
+            cx.subscribe_in(&name, window, on_input),
+            cx.subscribe_in(&host, window, on_input),
+        ];
         // The tailnet takes a moment (Tailscale, and where each alias goes).
         let job = engine.runtime().spawn({
             let engine = engine.clone();
@@ -133,15 +179,33 @@ impl AddMachineDialog {
                     if this.engine.demo_world().is_some() {
                         this.hosts = found.hosts.clone();
                     }
-                    this.tailnet = found.tailnet.into_iter().filter(|t| t.machine_id.is_none()).collect();
+                    this.tailnet = found
+                        .tailnet
+                        .into_iter()
+                        .filter(|t| t.machine_id.is_none())
+                        .collect();
                     this.network = Some(found.network);
                     cx.notify();
                 });
             }
         })
         .detach();
-        let hosts = if engine.demo_world().is_some() { Vec::new() } else { ssh_hosts() };
-        AddMachineDialog { engine, name, host, hosts, tailnet: Vec::new(), network: None, note: None, error: None, _subscriptions: subs }
+        let hosts = if engine.demo_world().is_some() {
+            Vec::new()
+        } else {
+            ssh_hosts()
+        };
+        AddMachineDialog {
+            engine,
+            name,
+            host,
+            hosts,
+            tailnet: Vec::new(),
+            network: None,
+            note: None,
+            error: None,
+            _subscriptions: subs,
+        }
     }
 
     pub fn first_focus(&self, cx: &App) -> FocusHandle {
@@ -149,7 +213,10 @@ impl AddMachineDialog {
     }
 
     fn submit(&mut self, cx: &mut Context<Self>) {
-        let machine = NewMachine { name: self.name.read(cx).text().to_string(), host: self.host.read(cx).text().to_string() };
+        let machine = NewMachine {
+            name: self.name.read(cx).text().to_string(),
+            host: self.host.read(cx).text().to_string(),
+        };
         match self.engine.add_machine(machine) {
             Ok(id) => cx.emit(DialogEvent::MachineAdded(id)),
             Err(e) => {
@@ -173,17 +240,32 @@ impl Render for AddMachineDialog {
         let theme = cx.theme();
         let mut suggestions: Vec<AnyElement> = vec![
             suggestion(&theme, "sugg-local", "This computer", "laptop")
-                .on_click(cx.listener(|this, _, _, cx| this.pick("local".into(), crate::config::local_hostname(), cx)))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.pick("local".into(), crate::config::local_hostname(), cx)
+                }))
                 .into_any_element(),
         ];
         // A tailnet computer shows once, below, under the user's alias for it.
         let on_tailnet: Vec<&str> = self.tailnet.iter().map(|t| t.host.as_str()).collect();
-        for (i, h) in self.hosts.iter().filter(|h| !on_tailnet.contains(&h.as_str())).take(12).enumerate() {
+        for (i, h) in self
+            .hosts
+            .iter()
+            .filter(|h| !on_tailnet.contains(&h.as_str()))
+            .take(12)
+            .enumerate()
+        {
             let host = h.clone();
             suggestions.push(
-                suggestion(&theme, SharedString::from(format!("sugg-{i}")), h.clone(), "terminal")
-                    .on_click(cx.listener(move |this, _, _, cx| this.pick(host.clone(), host.clone(), cx)))
-                    .into_any_element(),
+                suggestion(
+                    &theme,
+                    SharedString::from(format!("sugg-{i}")),
+                    h.clone(),
+                    "terminal",
+                )
+                .on_click(
+                    cx.listener(move |this, _, _, cx| this.pick(host.clone(), host.clone(), cx)),
+                )
+                .into_any_element(),
             );
         }
         frame(
@@ -273,7 +355,12 @@ impl Render for AddMachineDialog {
     }
 }
 
-fn suggestion(theme: &Theme, id: impl Into<gpui::ElementId>, text: impl Into<SharedString>, icon_name: &'static str) -> gpui::Stateful<gpui::Div> {
+fn suggestion(
+    theme: &Theme,
+    id: impl Into<gpui::ElementId>,
+    text: impl Into<SharedString>,
+    icon_name: &'static str,
+) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
         .flex()
@@ -290,7 +377,12 @@ fn suggestion(theme: &Theme, id: impl Into<gpui::ElementId>, text: impl Into<Sha
         .text_size(px(12.))
         .font_family(mono_font())
         .text_color(theme.text_muted)
-        .child(kit::color_icon(theme, icon_name, 12., theme.text_placeholder))
+        .child(kit::color_icon(
+            theme,
+            icon_name,
+            12.,
+            theme.text_placeholder,
+        ))
         .child(text.into())
 }
 
@@ -328,19 +420,40 @@ impl InstallDialog {
         self.labels.update(cx, |i, cx| i.set_text(labels, cx));
     }
 
-    pub fn new(engine: Arc<Engine>, snapshot: Arc<Snapshot>, machine_id: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        engine: Arc<Engine>,
+        snapshot: Arc<Snapshot>,
+        machine_id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let settings = engine.settings();
-        let mut scopes: Vec<String> = settings.github.orgs.iter().chain(settings.github.repos.iter()).cloned().collect();
+        let mut scopes: Vec<String> = settings
+            .github
+            .orgs
+            .iter()
+            .chain(settings.github.repos.iter())
+            .cloned()
+            .collect();
         for d in &snapshot.github.detected {
             if !scopes.iter().any(|s| s.eq_ignore_ascii_case(d)) {
                 scopes.push(d.clone());
             }
         }
         let suggested = engine.suggest_runner_names(&machine_id, 1).join(", ");
-        let names = cx.new(|cx| TextInput::new(cx, "runner-01, runner-02").mono().with_text(suggested));
+        let names = cx.new(|cx| {
+            TextInput::new(cx, "runner-01, runner-02")
+                .mono()
+                .with_text(suggested)
+        });
         let labels = cx.new(|cx| TextInput::new(cx, "gpu, xcode-16 (optional)").mono());
-        let image = cx.new(|cx| TextInput::new(cx, "ghcr.io/actions/actions-runner (latest)").mono());
-        let on_input = |this: &mut Self, _: &Entity<TextInput>, e: &InputEvent, _: &mut Window, cx: &mut Context<Self>| match e {
+        let image =
+            cx.new(|cx| TextInput::new(cx, "ghcr.io/actions/actions-runner (latest)").mono());
+        let on_input = |this: &mut Self,
+                        _: &Entity<TextInput>,
+                        e: &InputEvent,
+                        _: &mut Window,
+                        cx: &mut Context<Self>| match e {
             InputEvent::Submit => this.submit(cx),
             InputEvent::Cancel => cx.emit(DialogEvent::Dismissed),
             InputEvent::Changed => {
@@ -348,7 +461,10 @@ impl InstallDialog {
                 cx.notify()
             }
         };
-        let subs = vec![cx.subscribe_in(&names, window, on_input), cx.subscribe_in(&labels, window, on_input)];
+        let subs = vec![
+            cx.subscribe_in(&names, window, on_input),
+            cx.subscribe_in(&labels, window, on_input),
+        ];
         InstallDialog {
             engine,
             machine_id,
@@ -371,7 +487,10 @@ impl InstallDialog {
 
     fn set_count(&mut self, count: usize, cx: &mut Context<Self>) {
         self.count = count.clamp(1, 16);
-        let names = self.engine.suggest_runner_names(&self.machine_id, self.count).join(", ");
+        let names = self
+            .engine
+            .suggest_runner_names(&self.machine_id, self.count)
+            .join(", ");
         self.names.update(cx, |n, cx| n.set_text(names, cx));
     }
 
@@ -382,7 +501,11 @@ impl InstallDialog {
             return;
         };
         let split = |s: &str| -> Vec<String> {
-            s.split([',', ' ', '\n']).map(str::trim).filter(|x| !x.is_empty()).map(str::to_string).collect()
+            s.split([',', ' ', '\n'])
+                .map(str::trim)
+                .filter(|x| !x.is_empty())
+                .map(str::to_string)
+                .collect()
         };
         let req = InstallRequest {
             machine_id: self.machine_id.clone(),
@@ -396,7 +519,8 @@ impl InstallDialog {
                 ModeChoice::Service => crate::ops::InstallMode::Service,
                 ModeChoice::Background => crate::ops::InstallMode::Background,
                 ModeChoice::Docker => crate::ops::InstallMode::Docker {
-                    image: Some(self.image.read(cx).text().trim().to_string()).filter(|i| !i.is_empty()),
+                    image: Some(self.image.read(cx).text().trim().to_string())
+                        .filter(|i| !i.is_empty()),
                     docker_socket: self.docker_socket,
                 },
             },
@@ -416,8 +540,12 @@ impl Render for InstallDialog {
         let theme = cx.theme();
         let snapshot = self.engine.current();
         let machine = snapshot.machines.iter().find(|m| m.id == self.machine_id);
-        let machine_name = machine.map(|m| m.name.clone()).unwrap_or_else(|| self.machine_id.clone());
-        let platform = machine.map(|m| m.platform.clone()).filter(|p| !p.is_empty());
+        let machine_name = machine
+            .map(|m| m.name.clone())
+            .unwrap_or_else(|| self.machine_id.clone());
+        let platform = machine
+            .map(|m| m.platform.clone())
+            .filter(|p| !p.is_empty());
         let linux = platform.as_deref().is_some_and(|p| p.starts_with("linux"));
 
         let scope_picker: AnyElement = if self.scopes.is_empty() {
@@ -451,11 +579,28 @@ impl Render for InstallDialog {
                         .rounded(px(6.))
                         .border_1()
                         .cursor_pointer()
-                        .border_color(if selected { theme.accent } else { theme.border_variant })
-                        .bg(if selected { theme.accent.opacity(0.12) } else { theme.element })
+                        .border_color(if selected {
+                            theme.accent
+                        } else {
+                            theme.border_variant
+                        })
+                        .bg(if selected {
+                            theme.accent.opacity(0.12)
+                        } else {
+                            theme.element
+                        })
                         .text_size(px(12.5))
                         .font_family(mono_font())
-                        .child(kit::color_icon(&theme, if sc.contains('/') { "git-branch" } else { "layers" }, 12., theme.text_placeholder))
+                        .child(kit::color_icon(
+                            &theme,
+                            if sc.contains('/') {
+                                "git-branch"
+                            } else {
+                                "layers"
+                            },
+                            12.,
+                            theme.text_placeholder,
+                        ))
                         .child(sc.clone())
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.scope = Some(value.clone());
@@ -470,9 +615,24 @@ impl Render for InstallDialog {
             .flex()
             .items_center()
             .gap(px(4.))
-            .child(Button::icon_only("inst-minus", "minus").disabled(count <= 1).on_click(cx.listener(move |this, _, _, cx| this.set_count(count - 1, cx))))
-            .child(div().w(px(28.)).flex().justify_center().font_family(mono_font()).child(count.to_string()))
-            .child(Button::icon_only("inst-plus", "plus").disabled(count >= 16).on_click(cx.listener(move |this, _, _, cx| this.set_count(count + 1, cx))));
+            .child(
+                Button::icon_only("inst-minus", "minus")
+                    .disabled(count <= 1)
+                    .on_click(cx.listener(move |this, _, _, cx| this.set_count(count - 1, cx))),
+            )
+            .child(
+                div()
+                    .w(px(28.))
+                    .flex()
+                    .justify_center()
+                    .font_family(mono_font())
+                    .child(count.to_string()),
+            )
+            .child(
+                Button::icon_only("inst-plus", "plus")
+                    .disabled(count >= 16)
+                    .on_click(cx.listener(move |this, _, _, cx| this.set_count(count + 1, cx))),
+            );
 
         let mode_picker = self.mode_picker(&theme, machine, linux, cx);
 
@@ -511,10 +671,21 @@ impl Render for InstallDialog {
 
 impl InstallDialog {
     /// Auto / Service / Docker / Background, with what the last check says about the machine.
-    fn mode_picker(&self, theme: &Theme, machine: Option<&crate::fleet::model::Machine>, linux: bool, cx: &mut Context<Self>) -> AnyElement {
+    fn mode_picker(
+        &self,
+        theme: &Theme,
+        machine: Option<&crate::fleet::model::Machine>,
+        linux: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let probe = machine.and_then(|m| m.probe.as_ref()).filter(|p| p.ok);
-        let docker = probe.and_then(|p| p.docker.as_deref()).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
-        let sudo_ok = probe.and_then(|p| p.sudo.as_deref()).is_some_and(|s| matches!(s, "root" | "passwordless"));
+        let docker = probe
+            .and_then(|p| p.docker.as_deref())
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        let sudo_ok = probe
+            .and_then(|p| p.sudo.as_deref())
+            .is_some_and(|s| matches!(s, "root" | "passwordless"));
         let service_works = !linux || sudo_ok;
         let auto_pick = if service_works {
             "a service"
@@ -524,7 +695,13 @@ impl InstallDialog {
             "a background process"
         };
         let options: [(ModeChoice, &'static str, &'static str, String, bool); 4] = [
-            (ModeChoice::Auto, "Auto", "zap", format!("Best fit for this machine: {auto_pick}."), true),
+            (
+                ModeChoice::Auto,
+                "Auto",
+                "zap",
+                format!("Best fit for this machine: {auto_pick}."),
+                true,
+            ),
             (
                 ModeChoice::Service,
                 "Service",
@@ -543,14 +720,29 @@ impl InstallDialog {
                 "Docker",
                 "box",
                 match &docker {
-                    Some(v) => format!("Docker {v}: a container per runner that restarts with Docker. No sudo."),
+                    Some(v) => format!(
+                        "Docker {v}: a container per runner that restarts with Docker. No sudo."
+                    ),
                     None => "Docker wasn't found at the last check.".into(),
                 },
                 docker.is_some(),
             ),
-            (ModeChoice::Background, "Background", "play", "No root needed, but stops when the machine restarts.".into(), true),
+            (
+                ModeChoice::Background,
+                "Background",
+                "play",
+                "No root needed, but stops when the machine restarts.".into(),
+                true,
+            ),
         ];
-        let card = |(choice, title, icon_name, detail, available): (ModeChoice, &'static str, &'static str, String, bool), cx: &mut Context<Self>| {
+        let card = |(choice, title, icon_name, detail, available): (
+            ModeChoice,
+            &'static str,
+            &'static str,
+            String,
+            bool,
+        ),
+                    cx: &mut Context<Self>| {
             let selected = self.mode == choice;
             div()
                 .id(title)
@@ -563,8 +755,16 @@ impl InstallDialog {
                 .rounded(px(8.))
                 .border_1()
                 .cursor_pointer()
-                .border_color(if selected { theme.accent } else { theme.border_variant })
-                .bg(if selected { theme.accent.opacity(0.10) } else { theme.element })
+                .border_color(if selected {
+                    theme.accent
+                } else {
+                    theme.border_variant
+                })
+                .bg(if selected {
+                    theme.accent.opacity(0.10)
+                } else {
+                    theme.element
+                })
                 .when(!available, |d| d.opacity(0.6))
                 .child(kit::color_tile(icon_name, 20.))
                 .child(
@@ -574,8 +774,18 @@ impl InstallDialog {
                         .flex_1()
                         .min_w(px(0.))
                         .gap(px(2.))
-                        .child(div().text_size(px(12.5)).font_weight(FontWeight::MEDIUM).child(title))
-                        .child(div().text_size(px(11.)).text_color(theme.text_placeholder).child(detail)),
+                        .child(
+                            div()
+                                .text_size(px(12.5))
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(title),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(11.))
+                                .text_color(theme.text_placeholder)
+                                .child(detail),
+                        ),
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.mode = choice;
@@ -584,8 +794,16 @@ impl InstallDialog {
                 .into_any_element()
         };
         let [a, b, c, d] = options;
-        let row1 = div().flex().gap(px(8.)).child(card(a, cx)).child(card(b, cx));
-        let row2 = div().flex().gap(px(8.)).child(card(c, cx)).child(card(d, cx));
+        let row1 = div()
+            .flex()
+            .gap(px(8.))
+            .child(card(a, cx))
+            .child(card(b, cx));
+        let row2 = div()
+            .flex()
+            .gap(px(8.))
+            .child(card(c, cx))
+            .child(card(d, cx));
         let socket = self.docker_socket;
         div()
             .flex()
@@ -634,17 +852,40 @@ pub struct RenameDialog {
 impl EventEmitter<DialogEvent> for RenameDialog {}
 
 impl RenameDialog {
-    pub fn new(engine: Arc<Engine>, target: RenameTarget, current: String, machine: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let name = cx.new(|cx| TextInput::new(cx, current.clone()).with_text(current).selected());
-        let sub = cx.subscribe_in(&name, window, |this: &mut Self, _, e: &InputEvent, _, cx| match e {
-            InputEvent::Submit => this.submit(cx),
-            InputEvent::Cancel => cx.emit(DialogEvent::Dismissed),
-            InputEvent::Changed => {
-                this.error = None;
-                cx.notify()
-            }
+    pub fn new(
+        engine: Arc<Engine>,
+        target: RenameTarget,
+        current: String,
+        machine: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let name = cx.new(|cx| {
+            TextInput::new(cx, current.clone())
+                .with_text(current)
+                .selected()
         });
-        RenameDialog { engine, target, machine, name, saving: false, error: None, _subscriptions: vec![sub] }
+        let sub = cx.subscribe_in(
+            &name,
+            window,
+            |this: &mut Self, _, e: &InputEvent, _, cx| match e {
+                InputEvent::Submit => this.submit(cx),
+                InputEvent::Cancel => cx.emit(DialogEvent::Dismissed),
+                InputEvent::Changed => {
+                    this.error = None;
+                    cx.notify()
+                }
+            },
+        );
+        RenameDialog {
+            engine,
+            target,
+            machine,
+            name,
+            saving: false,
+            error: None,
+            _subscriptions: vec![sub],
+        }
     }
 
     pub fn first_focus(&self, cx: &App) -> FocusHandle {
@@ -723,17 +964,25 @@ impl Render for RenameDialog {
         let (title, intro, field_name) = match &self.target {
             RenameTarget::Machine(id) => (
                 "Rename machine",
-                format!("Only the name Muxin shows changes. Its id ({id}), runners and sessions stay the same, and nothing on the machine changes."),
+                format!(
+                    "Only the name Muxin shows changes. Its id ({id}), runners and sessions stay the same, and nothing on the machine changes."
+                ),
                 "Name",
             ),
             RenameTarget::Display(..) => (
                 "Rename display",
-                format!("What Muxin calls this monitor on {}. Its windows and settings stay as they are.", self.machine),
+                format!(
+                    "What Muxin calls this monitor on {}. Its windows and settings stay as they are.",
+                    self.machine
+                ),
                 "Name",
             ),
             RenameTarget::Session(_) => (
                 "Rename session",
-                format!("Muxin's agent on {} keeps the title, so it shows wherever you use Muxin. What runs in the session isn't touched.", self.machine),
+                format!(
+                    "Muxin's agent on {} keeps the title, so it shows wherever you use Muxin. What runs in the session isn't touched.",
+                    self.machine
+                ),
                 "Title",
             ),
         };
@@ -741,7 +990,10 @@ impl Render for RenameDialog {
             .child(field(&theme, field_name, self.name.clone(), None))
             .children(error_line(&theme, &self.error))
             .child(footer(vec![
-                Button::new("rn-cancel", "Cancel").style(ButtonStyle::Ghost).on_click(cx.listener(|_, _, _, cx| cx.emit(DialogEvent::Dismissed))).into_any_element(),
+                Button::new("rn-cancel", "Cancel")
+                    .style(ButtonStyle::Ghost)
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(DialogEvent::Dismissed)))
+                    .into_any_element(),
                 Button::new("rn-save", if self.saving { "Saving…" } else { "Rename" })
                     .style(ButtonStyle::Primary)
                     .loading(self.saving)
@@ -777,17 +1029,36 @@ pub struct AddDisplayDialog {
 impl EventEmitter<DialogEvent> for AddDisplayDialog {}
 
 impl AddDisplayDialog {
-    pub fn new(engine: Arc<Engine>, machine: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        engine: Arc<Engine>,
+        machine: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let snap = engine.current();
         let m = snap.machines.iter().find(|m| m.id == machine);
         let machine_name = m.map(|m| m.name.clone()).unwrap_or_else(|| machine.clone());
         // Named like plugging in another one: "Display 3" when there are two.
-        let n = m.map(|m| m.displays.iter().filter(|d| d.id != "all").count()).unwrap_or(1) + 1;
-        let screens: Vec<_> = m.map(|m| m.displays.iter().filter(|d| d.id != "all").collect()).unwrap_or_default();
-        let main = screens.iter().find(|d| d.main).or(screens.first()).map(|d| (d.width.round() as u32, d.height.round() as u32)).filter(|(w, h)| *w >= 640 && *h >= 480);
+        let n = m
+            .map(|m| m.displays.iter().filter(|d| d.id != "all").count())
+            .unwrap_or(1)
+            + 1;
+        let screens: Vec<_> = m
+            .map(|m| m.displays.iter().filter(|d| d.id != "all").collect())
+            .unwrap_or_default();
+        let main = screens
+            .iter()
+            .find(|d| d.main)
+            .or(screens.first())
+            .map(|d| (d.width.round() as u32, d.height.round() as u32))
+            .filter(|(w, h)| *w >= 640 && *h >= 480);
         let name = cx.new(|cx| TextInput::new(cx, format!("Display {n}")));
         let password = cx.new(|cx| TextInput::new(cx, "Password").secret());
-        let on_input = |this: &mut Self, _: &Entity<TextInput>, e: &InputEvent, window: &mut Window, cx: &mut Context<Self>| match e {
+        let on_input = |this: &mut Self,
+                        _: &Entity<TextInput>,
+                        e: &InputEvent,
+                        window: &mut Window,
+                        cx: &mut Context<Self>| match e {
             InputEvent::Submit => this.submit(window, cx),
             InputEvent::Cancel => cx.emit(DialogEvent::Dismissed),
             InputEvent::Changed => {
@@ -795,8 +1066,23 @@ impl AddDisplayDialog {
                 cx.notify()
             }
         };
-        let subs = vec![cx.subscribe_in(&name, window, on_input), cx.subscribe_in(&password, window, on_input)];
-        AddDisplayDialog { engine, machine, machine_name, name, password, size: main.unwrap_or((1920, 1080)), main, adding: false, asking: false, error: None, _subscriptions: subs }
+        let subs = vec![
+            cx.subscribe_in(&name, window, on_input),
+            cx.subscribe_in(&password, window, on_input),
+        ];
+        AddDisplayDialog {
+            engine,
+            machine,
+            machine_name,
+            name,
+            password,
+            size: main.unwrap_or((1920, 1080)),
+            main,
+            adding: false,
+            asking: false,
+            error: None,
+            _subscriptions: subs,
+        }
     }
 
     pub fn first_focus(&self, cx: &App) -> FocusHandle {
@@ -825,10 +1111,23 @@ impl AddDisplayDialog {
         let (engine, machine, (w, h)) = (self.engine.clone(), self.machine.clone(), self.size);
         let job = engine.runtime().spawn({
             let (engine, machine) = (engine.clone(), machine.clone());
-            async move { engine.add_display(&machine, w, h, Some(&typed).filter(|t| !t.is_empty()).map(|t| t.as_str())).await }
+            async move {
+                engine
+                    .add_display(
+                        &machine,
+                        w,
+                        h,
+                        Some(&typed).filter(|t| !t.is_empty()).map(|t| t.as_str()),
+                    )
+                    .await
+            }
         });
         cx.spawn_in(window, async move |this, cx| {
-            let result = job.await.unwrap_or_else(|e| Err(crate::fleet::desktop::AddDisplayError::Failed(e.to_string())));
+            let result = job.await.unwrap_or_else(|e| {
+                Err(crate::fleet::desktop::AddDisplayError::Failed(
+                    e.to_string(),
+                ))
+            });
             let _ = this.update_in(cx, |this, window, cx| {
                 this.adding = false;
                 match result {
@@ -874,18 +1173,36 @@ impl Render for AddDisplayDialog {
                     .py(px(8.))
                     .rounded(px(7.))
                     .border_1()
-                    .border_color(if on { theme.accent } else { theme.border_variant })
-                    .bg(if on { theme.accent.opacity(0.1) } else { theme.element })
+                    .border_color(if on {
+                        theme.accent
+                    } else {
+                        theme.border_variant
+                    })
+                    .bg(if on {
+                        theme.accent.opacity(0.1)
+                    } else {
+                        theme.element
+                    })
                     .cursor_pointer()
                     .hover(|st| st.border_color(theme.accent.opacity(0.6)))
-                    .child(div().text_size(px(12.5)).text_color(theme.text).child(format!("{w}×{h}")))
-                    .child(div().text_size(px(11.)).text_color(theme.text_placeholder).child(match (w, h) {
-                        _ if main == Some((w, h)) => "Same as main",
-                        (1280, 720) => "720p",
-                        (1920, 1080) => "1080p",
-                        (2560, 1440) => "1440p",
-                        _ => "4K",
-                    }))
+                    .child(
+                        div()
+                            .text_size(px(12.5))
+                            .text_color(theme.text)
+                            .child(format!("{w}×{h}")),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(theme.text_placeholder)
+                            .child(match (w, h) {
+                                _ if main == Some((w, h)) => "Same as main",
+                                (1280, 720) => "720p",
+                                (1920, 1080) => "1080p",
+                                (2560, 1440) => "1440p",
+                                _ => "4K",
+                            }),
+                    )
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.size = (w, h);
                         cx.notify()
@@ -898,13 +1215,23 @@ impl Render for AddDisplayDialog {
                 .child(field(&theme, "Your password", self.password.clone(), None))
                 .children(error_line(&theme, &self.error))
                 .child(footer(vec![
-                    Button::new("ad-cancel", "Cancel").style(ButtonStyle::Ghost).on_click(cx.listener(|_, _, _, cx| cx.emit(DialogEvent::Dismissed))).into_any_element(),
-                    Button::new("ad-pass", if self.adding { "Adding…" } else { "Add monitor" })
-                        .style(ButtonStyle::Primary)
-                        .loading(self.adding)
-                        .key_hint("↵")
-                        .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx)))
+                    Button::new("ad-cancel", "Cancel")
+                        .style(ButtonStyle::Ghost)
+                        .on_click(cx.listener(|_, _, _, cx| cx.emit(DialogEvent::Dismissed)))
                         .into_any_element(),
+                    Button::new(
+                        "ad-pass",
+                        if self.adding {
+                            "Adding…"
+                        } else {
+                            "Add monitor"
+                        },
+                    )
+                    .style(ButtonStyle::Primary)
+                    .loading(self.adding)
+                    .key_hint("↵")
+                    .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx)))
+                    .into_any_element(),
                 ]))
                 .into_any_element();
         }
@@ -953,20 +1280,46 @@ pub struct MonitorPasswordDialog {
 impl EventEmitter<DialogEvent> for MonitorPasswordDialog {}
 
 impl MonitorPasswordDialog {
-    pub fn new(engine: Arc<Engine>, machine: String, display: String, error: Option<String>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let machine_name = engine.current().machines.iter().find(|m| m.id == machine).map(|m| m.name.clone()).unwrap_or_else(|| machine.clone());
+    pub fn new(
+        engine: Arc<Engine>,
+        machine: String,
+        display: String,
+        error: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let machine_name = engine
+            .current()
+            .machines
+            .iter()
+            .find(|m| m.id == machine)
+            .map(|m| m.name.clone())
+            .unwrap_or_else(|| machine.clone());
         let password = cx.new(|cx| TextInput::new(cx, "Password").secret());
-        let sub = cx.subscribe_in(&password, window, |this: &mut Self, _, e: &InputEvent, _, cx| match e {
-            InputEvent::Submit => this.submit(cx),
-            InputEvent::Cancel => cx.emit(DialogEvent::Dismissed),
-            InputEvent::Changed => {
-                this.error = None;
-                cx.notify()
-            }
-        });
+        let sub = cx.subscribe_in(
+            &password,
+            window,
+            |this: &mut Self, _, e: &InputEvent, _, cx| match e {
+                InputEvent::Submit => this.submit(cx),
+                InputEvent::Cancel => cx.emit(DialogEvent::Dismissed),
+                InputEvent::Changed => {
+                    this.error = None;
+                    cx.notify()
+                }
+            },
+        );
         // A password that didn't work says so; a first ask doesn't need to.
         let error = error.filter(|e| e.contains("didn't work"));
-        MonitorPasswordDialog { engine, machine, machine_name, display, password, busy: false, error, _subscriptions: vec![sub] }
+        MonitorPasswordDialog {
+            engine,
+            machine,
+            machine_name,
+            display,
+            password,
+            busy: false,
+            error,
+            _subscriptions: vec![sub],
+        }
     }
 
     pub fn first_focus(&self, cx: &App) -> FocusHandle {
@@ -988,13 +1341,21 @@ impl MonitorPasswordDialog {
         self.busy = true;
         self.error = None;
         cx.notify();
-        let (engine, machine, display) = (self.engine.clone(), self.machine.clone(), self.display.clone());
+        let (engine, machine, display) = (
+            self.engine.clone(),
+            self.machine.clone(),
+            self.display.clone(),
+        );
         let job = engine.runtime().spawn({
             let engine = engine.clone();
             async move { engine.remove_display(&machine, &display).await }
         });
         cx.spawn(async move |this, cx| {
-            let result = job.await.unwrap_or_else(|e| Err(crate::fleet::desktop::AddDisplayError::Failed(e.to_string())));
+            let result = job.await.unwrap_or_else(|e| {
+                Err(crate::fleet::desktop::AddDisplayError::Failed(
+                    e.to_string(),
+                ))
+            });
             let _ = this.update(cx, |this, cx| match result {
                 Ok(()) => cx.emit(DialogEvent::Dismissed),
                 Err(e) => {
@@ -1015,13 +1376,23 @@ impl Render for MonitorPasswordDialog {
             .child(field(&theme, "Your password", self.password.clone(), None))
             .children(error_line(&theme, &self.error))
             .child(footer(vec![
-                Button::new("mp-cancel", "Cancel").style(ButtonStyle::Ghost).on_click(cx.listener(|_, _, _, cx| cx.emit(DialogEvent::Dismissed))).into_any_element(),
-                Button::new("mp-go", if self.busy { "Removing…" } else { "Remove monitor" })
-                    .style(ButtonStyle::Primary)
-                    .loading(self.busy)
-                    .key_hint("↵")
-                    .on_click(cx.listener(|this, _, _, cx| this.submit(cx)))
+                Button::new("mp-cancel", "Cancel")
+                    .style(ButtonStyle::Ghost)
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(DialogEvent::Dismissed)))
                     .into_any_element(),
+                Button::new(
+                    "mp-go",
+                    if self.busy {
+                        "Removing…"
+                    } else {
+                        "Remove monitor"
+                    },
+                )
+                .style(ButtonStyle::Primary)
+                .loading(self.busy)
+                .key_hint("↵")
+                .on_click(cx.listener(|this, _, _, cx| this.submit(cx)))
+                .into_any_element(),
             ]))
     }
 }
@@ -1094,14 +1465,23 @@ impl Render for ConfirmDialog {
         frame(&theme, self.title.clone(), Some(self.detail.clone().into()))
             .track_focus(&self.focus)
             .children(self.option_label.map(|l| {
-                checkbox(&theme, "confirm-option", option, l, cx.listener(|this, value: &bool, _, cx| {
-                    this.option = *value;
-                    cx.notify()
-                }))
+                checkbox(
+                    &theme,
+                    "confirm-option",
+                    option,
+                    l,
+                    cx.listener(|this, value: &bool, _, cx| {
+                        this.option = *value;
+                        cx.notify()
+                    }),
+                )
             }))
             .children(error_line(&theme, &self.error))
             .child(footer(vec![
-                Button::new("cf-cancel", "Cancel").style(ButtonStyle::Ghost).on_click(cx.listener(|_, _, _, cx| cx.emit(DialogEvent::Dismissed))).into_any_element(),
+                Button::new("cf-cancel", "Cancel")
+                    .style(ButtonStyle::Ghost)
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(DialogEvent::Dismissed)))
+                    .into_any_element(),
                 Button::new("cf-go", self.confirm_label)
                     .style(ButtonStyle::Outlined)
                     .icon("trash-2")
@@ -1131,22 +1511,51 @@ pub struct NewWorkspaceDialog {
 impl EventEmitter<DialogEvent> for NewWorkspaceDialog {}
 
 /// Common images agents ask for; any image name works.
-const IMAGE_PRESETS: &[&str] = &["node:22", "python:3.13", "rust:1", "golang:1.25", DEFAULT_IMAGE];
+const IMAGE_PRESETS: &[&str] = &[
+    "node:22",
+    "python:3.13",
+    "rust:1",
+    "golang:1.25",
+    DEFAULT_IMAGE,
+];
 
 impl NewWorkspaceDialog {
-    pub fn new(engine: Arc<Engine>, machine: Option<String>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        engine: Arc<Engine>,
+        machine: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let name = cx.new(|cx| TextInput::new(cx, "api-tests (optional)"));
         let repo = cx.new(|cx| TextInput::new(cx, "acme/api or a git URL (optional)").mono());
         let git_ref = cx.new(|cx| TextInput::new(cx, "main").mono());
         let branch = cx.new(|cx| TextInput::new(cx, "new branch (optional)").mono());
         let image = cx.new(|cx| TextInput::new(cx, DEFAULT_IMAGE).mono());
-        let on_input = |_: &mut Self, _: &Entity<TextInput>, e: &InputEvent, _: &mut Window, cx: &mut Context<Self>| match e {
+        let on_input = |_: &mut Self,
+                        _: &Entity<TextInput>,
+                        e: &InputEvent,
+                        _: &mut Window,
+                        cx: &mut Context<Self>| match e {
             InputEvent::Submit => cx.emit(DialogEvent::Dismissed),
             InputEvent::Cancel => cx.emit(DialogEvent::Dismissed),
             InputEvent::Changed => cx.notify(),
         };
-        let subs = [&name, &repo, &git_ref, &branch, &image].into_iter().map(|i| cx.subscribe_in(i, window, on_input)).collect();
-        NewWorkspaceDialog { engine, machine, name, repo, git_ref, branch, docker: false, image, docker_socket: false, _subscriptions: subs }
+        let subs = [&name, &repo, &git_ref, &branch, &image]
+            .into_iter()
+            .map(|i| cx.subscribe_in(i, window, on_input))
+            .collect();
+        NewWorkspaceDialog {
+            engine,
+            machine,
+            name,
+            repo,
+            git_ref,
+            branch,
+            docker: false,
+            image,
+            docker_socket: false,
+            _subscriptions: subs,
+        }
     }
 
     pub fn first_focus(&self, cx: &App) -> FocusHandle {
@@ -1160,7 +1569,12 @@ impl NewWorkspaceDialog {
 
     /// "On the machine" vs "In a Docker container", with the image picker for the latter.
     fn environment_picker(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
-        let option = |id: &'static str, docker: bool, icon_name: &'static str, title: &'static str, detail: &'static str, cx: &mut Context<Self>| {
+        let option = |id: &'static str,
+                      docker: bool,
+                      icon_name: &'static str,
+                      title: &'static str,
+                      detail: &'static str,
+                      cx: &mut Context<Self>| {
             let selected = self.docker == docker;
             div()
                 .id(id)
@@ -1173,8 +1587,16 @@ impl NewWorkspaceDialog {
                 .rounded(px(8.))
                 .border_1()
                 .cursor_pointer()
-                .border_color(if selected { theme.accent } else { theme.border_variant })
-                .bg(if selected { theme.accent.opacity(0.10) } else { theme.element })
+                .border_color(if selected {
+                    theme.accent
+                } else {
+                    theme.border_variant
+                })
+                .bg(if selected {
+                    theme.accent.opacity(0.10)
+                } else {
+                    theme.element
+                })
                 .child(kit::color_tile(icon_name, 22.))
                 .child(
                     div()
@@ -1183,16 +1605,40 @@ impl NewWorkspaceDialog {
                         .flex_1()
                         .min_w(px(0.))
                         .gap(px(2.))
-                        .child(div().text_size(px(12.5)).font_weight(FontWeight::MEDIUM).child(title))
-                        .child(div().text_size(px(11.5)).text_color(theme.text_placeholder).child(detail)),
+                        .child(
+                            div()
+                                .text_size(px(12.5))
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(title),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(11.5))
+                                .text_color(theme.text_placeholder)
+                                .child(detail),
+                        ),
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.docker = docker;
                     cx.notify()
                 }))
         };
-        let host = option("env-host", false, "server", "On the machine", "Runs as your ssh user with its tools.", cx);
-        let docker = option("env-docker", true, "box", "In a Docker container", "A fresh, isolated container per workspace.", cx);
+        let host = option(
+            "env-host",
+            false,
+            "server",
+            "On the machine",
+            "Runs as your ssh user with its tools.",
+            cx,
+        );
+        let docker = option(
+            "env-docker",
+            true,
+            "box",
+            "In a Docker container",
+            "A fresh, isolated container per workspace.",
+            cx,
+        );
         let socket = self.docker_socket;
         div()
             .flex()
@@ -1201,38 +1647,54 @@ impl NewWorkspaceDialog {
             .child(div().flex().gap(px(8.)).child(host).child(docker))
             .when(self.docker, |d| {
                 d.child(self.image.clone())
-                    .child(div().flex().flex_wrap().gap(px(6.)).children(IMAGE_PRESETS.iter().enumerate().map(|(i, img)| {
-                        let value = img.to_string();
-                        div()
-                            .id(("img-preset", i))
-                            .h(px(22.))
-                            .px(px(8.))
-                            .flex()
-                            .items_center()
-                            .rounded(px(5.))
-                            .border_1()
-                            .border_color(theme.border_variant)
-                            .bg(theme.element)
-                            .cursor_pointer()
-                            .hover(|st| st.bg(theme.element_hover))
-                            .font_family(mono_font())
-                            .text_size(px(11.5))
-                            .text_color(theme.text_muted)
-                            .child(*img)
-                            .on_click(cx.listener(move |this, _, _, cx| this.image.update(cx, |i, cx| i.set_text(value.clone(), cx))))
-                    })))
-                    .child(checkbox(theme, "ws-docker-socket", socket, "Share the machine's Docker socket (docker-in-docker)", cx.listener(|this, value: &bool, _, cx| {
-                        this.docker_socket = *value;
-                        cx.notify()
-                    })))
+                    .child(div().flex().flex_wrap().gap(px(6.)).children(
+                        IMAGE_PRESETS.iter().enumerate().map(|(i, img)| {
+                            let value = img.to_string();
+                            div()
+                                .id(("img-preset", i))
+                                .h(px(22.))
+                                .px(px(8.))
+                                .flex()
+                                .items_center()
+                                .rounded(px(5.))
+                                .border_1()
+                                .border_color(theme.border_variant)
+                                .bg(theme.element)
+                                .cursor_pointer()
+                                .hover(|st| st.bg(theme.element_hover))
+                                .font_family(mono_font())
+                                .text_size(px(11.5))
+                                .text_color(theme.text_muted)
+                                .child(*img)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.image.update(cx, |i, cx| i.set_text(value.clone(), cx))
+                                }))
+                        }),
+                    ))
+                    .child(checkbox(
+                        theme,
+                        "ws-docker-socket",
+                        socket,
+                        "Share the machine's Docker socket (docker-in-docker)",
+                        cx.listener(|this, value: &bool, _, cx| {
+                            this.docker_socket = *value;
+                            cx.notify()
+                        }),
+                    ))
             })
             .into_any_element()
     }
 
     fn submit(&mut self, cx: &mut Context<Self>) {
-        let text = |e: &Entity<TextInput>, cx: &Context<Self>| Some(e.read(cx).text().trim().to_string()).filter(|t| !t.is_empty());
+        let text = |e: &Entity<TextInput>, cx: &Context<Self>| {
+            Some(e.read(cx).text().trim().to_string()).filter(|t| !t.is_empty())
+        };
         let iso = if self.docker {
-            WorkspaceIsolation { isolation: Some("docker".into()), image: text(&self.image, cx), docker_socket: self.docker_socket }
+            WorkspaceIsolation {
+                isolation: Some("docker".into()),
+                image: text(&self.image, cx),
+                docker_socket: self.docker_socket,
+            }
         } else {
             WorkspaceIsolation::default()
         };
@@ -1256,35 +1718,69 @@ impl Render for NewWorkspaceDialog {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let snapshot = self.engine.current();
-        let choices: Vec<(Option<String>, String, bool)> = std::iter::once((None, "Least busy".to_string(), true))
-            .chain(snapshot.machines.iter().filter(|m| m.workspaces_allowed).map(|m| (Some(m.id.clone()), m.name.clone(), m.status == "online")))
-            .collect();
-        let picker = div().flex().flex_wrap().gap(px(6.)).children(choices.into_iter().enumerate().map(|(i, (id, label, online))| {
-            let selected = self.machine == id;
+        let choices: Vec<(Option<String>, String, bool)> =
+            std::iter::once((None, "Least busy".to_string(), true))
+                .chain(
+                    snapshot
+                        .machines
+                        .iter()
+                        .filter(|m| m.workspaces_allowed)
+                        .map(|m| (Some(m.id.clone()), m.name.clone(), m.status == "online")),
+                )
+                .collect();
+        let picker =
             div()
-                .id(("ws-machine", i))
                 .flex()
-                .items_center()
+                .flex_wrap()
                 .gap(px(6.))
-                .h(px(26.))
-                .px(px(10.))
-                .rounded(px(6.))
-                .border_1()
-                .cursor_pointer()
-                .border_color(if selected { theme.accent } else { theme.border_variant })
-                .bg(if selected { theme.accent.opacity(0.12) } else { theme.element })
-                .text_size(px(12.5))
-                .child(if id.is_none() {
-                    kit::color_icon(&theme, "zap", 12., theme.text_placeholder).into_any_element()
-                } else {
-                    div().size(px(7.)).rounded_full().bg(if online { theme.success } else { theme.text_placeholder }).into_any_element()
-                })
-                .child(label)
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.machine = id.clone();
-                    cx.notify()
-                }))
-        }));
+                .children(
+                    choices
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, (id, label, online))| {
+                            let selected = self.machine == id;
+                            div()
+                                .id(("ws-machine", i))
+                                .flex()
+                                .items_center()
+                                .gap(px(6.))
+                                .h(px(26.))
+                                .px(px(10.))
+                                .rounded(px(6.))
+                                .border_1()
+                                .cursor_pointer()
+                                .border_color(if selected {
+                                    theme.accent
+                                } else {
+                                    theme.border_variant
+                                })
+                                .bg(if selected {
+                                    theme.accent.opacity(0.12)
+                                } else {
+                                    theme.element
+                                })
+                                .text_size(px(12.5))
+                                .child(if id.is_none() {
+                                    kit::color_icon(&theme, "zap", 12., theme.text_placeholder)
+                                        .into_any_element()
+                                } else {
+                                    div()
+                                        .size(px(7.))
+                                        .rounded_full()
+                                        .bg(if online {
+                                            theme.success
+                                        } else {
+                                            theme.text_placeholder
+                                        })
+                                        .into_any_element()
+                                })
+                                .child(label)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.machine = id.clone();
+                                    cx.notify()
+                                }))
+                        }),
+                );
         frame(
             &theme,
             "New workspace",
@@ -1382,25 +1878,47 @@ pub struct WorkspacePlan {
 impl EventEmitter<DialogEvent> for NewSessionDialog {}
 
 impl NewSessionDialog {
-    pub fn new(engine: Arc<Engine>, machine: Option<String>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        engine: Arc<Engine>,
+        machine: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let cwd = cx.new(|cx| TextInput::new(cx, "~ (home folder)").mono());
         let prompt = cx.new(|cx| TextInput::new(cx, "What should it work on? (optional)"));
         let branch = cx.new(|cx| TextInput::new(cx, "new branch (optional)").mono());
-        let on_input = |this: &mut Self, _: &Entity<TextInput>, e: &InputEvent, _: &mut Window, cx: &mut Context<Self>| match e {
+        let on_input = |this: &mut Self,
+                        _: &Entity<TextInput>,
+                        e: &InputEvent,
+                        _: &mut Window,
+                        cx: &mut Context<Self>| match e {
             InputEvent::Submit => this.submit(cx),
             InputEvent::Cancel => cx.emit(DialogEvent::Dismissed),
             InputEvent::Changed => cx.notify(),
         };
         // Typing a folder lists what's in it.
-        let on_folder = move |this: &mut Self, input: &Entity<TextInput>, e: &InputEvent, window: &mut Window, cx: &mut Context<Self>| {
+        let on_folder = move |this: &mut Self,
+                              input: &Entity<TextInput>,
+                              e: &InputEvent,
+                              window: &mut Window,
+                              cx: &mut Context<Self>| {
             if matches!(e, InputEvent::Changed) {
                 this.list_folders(cx);
             }
             on_input(this, input, e, window, cx)
         };
-        let subs = vec![cx.subscribe_in(&cwd, window, on_folder), cx.subscribe_in(&prompt, window, on_input), cx.subscribe_in(&branch, window, on_input)];
+        let subs = vec![
+            cx.subscribe_in(&cwd, window, on_folder),
+            cx.subscribe_in(&prompt, window, on_input),
+            cx.subscribe_in(&branch, window, on_input),
+        ];
         let snapshot = engine.current();
-        let machine = machine.or_else(|| session_machines(&snapshot).into_iter().find(|m| m.status == "online").map(|m| m.id.clone()));
+        let machine = machine.or_else(|| {
+            session_machines(&snapshot)
+                .into_iter()
+                .find(|m| m.status == "online")
+                .map(|m| m.id.clone())
+        });
         let mut dialog = NewSessionDialog {
             engine,
             machine,
@@ -1425,8 +1943,12 @@ impl NewSessionDialog {
     /// The chosen machine's git checkouts, when they haven't been looked at:
     /// a worktree of one is offered once they're known.
     fn load_checkouts(&self, s: &Snapshot) {
-        let Some(machine) = self.machine.clone() else { return };
-        if s.checkouts.iter().any(|c| c.machine_id == machine) || s.machines.iter().any(|m| m.id == machine && m.is_down()) {
+        let Some(machine) = self.machine.clone() else {
+            return;
+        };
+        if s.checkouts.iter().any(|c| c.machine_id == machine)
+            || s.machines.iter().any(|m| m.id == machine && m.is_down())
+        {
             return;
         }
         let engine = self.engine.clone();
@@ -1438,7 +1960,9 @@ impl NewSessionDialog {
     /// Lists the folder the Folder field points at, on the chosen machine,
     /// unless that's what's listed already.
     fn list_folders(&mut self, cx: &mut Context<Self>) {
-        let Some(machine) = self.machine.clone() else { return };
+        let Some(machine) = self.machine.clone() else {
+            return;
+        };
         if self.without_agent(&self.engine.current()) {
             self.folders_asked = None;
             return;
@@ -1490,7 +2014,9 @@ impl NewSessionDialog {
             self.cwd.update(cx, |i, cx| i.set_text(cwd, cx));
         }
         if prefill.message.is_some() {
-            self.prompt.update(cx, |i, cx| i.set_placeholder("Anything to add? (optional)", cx));
+            self.prompt.update(cx, |i, cx| {
+                i.set_placeholder("Anything to add? (optional)", cx)
+            });
         }
         if prefill.command.is_some() {
             self.agent = "shell";
@@ -1498,10 +2024,22 @@ impl NewSessionDialog {
         }
         if let Some(plan) = &prefill.workspace {
             // A checkout of it there: a worktree of that (see `place`); else a clone, when that's preferred.
-            self.place = if plan.preferred { Place::Clone } else { Place::Worktree };
+            self.place = if plan.preferred {
+                Place::Clone
+            } else {
+                Place::Worktree
+            };
             let (text, hint) = match &plan.branch {
                 Some(b) => (b.clone(), "new branch (optional)".to_string()),
-                None => (String::new(), format!("stay on {}", plan.git_ref.clone().unwrap_or_else(|| "the default branch".into()))),
+                None => (
+                    String::new(),
+                    format!(
+                        "stay on {}",
+                        plan.git_ref
+                            .clone()
+                            .unwrap_or_else(|| "the default branch".into())
+                    ),
+                ),
             };
             self.branch.update(cx, |i, cx| {
                 i.set_text(text, cx);
@@ -1518,13 +2056,25 @@ impl NewSessionDialog {
         if self.new_vm.is_some() {
             return "claude";
         }
-        let installed = self.machine.as_ref().and_then(|id| s.machines.iter().find(|m| &m.id == id)).map(|m| m.agents.clone()).unwrap_or_default();
-        AGENTS.iter().find(|a| installed.iter().any(|i| i == a.id)).map(|a| a.id).unwrap_or("shell")
+        let installed = self
+            .machine
+            .as_ref()
+            .and_then(|id| s.machines.iter().find(|m| &m.id == id))
+            .map(|m| m.agents.clone())
+            .unwrap_or_default();
+        AGENTS
+            .iter()
+            .find(|a| installed.iter().any(|i| i == a.id))
+            .map(|a| a.id)
+            .unwrap_or("shell")
     }
 
     /// The chosen machine can't keep sessions in Muxin's agent (Windows, for now).
     fn without_agent(&self, s: &Snapshot) -> bool {
-        self.machine.as_ref().and_then(|id| s.machines.iter().find(|m| &m.id == id)).is_some_and(super::sessions::runs_in_app)
+        self.machine
+            .as_ref()
+            .and_then(|id| s.machines.iter().find(|m| &m.id == id))
+            .is_some_and(super::sessions::runs_in_app)
     }
 
     fn submit(&mut self, cx: &mut Context<Self>) {
@@ -1539,28 +2089,53 @@ impl NewSessionDialog {
                 cpus: Some(4),
                 memory_gb: Some(8),
                 disk_gb: None,
-                install: if self.agent == "shell" { Vec::new() } else { vec![self.agent.to_string()] },
+                install: if self.agent == "shell" {
+                    Vec::new()
+                } else {
+                    vec![self.agent.to_string()]
+                },
             })
         });
         if self.new_vm.is_some() && vm.is_none() {
             return;
         }
-        let Some(machine_id) = vm.as_ref().map(|v| crate::util::slug(&v.name)).or_else(|| self.machine.clone()) else { return };
+        let Some(machine_id) = vm
+            .as_ref()
+            .map(|v| crate::util::slug(&v.name))
+            .or_else(|| self.machine.clone())
+        else {
+            return;
+        };
         let direct = vm.is_none() && self.without_agent(&self.engine.current());
-        let text = |e: &Entity<TextInput>, cx: &Context<Self>| Some(e.read(cx).text().trim().to_string()).filter(|t| !t.is_empty());
+        let text = |e: &Entity<TextInput>, cx: &Context<Self>| {
+            Some(e.read(cx).text().trim().to_string()).filter(|t| !t.is_empty())
+        };
         // The prepared message, then whatever the user added.
         let message = match (self.prefill.message.clone(), text(&self.prompt, cx)) {
             (Some(m), Some(extra)) => Some(format!("{m}\n\n{extra}")),
             (m, extra) => m.or(extra),
         };
-        let title = self.prefill.title.clone().map(|t| match (&self.prefill.command, crate::fleet::sessions::agent(self.agent)) {
-            (None, Some(kind)) if kind.id != "shell" => format!("{} · {t}", kind.name),
-            _ => t,
+        let title = self.prefill.title.clone().map(|t| {
+            match (
+                &self.prefill.command,
+                crate::fleet::sessions::agent(self.agent),
+            ) {
+                (None, Some(kind)) if kind.id != "shell" => format!("{} · {t}", kind.name),
+                _ => t,
+            }
         });
         let session = StartSession {
             machine_id: machine_id.clone(),
             agent: self.agent.to_string(),
-            cwd: text(&self.cwd, cx).map(|t| if t.len() > 1 { t.trim_end_matches('/').to_string() } else { t }).unwrap_or_else(|| "~".into()),
+            cwd: text(&self.cwd, cx)
+                .map(|t| {
+                    if t.len() > 1 {
+                        t.trim_end_matches('/').to_string()
+                    } else {
+                        t
+                    }
+                })
+                .unwrap_or_else(|| "~".into()),
             title,
             prompt: if self.agent == "shell" { None } else { message },
             cols: 0,
@@ -1592,16 +2167,27 @@ impl NewSessionDialog {
                 }
             }
             (Place::Worktree, plan) => {
-                let Some(source) = self.worktree_source(&snapshot, cx) else { return };
+                let Some(source) = self.worktree_source(&snapshot, cx) else {
+                    return;
+                };
                 if !self.workspaces_allowed(&snapshot) {
                     return;
                 }
                 let branch = text(&self.branch, cx);
-                let folder = source.path.trim_end_matches('/').rsplit('/').next().unwrap_or("worktree").to_string();
-                let name = plan.as_ref().map(|p| p.name.clone()).unwrap_or_else(|| match &branch {
-                    Some(b) => format!("{folder} · {b}"),
-                    None => folder,
-                });
+                let folder = source
+                    .path
+                    .trim_end_matches('/')
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or("worktree")
+                    .to_string();
+                let name = plan
+                    .as_ref()
+                    .map(|p| p.name.clone())
+                    .unwrap_or_else(|| match &branch {
+                        Some(b) => format!("{folder} · {b}"),
+                        None => folder,
+                    });
                 let workspace = CreateWorkspace {
                     machine: Some(machine_id),
                     platform: None,
@@ -1629,12 +2215,21 @@ impl NewSessionDialog {
         let here = s.checkouts.iter().filter(|c| &c.machine_id == machine);
         match &self.prefill.workspace {
             Some(plan) => here
-                .filter(|c| c.repo.as_deref().is_some_and(|r| r.eq_ignore_ascii_case(&plan.repo)) && !c.path.contains("/muxen/workspaces/"))
+                .filter(|c| {
+                    c.repo
+                        .as_deref()
+                        .is_some_and(|r| r.eq_ignore_ascii_case(&plan.repo))
+                        && !c.path.contains("/muxen/workspaces/")
+                })
                 .min_by_key(|c| c.dirty)
                 .cloned(),
             None => {
                 let typed = self.cwd.read(cx).text().trim().to_string();
-                here.into_iter().find(|c| !typed.is_empty() && crate::fleet::workspaces::same_folder(&c.path, &typed)).cloned()
+                here.into_iter()
+                    .find(|c| {
+                        !typed.is_empty() && crate::fleet::workspaces::same_folder(&c.path, &typed)
+                    })
+                    .cloned()
             }
         }
     }
@@ -1644,13 +2239,24 @@ impl NewSessionDialog {
     fn place(&self, s: &Snapshot, cx: &App) -> Place {
         match self.place {
             Place::Worktree if self.worktree_source(s, cx).is_some() => Place::Worktree,
-            Place::Worktree | Place::Clone if self.prefill.workspace.as_ref().is_some_and(|p| p.preferred || self.place == Place::Clone) => Place::Clone,
+            Place::Worktree | Place::Clone
+                if self
+                    .prefill
+                    .workspace
+                    .as_ref()
+                    .is_some_and(|p| p.preferred || self.place == Place::Clone) =>
+            {
+                Place::Clone
+            }
             _ => Place::Folder,
         }
     }
 
     fn workspaces_allowed(&self, s: &Snapshot) -> bool {
-        self.machine.as_ref().and_then(|id| s.machines.iter().find(|m| &m.id == id)).is_some_and(|m| m.workspaces_allowed)
+        self.machine
+            .as_ref()
+            .and_then(|id| s.machines.iter().find(|m| &m.id == id))
+            .is_some_and(|m| m.workspaces_allowed)
     }
 }
 
@@ -1672,7 +2278,11 @@ fn folder_query(text: &str) -> (String, String) {
 
 /// `name` inside `dir`, ending in a slash so its folders list next.
 fn folder_path(dir: &str, name: &str) -> String {
-    if dir == "/" { format!("/{name}/") } else { format!("{}/{name}/", dir.trim_end_matches('/')) }
+    if dir == "/" {
+        format!("/{name}/")
+    } else {
+        format!("{}/{name}/", dir.trim_end_matches('/'))
+    }
 }
 
 impl NewSessionDialog {
@@ -1683,11 +2293,26 @@ impl NewSessionDialog {
         // Still showing the last folder while the next one loads: not clickable.
         let stale = *shown != asked;
         let (dir, typed) = folder_query(self.cwd.read(cx).text());
-        let quiet = |text: String| div().px(px(2.)).text_size(px(11.5)).text_color(theme.text_placeholder).child(text).into_any_element();
+        let quiet = |text: String| {
+            div()
+                .px(px(2.))
+                .text_size(px(11.5))
+                .text_color(theme.text_placeholder)
+                .child(text)
+                .into_any_element()
+        };
         let listing = match load {
             Load::Ready(l) => l,
             Load::Loading => {
-                return Some(div().flex().items_center().gap(px(6.)).child(kit::spinner("ns-folders", 11., theme.text_placeholder)).child(quiet("Looking…".into())).into_any_element());
+                return Some(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .child(kit::spinner("ns-folders", 11., theme.text_placeholder))
+                        .child(quiet("Looking…".into()))
+                        .into_any_element(),
+                );
             }
             Load::Failed(e) => return Some(quiet(e.clone())),
         };
@@ -1723,8 +2348,15 @@ impl NewSessionDialog {
                     .font_family(mono_font())
                     .text_size(px(12.))
                     .when(stale, |d| d.opacity(0.5))
-                    .when(!stale, |d| d.cursor_pointer().hover(|st| st.bg(theme.element_hover)))
-                    .child(kit::color_icon(theme, "folder", 12., theme.text_placeholder))
+                    .when(!stale, |d| {
+                        d.cursor_pointer().hover(|st| st.bg(theme.element_hover))
+                    })
+                    .child(kit::color_icon(
+                        theme,
+                        "folder",
+                        12.,
+                        theme.text_placeholder,
+                    ))
                     .child(name.to_string())
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if !stale {
@@ -1747,15 +2379,37 @@ impl NewSessionDialog {
             .items_center()
             .gap(px(6.))
             .h(px(22.))
-            .child(div().flex_1().min_w(px(0.)).truncate().text_size(px(11.5)).text_color(theme.text_placeholder).child(format!("Folders in {here}")))
-            .when(stale, |d| d.child(kit::spinner("ns-folders", 11., theme.text_placeholder)))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .truncate()
+                    .text_size(px(11.5))
+                    .text_color(theme.text_placeholder)
+                    .child(format!("Folders in {here}")),
+            )
+            .when(stale, |d| {
+                d.child(kit::spinner("ns-folders", 11., theme.text_placeholder))
+            })
             .children(parent.map(|up| {
-                Button::icon_only("ns-up", "arrow-up").tooltip("Up a folder").disabled(stale).on_click(cx.listener(move |this, _, _, cx| this.go_to_folder(up.clone(), cx)))
+                Button::icon_only("ns-up", "arrow-up")
+                    .tooltip("Up a folder")
+                    .disabled(stale)
+                    .on_click(cx.listener(move |this, _, _, cx| this.go_to_folder(up.clone(), cx)))
             }));
         let body = if chips.is_empty() {
-            quiet(if needle.is_empty() { "No folders here.".into() } else { format!("No folder matches \"{typed}\".") })
+            quiet(if needle.is_empty() {
+                "No folders here.".into()
+            } else {
+                format!("No folder matches \"{typed}\".")
+            })
         } else {
-            div().flex().flex_wrap().gap(px(6.)).children(chips).into_any_element()
+            div()
+                .flex()
+                .flex_wrap()
+                .gap(px(6.))
+                .children(chips)
+                .into_any_element()
         };
         Some(
             div()
@@ -1768,16 +2422,29 @@ impl NewSessionDialog {
                 .border_color(theme.border_variant)
                 .child(header)
                 .child(body)
-                .when(more > 0, |d| d.child(quiet(format!("{more} more: type to narrow them down."))))
+                .when(more > 0, |d| {
+                    d.child(quiet(format!("{more} more: type to narrow them down.")))
+                })
                 .into_any_element(),
         )
     }
 
     /// Where it works: a new worktree of a checkout there, a new workspace
     /// with a fresh clone, or a folder that's already there.
-    fn where_choice(&self, theme: &Theme, place: Place, source: Option<&crate::fleet::model::Checkout>, cx: &mut Context<Self>) -> AnyElement {
+    fn where_choice(
+        &self,
+        theme: &Theme,
+        place: Place,
+        source: Option<&crate::fleet::model::Checkout>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let plan = self.prefill.workspace.as_ref();
-        let option = |id: &'static str, glyph: &'static str, title: &'static str, note: SharedString, value: Place, cx: &mut Context<Self>| {
+        let option = |id: &'static str,
+                      glyph: &'static str,
+                      title: &'static str,
+                      note: SharedString,
+                      value: Place,
+                      cx: &mut Context<Self>| {
             let selected = place == value;
             div()
                 .id(id)
@@ -1790,16 +2457,35 @@ impl NewSessionDialog {
                 .rounded(px(8.))
                 .border_1()
                 .cursor_pointer()
-                .border_color(if selected { theme.accent } else { theme.border_variant })
-                .bg(if selected { theme.accent.opacity(0.10) } else { theme.element })
+                .border_color(if selected {
+                    theme.accent
+                } else {
+                    theme.border_variant
+                })
+                .bg(if selected {
+                    theme.accent.opacity(0.10)
+                } else {
+                    theme.element
+                })
                 .child(kit::color_tile(glyph, 26.))
                 .child(
                     div()
                         .flex()
                         .flex_col()
                         .min_w(px(0.))
-                        .child(div().text_size(px(12.5)).font_weight(FontWeight::MEDIUM).child(title))
-                        .child(div().text_size(px(11.)).text_color(theme.text_placeholder).truncate().child(note)),
+                        .child(
+                            div()
+                                .text_size(px(12.5))
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(title),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(11.))
+                                .text_color(theme.text_placeholder)
+                                .truncate()
+                                .child(note),
+                        ),
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.place = value;
@@ -1809,19 +2495,57 @@ impl NewSessionDialog {
         };
         let mut options = Vec::new();
         if source.is_some() {
-            options.push(option("ns-where-wt", "git-branch", "New worktree", "Its own branch".into(), Place::Worktree, cx));
+            options.push(option(
+                "ns-where-wt",
+                "git-branch",
+                "New worktree",
+                "Its own branch".into(),
+                Place::Worktree,
+                cx,
+            ));
         }
         if plan.is_some() {
-            options.push(option("ns-where-ws", "layers", "Fresh clone", "A new copy".into(), Place::Clone, cx));
+            options.push(option(
+                "ns-where-ws",
+                "layers",
+                "Fresh clone",
+                "A new copy".into(),
+                Place::Clone,
+                cx,
+            ));
         }
-        let folder_note = if plan.is_some() { "One that's there" } else { "Right here" };
-        options.push(option("ns-where-folder", "folder-open", "A folder", folder_note.into(), Place::Folder, cx));
-        div().flex().gap(px(8.)).children(options).into_any_element()
+        let folder_note = if plan.is_some() {
+            "One that's there"
+        } else {
+            "Right here"
+        };
+        options.push(option(
+            "ns-where-folder",
+            "folder-open",
+            "A folder",
+            folder_note.into(),
+            Place::Folder,
+            cx,
+        ));
+        div()
+            .flex()
+            .gap(px(8.))
+            .children(options)
+            .into_any_element()
     }
 
     /// The branch to work on, and whether the machine takes workspaces.
-    fn workspace_fields(&self, theme: &Theme, place: Place, source: Option<&crate::fleet::model::Checkout>, machine: Option<&crate::fleet::model::Machine>, cx: &mut Context<Self>) -> AnyElement {
-        let name = machine.map(|m| m.name.clone()).unwrap_or_else(|| "the machine".into());
+    fn workspace_fields(
+        &self,
+        theme: &Theme,
+        place: Place,
+        source: Option<&crate::fleet::model::Checkout>,
+        machine: Option<&crate::fleet::model::Machine>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let name = machine
+            .map(|m| m.name.clone())
+            .unwrap_or_else(|| "the machine".into());
         let plan = self.prefill.workspace.as_ref();
         let what = match (place, source, plan) {
             (Place::Worktree, Some(c), plan) => {
@@ -1830,10 +2554,16 @@ impl NewSessionDialog {
                     Some(r) => r.to_string(),
                     None => "the default branch".to_string(),
                 };
-                format!("Makes a git worktree of {} on {name}: a folder of its own, on its own branch from {from}. The checkout stays as it is, so other agents can work there too.", c.path)
+                format!(
+                    "Makes a git worktree of {} on {name}: a folder of its own, on its own branch from {from}. The checkout stays as it is, so other agents can work there too.",
+                    c.path
+                )
             }
             (_, _, Some(plan)) => match &plan.git_ref {
-                Some(r) if r.starts_with("pull/") => format!("Clones {} on {name} and checks out the pull request.", plan.repo),
+                Some(r) if r.starts_with("pull/") => format!(
+                    "Clones {} on {name} and checks out the pull request.",
+                    plan.repo
+                ),
                 Some(r) => format!("Clones {} on {name} at {r}.", plan.repo),
                 None => format!("Clones {} on {name}.", plan.repo),
             },
@@ -1850,20 +2580,34 @@ impl NewSessionDialog {
                 .bg(theme.warning.opacity(0.10))
                 .text_size(px(12.5))
                 .child(icon("info", 14., theme.warning))
-                .child(div().flex_1().min_w(px(0.)).child(format!("Workspaces are off on {}.", m.name)))
-                .child(Button::new("ns-allow-ws", "Turn them on").on_click(cx.listener(move |this, _, _, cx| {
-                    if let Err(e) = this.engine.set_workspaces_allowed(&id, true) {
-                        tracing::warn!("turning on workspaces: {e}");
-                    }
-                    cx.notify()
-                })))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .child(format!("Workspaces are off on {}.", m.name)),
+                )
+                .child(
+                    Button::new("ns-allow-ws", "Turn them on").on_click(cx.listener(
+                        move |this, _, _, cx| {
+                            if let Err(e) = this.engine.set_workspaces_allowed(&id, true) {
+                                tracing::warn!("turning on workspaces: {e}");
+                            }
+                            cx.notify()
+                        },
+                    )),
+                )
         });
         div()
             .flex()
             .flex_col()
             .gap(px(8.))
             .child(field(theme, "Branch", self.branch.clone(), None))
-            .child(div().text_size(px(11.5)).text_color(theme.text_placeholder).child(what))
+            .child(
+                div()
+                    .text_size(px(11.5))
+                    .text_color(theme.text_placeholder)
+                    .child(what),
+            )
             .children(off)
             .into_any_element()
     }
@@ -1876,7 +2620,10 @@ pub(super) const MODAL_CHROME: f32 = 300.;
 fn vm_name(s: &Snapshot, system: &str) -> String {
     let base = system.split('-').next().unwrap_or("vm");
     let taken: Vec<String> = s.machines.iter().map(|m| m.name.to_lowercase()).collect();
-    (1..).map(|n| format!("{base}-{n}")).find(|n| !taken.contains(n)).unwrap_or_else(|| base.to_string())
+    (1..)
+        .map(|n| format!("{base}-{n}"))
+        .find(|n| !taken.contains(n))
+        .unwrap_or_else(|| base.to_string())
 }
 
 /// Machines that can run sessions: any with a host (or this computer).
@@ -1892,18 +2639,38 @@ impl Render for NewSessionDialog {
             // What's installed often arrives after the dialog opens.
             self.agent = self.default_agent(&snapshot);
         }
-        let machine = self.machine.as_ref().and_then(|id| snapshot.machines.iter().find(|m| &m.id == id)).cloned();
-        let checked = machine.as_ref().is_some_and(|m| m.agent_version.is_some() || m.sessions_error.is_some());
-        let installed: Vec<String> = machine.as_ref().map(|m| m.agents.clone()).unwrap_or_default();
+        let machine = self
+            .machine
+            .as_ref()
+            .and_then(|id| snapshot.machines.iter().find(|m| &m.id == id))
+            .cloned();
+        let checked = machine
+            .as_ref()
+            .is_some_and(|m| m.agent_version.is_some() || m.sessions_error.is_some());
+        let installed: Vec<String> = machine
+            .as_ref()
+            .map(|m| m.agents.clone())
+            .unwrap_or_default();
 
         // Machines of their own first; the VMs and containers inside one
         // under it ("In Beelink"); then a new VM, made for this.
         let all = session_machines(&snapshot);
-        let host_of = |m: &crate::fleet::model::Machine| m.parent.as_ref().filter(|p| p.inside() && all.iter().any(|h| h.id == p.machine_id)).map(|p| p.machine_id.clone());
+        let host_of = |m: &crate::fleet::model::Machine| {
+            m.parent
+                .as_ref()
+                .filter(|p| p.inside() && all.iter().any(|h| h.id == p.machine_id))
+                .map(|p| p.machine_id.clone())
+        };
         let machine_chip = |i: usize, m: &crate::fleet::model::Machine, cx: &mut Context<Self>| {
             let selected = self.new_vm.is_none() && self.machine.as_deref() == Some(m.id.as_str());
             let id = m.id.clone();
-            let kind = m.parent.as_ref().filter(|p| p.inside()).map(|p| if p.relation == "vm" { "VM" } else { "Container" });
+            let kind = m.parent.as_ref().filter(|p| p.inside()).map(|p| {
+                if p.relation == "vm" {
+                    "VM"
+                } else {
+                    "Container"
+                }
+            });
             div()
                 .id(("ns-machine", i))
                 .flex()
@@ -1914,12 +2681,30 @@ impl Render for NewSessionDialog {
                 .rounded(px(6.))
                 .border_1()
                 .cursor_pointer()
-                .border_color(if selected { theme.accent } else { theme.border_variant })
-                .bg(if selected { theme.accent.opacity(0.12) } else { theme.element })
+                .border_color(if selected {
+                    theme.accent
+                } else {
+                    theme.border_variant
+                })
+                .bg(if selected {
+                    theme.accent.opacity(0.12)
+                } else {
+                    theme.element
+                })
                 .text_size(px(12.5))
-                .child(div().size(px(7.)).rounded_full().bg(theme.machine_status(m)))
+                .child(
+                    div()
+                        .size(px(7.))
+                        .rounded_full()
+                        .bg(theme.machine_status(m)),
+                )
                 .child(m.name.clone())
-                .children(kind.map(|k| div().text_size(px(11.)).text_color(theme.text_placeholder).child(k)))
+                .children(kind.map(|k| {
+                    div()
+                        .text_size(px(11.))
+                        .text_color(theme.text_placeholder)
+                        .child(k)
+                }))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.machine = Some(id.clone());
                     this.new_vm = None;
@@ -1943,10 +2728,19 @@ impl Render for NewSessionDialog {
             i += 1;
         }
         // Linux VMs need a machine with Docker.
-        let vm_hosts: Vec<crate::ops::vm::VmHost> = self.engine.vm_options().hosts.into_iter().filter(|h| h.systems.iter().any(|s| s.starts_with("ubuntu"))).collect();
+        let vm_hosts: Vec<crate::ops::vm::VmHost> = self
+            .engine
+            .vm_options()
+            .hosts
+            .into_iter()
+            .filter(|h| h.systems.iter().any(|s| s.starts_with("ubuntu")))
+            .collect();
         if !vm_hosts.is_empty() {
             let on = self.new_vm.is_some();
-            let best = vm_hosts.iter().max_by_key(|h| h.memory_free.unwrap_or(0)).map(|h| h.machine_id.clone());
+            let best = vm_hosts
+                .iter()
+                .max_by_key(|h| h.memory_free.unwrap_or(0))
+                .map(|h| h.machine_id.clone());
             own.push(
                 div()
                     .id("ns-new-vm")
@@ -1960,10 +2754,18 @@ impl Render for NewSessionDialog {
                     .border_dashed()
                     .cursor_pointer()
                     .border_color(if on { theme.accent } else { theme.border })
-                    .bg(if on { theme.accent.opacity(0.12) } else { theme.element })
+                    .bg(if on {
+                        theme.accent.opacity(0.12)
+                    } else {
+                        theme.element
+                    })
                     .text_size(px(12.5))
                     .text_color(if on { theme.text } else { theme.text_muted })
-                    .child(icon("box", 12., if on { theme.text } else { theme.text_muted }))
+                    .child(icon(
+                        "box",
+                        12.,
+                        if on { theme.text } else { theme.text_muted },
+                    ))
                     .child("New VM")
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.new_vm = Some(("ubuntu-24.04".into(), best.clone()));
@@ -1975,7 +2777,10 @@ impl Render for NewSessionDialog {
         }
         let mut groups: Vec<AnyElement> = Vec::new();
         for h in all.iter().filter(|m| host_of(m).is_none()) {
-            let guests: Vec<&&crate::fleet::model::Machine> = all.iter().filter(|g| host_of(g).as_deref() == Some(h.id.as_str())).collect();
+            let guests: Vec<&&crate::fleet::model::Machine> = all
+                .iter()
+                .filter(|g| host_of(g).as_deref() == Some(h.id.as_str()))
+                .collect();
             if guests.is_empty() {
                 continue;
             }
@@ -1989,7 +2794,17 @@ impl Render for NewSessionDialog {
                     .flex()
                     .items_center()
                     .gap(px(8.))
-                    .child(div().flex_none().flex().items_center().gap(px(4.)).text_size(px(11.5)).text_color(theme.text_placeholder).child(icon("corner-down-right", 11., theme.text_placeholder)).child(format!("In {}", h.name)))
+                    .child(
+                        div()
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .gap(px(4.))
+                            .text_size(px(11.5))
+                            .text_color(theme.text_placeholder)
+                            .child(icon("corner-down-right", 11., theme.text_placeholder))
+                            .child(format!("In {}", h.name)),
+                    )
                     .child(div().flex().flex_wrap().gap(px(6.)).children(chips))
                     .into_any_element(),
             );
@@ -2070,51 +2885,74 @@ impl Render for NewSessionDialog {
             .children(vm_form);
 
         // Agents, three to a row.
-        let card = |i: usize, kind: &'static crate::fleet::sessions::AgentKind, cx: &mut Context<Self>| {
-            let selected = self.agent == kind.id;
-            let found = kind.id == "shell" || installed.iter().any(|a| a == kind.id);
-            let (icon_name, (from, to)) = super::kit::agent_look(kind.id);
-            let new_vm = self.new_vm.is_some();
-            let found = found || new_vm;
-            let note = match (kind.id, found, checked) {
-                ("shell", _, _) => "Your login shell",
-                (_, _, _) if new_vm => "Installed with the VM",
-                (_, true, _) => "Installed",
-                (_, false, true) => "Not installed",
-                (_, false, false) => "Checking…",
+        let card =
+            |i: usize, kind: &'static crate::fleet::sessions::AgentKind, cx: &mut Context<Self>| {
+                let selected = self.agent == kind.id;
+                let found = kind.id == "shell" || installed.iter().any(|a| a == kind.id);
+                let (icon_name, (from, to)) = super::kit::agent_look(kind.id);
+                let new_vm = self.new_vm.is_some();
+                let found = found || new_vm;
+                let note = match (kind.id, found, checked) {
+                    ("shell", _, _) => "Your login shell",
+                    (_, _, _) if new_vm => "Installed with the VM",
+                    (_, true, _) => "Installed",
+                    (_, false, true) => "Not installed",
+                    (_, false, false) => "Checking…",
+                };
+                div()
+                    .id(("ns-agent", i))
+                    .flex_1()
+                    .min_w(px(0.))
+                    .flex()
+                    .items_center()
+                    .gap(px(10.))
+                    .p(px(10.))
+                    .rounded(px(8.))
+                    .border_1()
+                    .cursor_pointer()
+                    .border_color(if selected {
+                        theme.accent
+                    } else {
+                        theme.border_variant
+                    })
+                    .bg(if selected {
+                        theme.accent.opacity(0.10)
+                    } else {
+                        theme.element
+                    })
+                    .when(!found && checked, |d| d.opacity(0.55))
+                    .child(super::kit::tile(icon_name, from, to, 28.))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .min_w(px(0.))
+                            .child(
+                                div()
+                                    .text_size(px(12.5))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(kind.name),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(theme.text_placeholder)
+                                    .child(note),
+                            ),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.agent = kind.id;
+                        this.agent_picked = true;
+                        cx.notify()
+                    }))
             };
-            div()
-                .id(("ns-agent", i))
-                .flex_1()
-                .min_w(px(0.))
-                .flex()
-                .items_center()
-                .gap(px(10.))
-                .p(px(10.))
-                .rounded(px(8.))
-                .border_1()
-                .cursor_pointer()
-                .border_color(if selected { theme.accent } else { theme.border_variant })
-                .bg(if selected { theme.accent.opacity(0.10) } else { theme.element })
-                .when(!found && checked, |d| d.opacity(0.55))
-                .child(super::kit::tile(icon_name, from, to, 28.))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .min_w(px(0.))
-                        .child(div().text_size(px(12.5)).font_weight(FontWeight::MEDIUM).child(kind.name))
-                        .child(div().text_size(px(11.)).text_color(theme.text_placeholder).child(note)),
-                )
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.agent = kind.id;
-                    this.agent_picked = true;
-                    cx.notify()
-                }))
-        };
         let mut rows = Vec::new();
         for (r, chunk) in AGENTS.chunks(3).enumerate() {
-            let cards: Vec<AnyElement> = chunk.iter().enumerate().map(|(c, k)| card(r * 3 + c, k, cx).into_any_element()).collect();
+            let cards: Vec<AnyElement> = chunk
+                .iter()
+                .enumerate()
+                .map(|(c, k)| card(r * 3 + c, k, cx).into_any_element())
+                .collect();
             rows.push(div().flex().gap(px(8.)).children(cards).into_any_element());
         }
 
@@ -2125,10 +2963,27 @@ impl Render for NewSessionDialog {
         for path in snapshot
             .checkouts
             .iter()
-            .filter(|c| on_machine(&c.machine_id) && self.prefill.repo.is_some() && c.repo.as_deref().map(str::to_lowercase) == self.prefill.repo.as_deref().map(str::to_lowercase))
+            .filter(|c| {
+                on_machine(&c.machine_id)
+                    && self.prefill.repo.is_some()
+                    && c.repo.as_deref().map(str::to_lowercase)
+                        == self.prefill.repo.as_deref().map(str::to_lowercase)
+            })
             .map(|c| c.path.clone())
-            .chain(snapshot.sessions.iter().filter(|x| on_machine(&x.machine_id) && !matches!(x.cwd.as_str(), "" | "~")).map(|x| x.cwd.clone()))
-            .chain(snapshot.workspaces.iter().filter(|w| on_machine(&w.machine_id)).map(|w| w.path.clone()))
+            .chain(
+                snapshot
+                    .sessions
+                    .iter()
+                    .filter(|x| on_machine(&x.machine_id) && !matches!(x.cwd.as_str(), "" | "~"))
+                    .map(|x| x.cwd.clone()),
+            )
+            .chain(
+                snapshot
+                    .workspaces
+                    .iter()
+                    .filter(|w| on_machine(&w.machine_id))
+                    .map(|w| w.path.clone()),
+            )
         {
             if folders.len() < 5 && !folders.contains(&path) {
                 folders.push(path);
@@ -2139,29 +2994,41 @@ impl Render for NewSessionDialog {
             Some(((m, _), Load::Ready(l))) if self.machine.as_ref() == Some(m) => l.home.clone(),
             _ => String::new(),
         };
-        let folder_chips = div().flex().flex_wrap().gap(px(6.)).children(folders.into_iter().enumerate().map(|(i, path)| {
-            let path = super::files::tilde(&path, &home);
-            let value = path.clone();
+        let folder_chips =
             div()
-                .id(("ns-folder", i))
-                .h(px(22.))
-                .px(px(8.))
                 .flex()
-                .items_center()
-                .gap(px(5.))
-                .child(kit::color_icon(&theme, "clock", 11., theme.text_placeholder))
-                .rounded(px(5.))
-                .border_1()
-                .border_color(theme.border_variant)
-                .bg(theme.element)
-                .cursor_pointer()
-                .hover(|st| st.bg(theme.element_hover))
-                .font_family(mono_font())
-                .text_size(px(11.5))
-                .text_color(theme.text_muted)
-                .child(path)
-                .on_click(cx.listener(move |this, _, _, cx| this.cwd.update(cx, |i, cx| i.set_text(value.clone(), cx))))
-        }));
+                .flex_wrap()
+                .gap(px(6.))
+                .children(folders.into_iter().enumerate().map(|(i, path)| {
+                    let path = super::files::tilde(&path, &home);
+                    let value = path.clone();
+                    div()
+                        .id(("ns-folder", i))
+                        .h(px(22.))
+                        .px(px(8.))
+                        .flex()
+                        .items_center()
+                        .gap(px(5.))
+                        .child(kit::color_icon(
+                            &theme,
+                            "clock",
+                            11.,
+                            theme.text_placeholder,
+                        ))
+                        .rounded(px(5.))
+                        .border_1()
+                        .border_color(theme.border_variant)
+                        .bg(theme.element)
+                        .cursor_pointer()
+                        .hover(|st| st.bg(theme.element_hover))
+                        .font_family(mono_font())
+                        .text_size(px(11.5))
+                        .text_color(theme.text_muted)
+                        .child(path)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.cwd.update(cx, |i, cx| i.set_text(value.clone(), cx))
+                        }))
+                }));
 
         // Without the agent the session lives in this window only; say so.
         let in_app = self.without_agent(&snapshot);
@@ -2186,7 +3053,9 @@ impl Render for NewSessionDialog {
         let into_workspace = place != Place::Folder;
         let can_start = match &self.new_vm {
             Some((_, host)) => host.is_some(),
-            None => self.machine.is_some() && (!into_workspace || self.workspaces_allowed(&snapshot)),
+            None => {
+                self.machine.is_some() && (!into_workspace || self.workspaces_allowed(&snapshot))
+            }
         };
         let start_label = match (self.new_vm.is_some(), into_workspace) {
             (true, true) => "Create VM, workspace and start",
@@ -2203,43 +3072,113 @@ impl Render for NewSessionDialog {
             .flex_col()
             .gap(px(14.))
             .child(field(&theme, "Machine", picker, None))
-        .map(|d| match &self.prefill.command {
-            // A prepared command (a Docker workspace's shell) instead of an agent.
-            Some((_, what)) => d.child(field(&theme, "Runs", div().text_size(px(12.5)).text_color(theme.text_muted).child(what.clone()), None)),
-            None => d.child(field(&theme, "Agent", div().flex().flex_col().gap(px(8.)).children(rows), None)),
-        })
-        .when(self.prefill.workspace.is_some() || source.is_some(), |d| d.child(field(&theme, "Where", self.where_choice(&theme, place, source.as_ref(), cx), None)))
-        .map(|d| match place {
-            Place::Worktree | Place::Clone => d.child(self.workspace_fields(&theme, place, source.as_ref(), machine.as_ref(), cx)),
-            Place::Folder if self.new_vm.is_some() => d,
-            Place::Folder => d.child(field(&theme, "Folder", div().flex().flex_col().gap(px(8.)).child(self.cwd.clone()).child(folder_chips).children(self.folder_browser(&theme, cx)), None)),
-        })
-        .when(self.agent != "shell", |d| {
-            let prepared = self.prefill.message.clone().map(|m| {
-                // An excerpt (the agent gets all of it). No scroll box of its own:
-                // one inside the dialog's makes the wheel stick.
-                let lines: Vec<&str> = m.lines().filter(|l| !l.trim().is_empty()).collect();
-                let mut shown: String = lines.iter().take(5).copied().collect::<Vec<_>>().join("\n").chars().take(480).collect();
-                if lines.len() > 5 || shown.chars().count() >= 480 {
-                    shown.push_str(" …");
-                }
-                div()
-                    .p(px(10.))
-                    .rounded(px(6.))
-                    .bg(theme.element)
-                    .border_1()
-                    .border_color(theme.border_variant)
-                    .flex()
-                    .flex_col()
-                    .gap(px(6.))
-                    .children(self.prefill.source.clone().map(|s| div().text_size(px(11.)).text_color(theme.text_placeholder).child(format!("From {s}"))))
-                    .child(div().w_full().text_size(px(12.)).text_color(theme.text_muted).child(shown))
-            });
-            d.child(field(&theme, "First message", div().flex().flex_col().gap(px(8.)).children(prepared).child(self.prompt.clone()), None))
-        })
-        .children(in_app_note);
+            .map(|d| match &self.prefill.command {
+                // A prepared command (a Docker workspace's shell) instead of an agent.
+                Some((_, what)) => d.child(field(
+                    &theme,
+                    "Runs",
+                    div()
+                        .text_size(px(12.5))
+                        .text_color(theme.text_muted)
+                        .child(what.clone()),
+                    None,
+                )),
+                None => d.child(field(
+                    &theme,
+                    "Agent",
+                    div().flex().flex_col().gap(px(8.)).children(rows),
+                    None,
+                )),
+            })
+            .when(self.prefill.workspace.is_some() || source.is_some(), |d| {
+                d.child(field(
+                    &theme,
+                    "Where",
+                    self.where_choice(&theme, place, source.as_ref(), cx),
+                    None,
+                ))
+            })
+            .map(|d| match place {
+                Place::Worktree | Place::Clone => d.child(self.workspace_fields(
+                    &theme,
+                    place,
+                    source.as_ref(),
+                    machine.as_ref(),
+                    cx,
+                )),
+                Place::Folder if self.new_vm.is_some() => d,
+                Place::Folder => d.child(field(
+                    &theme,
+                    "Folder",
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(8.))
+                        .child(self.cwd.clone())
+                        .child(folder_chips)
+                        .children(self.folder_browser(&theme, cx)),
+                    None,
+                )),
+            })
+            .when(self.agent != "shell", |d| {
+                let prepared = self.prefill.message.clone().map(|m| {
+                    // An excerpt (the agent gets all of it). No scroll box of its own:
+                    // one inside the dialog's makes the wheel stick.
+                    let lines: Vec<&str> = m.lines().filter(|l| !l.trim().is_empty()).collect();
+                    let mut shown: String = lines
+                        .iter()
+                        .take(5)
+                        .copied()
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                        .chars()
+                        .take(480)
+                        .collect();
+                    if lines.len() > 5 || shown.chars().count() >= 480 {
+                        shown.push_str(" …");
+                    }
+                    div()
+                        .p(px(10.))
+                        .rounded(px(6.))
+                        .bg(theme.element)
+                        .border_1()
+                        .border_color(theme.border_variant)
+                        .flex()
+                        .flex_col()
+                        .gap(px(6.))
+                        .children(self.prefill.source.clone().map(|s| {
+                            div()
+                                .text_size(px(11.))
+                                .text_color(theme.text_placeholder)
+                                .child(format!("From {s}"))
+                        }))
+                        .child(
+                            div()
+                                .w_full()
+                                .text_size(px(12.))
+                                .text_color(theme.text_muted)
+                                .child(shown),
+                        )
+                });
+                d.child(field(
+                    &theme,
+                    "First message",
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(8.))
+                        .children(prepared)
+                        .child(self.prompt.clone()),
+                    None,
+                ))
+            })
+            .children(in_app_note);
         // A scroll area around one column (as a column itself it squeezes its children).
-        let body = div().id("ns-body").max_h(px(body_max)).overflow_y_scroll().child(fields);
+        let body = div()
+            .id("ns-body")
+            .max_h(px(body_max))
+            .overflow_y_scroll()
+            .child(fields);
         frame(
             &theme,
             "New session",

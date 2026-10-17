@@ -5,8 +5,8 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, ScrollHandle, SharedString, Subscription, Window, div, prelude::*,
-    px,
+    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
+    ScrollHandle, SharedString, Subscription, Window, div, prelude::*, px,
 };
 
 use super::dialogs::DialogEvent;
@@ -67,7 +67,12 @@ pub struct CopyStart {
 }
 
 impl CopyDialog {
-    pub fn new(engine: Arc<Engine>, start: CopyStart, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        engine: Arc<Engine>,
+        start: CopyStart,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let snap = engine.current();
         let mut machines: Vec<(String, String, bool)> = snap
             .machines
@@ -77,10 +82,20 @@ impl CopyDialog {
             .collect();
         // This computer first.
         machines.sort_by_key(|(id, _, _)| !snap.machines.iter().any(|m| &m.id == id && m.local));
-        let input = |cx: &mut Context<Self>, text: &str| cx.new(|cx| TextInput::new(cx, "~/folder").mono().with_text(text.to_string()));
+        let input = |cx: &mut Context<Self>, text: &str| {
+            cx.new(|cx| {
+                TextInput::new(cx, "~/folder")
+                    .mono()
+                    .with_text(text.to_string())
+            })
+        };
         let (from_path, to_path) = (input(cx, &start.from_dir), input(cx, &start.to_dir));
         let on_path = |side: Side| {
-            move |this: &mut Self, _: &Entity<TextInput>, e: &InputEvent, _: &mut Window, cx: &mut Context<Self>| match e {
+            move |this: &mut Self,
+                  _: &Entity<TextInput>,
+                  e: &InputEvent,
+                  _: &mut Window,
+                  cx: &mut Context<Self>| match e {
                 InputEvent::Submit => {
                     let path = this.pane(side).path.read(cx).text().trim().to_string();
                     this.load(side, path, cx);
@@ -89,8 +104,17 @@ impl CopyDialog {
                 InputEvent::Changed => {}
             }
         };
-        let subs = vec![cx.subscribe_in(&from_path, window, on_path(Side::From)), cx.subscribe_in(&to_path, window, on_path(Side::To))];
-        let pane = |machine: String, path: Entity<TextInput>| Pane { machine, path, listing: Load::Loading, asked: 0, scroll: ScrollHandle::new() };
+        let subs = vec![
+            cx.subscribe_in(&from_path, window, on_path(Side::From)),
+            cx.subscribe_in(&to_path, window, on_path(Side::To)),
+        ];
+        let pane = |machine: String, path: Entity<TextInput>| Pane {
+            machine,
+            path,
+            listing: Load::Loading,
+            asked: 0,
+            scroll: ScrollHandle::new(),
+        };
         let mut dialog = CopyDialog {
             engine,
             machines,
@@ -131,7 +155,8 @@ impl CopyDialog {
         pane.asked += 1;
         let (asked, machine) = (pane.asked, pane.machine.clone());
         // What was picked belongs to the folder being left.
-        let keep = side == Side::From && matches!(&pane.listing, Load::Ready(l) if l.path == path || display(l) == path);
+        let keep = side == Side::From
+            && matches!(&pane.listing, Load::Ready(l) if l.path == path || display(l) == path);
         pane.listing = Load::Loading;
         if side == Side::From && !keep && asked > 1 {
             self.selected.clear();
@@ -151,7 +176,9 @@ impl CopyDialog {
                 }
                 if let Ok(l) = &result {
                     let shown = display(l);
-                    this.pane(side).path.update(cx, |p, cx| p.set_text(shown, cx));
+                    this.pane(side)
+                        .path
+                        .update(cx, |p, cx| p.set_text(shown, cx));
                 }
                 this.pane_mut(side).listing = match result {
                     Ok(l) => Load::Ready(l),
@@ -172,7 +199,11 @@ impl CopyDialog {
 
     fn open(&mut self, side: Side, name: &str, cx: &mut Context<Self>) {
         if let Some(p) = self.current_path(side) {
-            let next = if p.ends_with('/') { format!("{p}{name}") } else { format!("{p}/{name}") };
+            let next = if p.ends_with('/') {
+                format!("{p}{name}")
+            } else {
+                format!("{p}/{name}")
+            };
             self.load(side, next, cx);
         }
     }
@@ -200,7 +231,10 @@ impl CopyDialog {
 
     /// The other way round: To becomes From.
     fn swap(&mut self, cx: &mut Context<Self>) {
-        let (from_dir, to_dir) = (self.current_path(Side::From).unwrap_or_else(|| "~".into()), self.current_path(Side::To).unwrap_or_else(|| "~".into()));
+        let (from_dir, to_dir) = (
+            self.current_path(Side::From).unwrap_or_else(|| "~".into()),
+            self.current_path(Side::To).unwrap_or_else(|| "~".into()),
+        );
         std::mem::swap(&mut self.from.machine, &mut self.to.machine);
         self.selected.clear();
         self.load(Side::From, to_dir, cx);
@@ -215,7 +249,9 @@ impl CopyDialog {
     }
 
     fn submit(&mut self, cx: &mut Context<Self>) {
-        let (Some(dir), Some(to_dir)) = (self.current_path(Side::From), self.current_path(Side::To)) else {
+        let (Some(dir), Some(to_dir)) =
+            (self.current_path(Side::From), self.current_path(Side::To))
+        else {
             self.error = Some("Wait for both folders to open.".into());
             cx.notify();
             return;
@@ -239,36 +275,91 @@ impl CopyDialog {
     fn pane_view(&self, theme: &Theme, side: Side, cx: &mut Context<Self>) -> AnyElement {
         let pane = self.pane(side);
         let tag = if side == Side::From { "from" } else { "to" };
-        let chips: Vec<AnyElement> = self.machines.iter().map(|(id, name, online)| {
-            let on = *id == pane.machine;
-            let id2 = id.clone();
-            div()
-                .id(SharedString::from(format!("cp-{tag}-m-{id}")))
+        let chips: Vec<AnyElement> = self
+            .machines
+            .iter()
+            .map(|(id, name, online)| {
+                let on = *id == pane.machine;
+                let id2 = id.clone();
+                div()
+                    .id(SharedString::from(format!("cp-{tag}-m-{id}")))
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .h(px(24.))
+                    .px(px(9.))
+                    .rounded(px(6.))
+                    .border_1()
+                    .cursor_pointer()
+                    .text_size(px(12.))
+                    .border_color(if on {
+                        theme.accent
+                    } else {
+                        theme.border_variant
+                    })
+                    .bg(if on {
+                        theme.accent.opacity(0.12)
+                    } else {
+                        theme.element
+                    })
+                    .child(kit::dot(
+                        if *online {
+                            theme.success
+                        } else {
+                            theme.text_placeholder
+                        },
+                        6.,
+                    ))
+                    .child(name.clone())
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.set_machine(side, id2.clone(), cx)),
+                    )
+                    .into_any_element()
+            })
+            .collect();
+        let body: AnyElement = match &pane.listing {
+            Load::Loading => div()
+                .p(px(14.))
                 .flex()
                 .items_center()
-                .gap(px(6.))
-                .h(px(24.))
-                .px(px(9.))
-                .rounded(px(6.))
-                .border_1()
-                .cursor_pointer()
-                .text_size(px(12.))
-                .border_color(if on { theme.accent } else { theme.border_variant })
-                .bg(if on { theme.accent.opacity(0.12) } else { theme.element })
-                .child(kit::dot(if *online { theme.success } else { theme.text_placeholder }, 6.))
-                .child(name.clone())
-                .on_click(cx.listener(move |this, _, _, cx| this.set_machine(side, id2.clone(), cx)))
-                .into_any_element()
-        }).collect();
-        let body: AnyElement = match &pane.listing {
-            Load::Loading => div().p(px(14.)).flex().items_center().gap(px(8.)).text_size(px(12.5)).text_color(theme.text_muted).child(kit::spinner(SharedString::from(format!("cp-{tag}-spin")), 12., theme.text_muted)).child("Opening…").into_any_element(),
-            Load::Failed(e) => div().p(px(14.)).flex().gap(px(8.)).text_size(px(12.5)).text_color(theme.text_muted).child(icon("circle-alert", 14., theme.warning)).child(div().flex_1().min_w(px(0.)).child(e.clone())).into_any_element(),
+                .gap(px(8.))
+                .text_size(px(12.5))
+                .text_color(theme.text_muted)
+                .child(kit::spinner(
+                    SharedString::from(format!("cp-{tag}-spin")),
+                    12.,
+                    theme.text_muted,
+                ))
+                .child("Opening…")
+                .into_any_element(),
+            Load::Failed(e) => div()
+                .p(px(14.))
+                .flex()
+                .gap(px(8.))
+                .text_size(px(12.5))
+                .text_color(theme.text_muted)
+                .child(icon("circle-alert", 14., theme.warning))
+                .child(div().flex_1().min_w(px(0.)).child(e.clone()))
+                .into_any_element(),
             Load::Ready(l) => {
-                let shown: Vec<&crate::fleet::files::FileEntry> = l.entries.iter().filter(|e| self.show_hidden || !e.name.starts_with('.')).collect();
+                let shown: Vec<&crate::fleet::files::FileEntry> = l
+                    .entries
+                    .iter()
+                    .filter(|e| self.show_hidden || !e.name.starts_with('.'))
+                    .collect();
                 if shown.is_empty() {
-                    div().p(px(14.)).text_size(px(12.5)).text_color(theme.text_placeholder).child("Nothing here.").into_any_element()
+                    div()
+                        .p(px(14.))
+                        .text_size(px(12.5))
+                        .text_color(theme.text_placeholder)
+                        .child("Nothing here.")
+                        .into_any_element()
                 } else {
-                    let rows: Vec<AnyElement> = shown.into_iter().enumerate().map(|(i, e)| self.row(theme, side, e, i, cx)).collect();
+                    let rows: Vec<AnyElement> = shown
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, e)| self.row(theme, side, e, i, cx))
+                        .collect();
                     div().flex().flex_col().children(rows).into_any_element()
                 }
             }
@@ -280,14 +371,23 @@ impl CopyDialog {
             .flex_1()
             .min_w(px(0.))
             .gap(px(8.))
-            .child(div().text_size(px(12.)).text_color(theme.text_muted).child(if side == Side::From { "From" } else { "To" }))
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .text_color(theme.text_muted)
+                    .child(if side == Side::From { "From" } else { "To" }),
+            )
             .child(div().flex().flex_wrap().gap(px(5.)).children(chips))
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap(px(6.))
-                    .child(Button::icon_only(up_id, "arrow-up").tooltip("Up a folder").on_click(cx.listener(move |this, _, _, cx| this.up(side, cx))))
+                    .child(
+                        Button::icon_only(up_id, "arrow-up")
+                            .tooltip("Up a folder")
+                            .on_click(cx.listener(move |this, _, _, cx| this.up(side, cx))),
+                    )
                     .child(div().flex_1().min_w(px(0.)).child(pane.path.clone())),
             )
             .child(
@@ -305,7 +405,14 @@ impl CopyDialog {
             .into_any_element()
     }
 
-    fn row(&self, theme: &Theme, side: Side, e: &crate::fleet::files::FileEntry, i: usize, cx: &mut Context<Self>) -> AnyElement {
+    fn row(
+        &self,
+        theme: &Theme,
+        side: Side,
+        e: &crate::fleet::files::FileEntry,
+        i: usize,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let tag = if side == Side::From { "from" } else { "to" };
         let picked = side == Side::From && self.selected.contains(&e.name);
         let name = e.name.clone();
@@ -324,7 +431,9 @@ impl CopyDialog {
             .px(px(10.))
             .h(px(28.))
             .when(picked, |d| d.bg(theme.accent.opacity(0.12)))
-            .when(!dim, |d| d.cursor_pointer().hover(|st| st.bg(theme.ghost_hover)))
+            .when(!dim, |d| {
+                d.cursor_pointer().hover(|st| st.bg(theme.ghost_hover))
+            })
             .when(side == Side::From, |d| {
                 let name = name.clone();
                 d.child(
@@ -346,14 +455,40 @@ impl CopyDialog {
                         })),
                 )
             })
-            .child(kit::color_icon(&theme, if e.folder { "folder" } else { "file" }, 14., theme.text_placeholder))
-            .child(div().flex_1().min_w(px(0.)).truncate().text_size(px(12.5)).text_color(if dim { theme.text_placeholder } else { theme.text }).child(e.name.clone()))
-            .child(div().flex_none().font_family(mono_font()).text_size(px(11.)).text_color(theme.text_placeholder).child(meta));
+            .child(kit::color_icon(
+                &theme,
+                if e.folder { "folder" } else { "file" },
+                14.,
+                theme.text_placeholder,
+            ))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .truncate()
+                    .text_size(px(12.5))
+                    .text_color(if dim {
+                        theme.text_placeholder
+                    } else {
+                        theme.text
+                    })
+                    .child(e.name.clone()),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .font_family(mono_font())
+                    .text_size(px(11.))
+                    .text_color(theme.text_placeholder)
+                    .child(meta),
+            );
         // A folder opens; a file (on the left) is picked.
         if e.folder {
-            row.on_click(cx.listener(move |this, _, _, cx| this.open(side, &name, cx))).into_any_element()
+            row.on_click(cx.listener(move |this, _, _, cx| this.open(side, &name, cx)))
+                .into_any_element()
         } else if side == Side::From {
-            row.on_click(cx.listener(move |this, _, _, cx| this.toggle(&name, cx))).into_any_element()
+            row.on_click(cx.listener(move |this, _, _, cx| this.toggle(&name, cx)))
+                .into_any_element()
         } else {
             row.into_any_element()
         }
@@ -369,7 +504,9 @@ pub(super) fn display(l: &Listing) -> String {
 /// `path`, as ~/... when it's in `home`.
 pub(super) fn tilde(path: &str, home: &str) -> String {
     match path.strip_prefix(home) {
-        Some(rest) if !home.is_empty() && (rest.is_empty() || rest.starts_with('/')) => format!("~{rest}"),
+        Some(rest) if !home.is_empty() && (rest.is_empty() || rest.starts_with('/')) => {
+            format!("~{rest}")
+        }
         _ => path.to_string(),
     }
 }
@@ -377,25 +514,52 @@ pub(super) fn tilde(path: &str, home: &str) -> String {
 impl Render for CopyDialog {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let to_name = self.machines.iter().find(|(id, _, _)| *id == self.to.machine).map(|(_, n, _)| n.clone()).unwrap_or_default();
+        let to_name = self
+            .machines
+            .iter()
+            .find(|(id, _, _)| *id == self.to.machine)
+            .map(|(_, n, _)| n.clone())
+            .unwrap_or_default();
         let to_shown = match &self.to.listing {
             Load::Ready(l) => Some(display(l)),
             _ => None,
         };
         // What's picked: how much, and what it would replace there.
         let sizes: u64 = match &self.from.listing {
-            Load::Ready(l) => l.entries.iter().filter(|e| self.selected.contains(&e.name)).filter_map(|e| e.size).sum(),
+            Load::Ready(l) => l
+                .entries
+                .iter()
+                .filter(|e| self.selected.contains(&e.name))
+                .filter_map(|e| e.size)
+                .sum(),
             _ => 0,
         };
         let replaces: Vec<String> = match &self.to.listing {
-            Load::Ready(l) => l.entries.iter().filter(|e| self.selected.contains(&e.name)).map(|e| e.name.clone()).collect(),
+            Load::Ready(l) => l
+                .entries
+                .iter()
+                .filter(|e| self.selected.contains(&e.name))
+                .map(|e| e.name.clone())
+                .collect(),
             _ => Vec::new(),
         };
-        let same_place = self.from.machine == self.to.machine && self.current_path(Side::From).is_some() && self.current_path(Side::From) == self.current_path(Side::To);
-        let ready = !self.selected.is_empty() && to_shown.is_some() && self.current_path(Side::From).is_some() && !same_place;
+        let same_place = self.from.machine == self.to.machine
+            && self.current_path(Side::From).is_some()
+            && self.current_path(Side::From) == self.current_path(Side::To);
+        let ready = !self.selected.is_empty()
+            && to_shown.is_some()
+            && self.current_path(Side::From).is_some()
+            && !same_place;
         let summary = match self.selected.len() {
             0 => "Pick files or folders on the left.".to_string(),
-            n => format!("{n} selected{}", if sizes > 0 { format!(" · {} in files", format::bytes(sizes)) } else { String::new() }),
+            n => format!(
+                "{n} selected{}",
+                if sizes > 0 {
+                    format!(" · {} in files", format::bytes(sizes))
+                } else {
+                    String::new()
+                }
+            ),
         };
         let copy_label = match &to_shown {
             Some(p) => format!("Copy to {to_name} {p}"),
@@ -421,7 +585,12 @@ impl Render for CopyDialog {
                     cx.emit(DialogEvent::Dismissed)
                 }
             }))
-            .child(div().text_size(px(16.)).font_weight(FontWeight::SEMIBOLD).child("Copy files"))
+            .child(
+                div()
+                    .text_size(px(16.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child("Copy files"),
+            )
             .child(
                 div()
                     .flex()
@@ -429,40 +598,83 @@ impl Render for CopyDialog {
                     .child(self.pane_view(&theme, Side::From, cx))
                     .child(
                         div().flex().flex_col().justify_center().child(
-                            Button::icon_only("cp-swap", "arrow-right").tooltip("Swap: copy the other way").on_click(cx.listener(|this, _, _, cx| this.swap(cx))),
+                            Button::icon_only("cp-swap", "arrow-right")
+                                .tooltip("Swap: copy the other way")
+                                .on_click(cx.listener(|this, _, _, cx| this.swap(cx))),
                         ),
                     )
                     .child(self.pane_view(&theme, Side::To, cx)),
             )
             .children((!replaces.is_empty()).then(|| {
-                div().flex().items_center().gap(px(8.)).text_size(px(12.)).text_color(theme.warning).child(icon("triangle-alert", 13., theme.warning)).child(format!(
-                    "Replaces {} already there.",
-                    match replaces.as_slice() {
-                        [one] => one.clone(),
-                        many => format!("{} items", many.len()),
-                    }
-                ))
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .text_size(px(12.))
+                    .text_color(theme.warning)
+                    .child(icon("triangle-alert", 13., theme.warning))
+                    .child(format!(
+                        "Replaces {} already there.",
+                        match replaces.as_slice() {
+                            [one] => one.clone(),
+                            many => format!("{} items", many.len()),
+                        }
+                    ))
             }))
-            .children(same_place.then(|| div().text_size(px(12.)).text_color(theme.text_muted).child("That's the same folder; pick another one to copy into.")))
-            .children(self.error.clone().map(|e| div().flex().gap(px(8.)).text_size(px(12.5)).text_color(theme.error).child(icon("circle-x", 13., theme.error)).child(e)))
+            .children(same_place.then(|| {
+                div()
+                    .text_size(px(12.))
+                    .text_color(theme.text_muted)
+                    .child("That's the same folder; pick another one to copy into.")
+            }))
+            .children(self.error.clone().map(|e| {
+                div()
+                    .flex()
+                    .gap(px(8.))
+                    .text_size(px(12.5))
+                    .text_color(theme.error)
+                    .child(icon("circle-x", 13., theme.error))
+                    .child(e)
+            }))
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap(px(10.))
-                    .child(kit::checkbox(&theme, "cp-hidden", hidden, "Hidden files", {
-                        let this = cx.entity().downgrade();
-                        move |on, _, cx| {
-                            let on = *on;
-                            let _ = this.update(cx, |this, cx| {
-                                this.show_hidden = on;
-                                cx.notify()
-                            });
-                        }
-                    }))
-                    .child(div().flex_1().text_size(px(12.)).text_color(theme.text_placeholder).child(summary))
-                    .child(Button::new("cp-cancel", "Cancel").style(ButtonStyle::Ghost).on_click(cx.listener(|_, _, _, cx| cx.emit(DialogEvent::Dismissed))))
-                    .child(Button::new("cp-go", copy_label).style(ButtonStyle::Primary).disabled(!ready).on_click(cx.listener(|this, _, _, cx| this.submit(cx)))),
+                    .child(kit::checkbox(
+                        &theme,
+                        "cp-hidden",
+                        hidden,
+                        "Hidden files",
+                        {
+                            let this = cx.entity().downgrade();
+                            move |on, _, cx| {
+                                let on = *on;
+                                let _ = this.update(cx, |this, cx| {
+                                    this.show_hidden = on;
+                                    cx.notify()
+                                });
+                            }
+                        },
+                    ))
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_size(px(12.))
+                            .text_color(theme.text_placeholder)
+                            .child(summary),
+                    )
+                    .child(
+                        Button::new("cp-cancel", "Cancel")
+                            .style(ButtonStyle::Ghost)
+                            .on_click(cx.listener(|_, _, _, cx| cx.emit(DialogEvent::Dismissed))),
+                    )
+                    .child(
+                        Button::new("cp-go", copy_label)
+                            .style(ButtonStyle::Primary)
+                            .disabled(!ready)
+                            .on_click(cx.listener(|this, _, _, cx| this.submit(cx))),
+                    ),
             )
     }
 }

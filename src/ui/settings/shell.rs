@@ -53,23 +53,65 @@ impl SettingsPage {
         let (glyph, color, line): (&str, _, String) = match &st.status {
             None => ("loader-circle", theme.text_muted, "Looking…".into()),
             Some(s) => match s.state {
-                "installed" => ("circle-check", theme.success, format!("Installed: {}", s.path)),
-                "missing" if cfg!(windows) => ("circle", theme.text_muted, "Not installed. Muxin's folder gets added to your PATH.".into()),
-                "missing" => ("circle", theme.text_muted, format!("Not installed. It goes in {}.", s.path)),
-                "other" => ("triangle-alert", theme.warning, format!("{} is already there.", s.path)),
-                _ => ("circle-x", theme.error, "Not available on this computer.".into()),
+                "installed" => (
+                    "circle-check",
+                    theme.success,
+                    format!("Installed: {}", s.path),
+                ),
+                "missing" if cfg!(windows) => (
+                    "circle",
+                    theme.text_muted,
+                    "Not installed. Muxin's folder gets added to your PATH.".into(),
+                ),
+                "missing" => (
+                    "circle",
+                    theme.text_muted,
+                    format!("Not installed. It goes in {}.", s.path),
+                ),
+                "other" => (
+                    "triangle-alert",
+                    theme.warning,
+                    format!("{} is already there.", s.path),
+                ),
+                _ => (
+                    "circle-x",
+                    theme.error,
+                    "Not available on this computer.".into(),
+                ),
             },
         };
         let note = st.status.as_ref().and_then(|s| s.note.clone()).or_else(|| {
             // Before it asks: macOS shows its own password prompt for /usr/local/bin.
-            st.status.as_ref().filter(|s| s.state == "missing" && cfg!(target_os = "macos")).map(|_| "macOS may ask for your password to add it there.".to_string())
+            st.status
+                .as_ref()
+                .filter(|s| s.state == "missing" && cfg!(target_os = "macos"))
+                .map(|_| "macOS may ask for your password to add it there.".to_string())
         });
         // Homebrew's or the package's link goes when they uninstall the app.
-        let state = st.status.as_ref().filter(|s| !s.managed).map(|s| (s.state, s.replaceable));
+        let state = st
+            .status
+            .as_ref()
+            .filter(|s| !s.managed)
+            .map(|s| (s.state, s.replaceable));
         let button = match state {
-            Some(("missing", _)) => Some(Button::new("shell-install", "Install").icon("plus").style(ButtonStyle::Primary).loading(st.busy).on_click(cx.listener(|this, _, _, cx| this.run_shell(Some(true), cx)))),
-            Some(("other", true)) => Some(Button::new("shell-replace", "Use this copy").icon("refresh-cw").loading(st.busy).on_click(cx.listener(|this, _, _, cx| this.run_shell(Some(true), cx)))),
-            Some(("installed", _)) => Some(Button::new("shell-remove", "Remove").loading(st.busy).on_click(cx.listener(|this, _, _, cx| this.run_shell(Some(false), cx)))),
+            Some(("missing", _)) => Some(
+                Button::new("shell-install", "Install")
+                    .icon("plus")
+                    .style(ButtonStyle::Primary)
+                    .loading(st.busy)
+                    .on_click(cx.listener(|this, _, _, cx| this.run_shell(Some(true), cx))),
+            ),
+            Some(("other", true)) => Some(
+                Button::new("shell-replace", "Use this copy")
+                    .icon("refresh-cw")
+                    .loading(st.busy)
+                    .on_click(cx.listener(|this, _, _, cx| this.run_shell(Some(true), cx))),
+            ),
+            Some(("installed", _)) => Some(
+                Button::new("shell-remove", "Remove")
+                    .loading(st.busy)
+                    .on_click(cx.listener(|this, _, _, cx| this.run_shell(Some(false), cx))),
+            ),
             _ => None,
         };
         div()

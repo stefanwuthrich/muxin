@@ -61,16 +61,26 @@ pub fn monthly_price(hourly: f64) -> f64 {
 
 /// The first moment of `t`'s month (UTC, as DigitalOcean bills).
 pub fn month_start(t: DateTime<Utc>) -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(t.year(), t.month(), 1, 0, 0, 0).single().unwrap_or(t)
+    Utc.with_ymd_and_hms(t.year(), t.month(), 1, 0, 0, 0)
+        .single()
+        .unwrap_or(t)
 }
 
 fn next_month(t: DateTime<Utc>) -> DateTime<Utc> {
-    month_start(t).checked_add_months(Months::new(1)).unwrap_or(t)
+    month_start(t)
+        .checked_add_months(Months::new(1))
+        .unwrap_or(t)
 }
 
 /// What it cost in the month that starts at `month`, existing from `created`
 /// until `ended` (or still, at `now`).
-pub fn cost_in_month(hourly: f64, created: DateTime<Utc>, ended: Option<DateTime<Utc>>, month: DateTime<Utc>, now: DateTime<Utc>) -> f64 {
+pub fn cost_in_month(
+    hourly: f64,
+    created: DateTime<Utc>,
+    ended: Option<DateTime<Utc>>,
+    month: DateTime<Utc>,
+    now: DateTime<Utc>,
+) -> f64 {
     let start = created.max(month);
     let end = ended.unwrap_or(now).min(now).min(next_month(month));
     if end <= start || hourly <= 0. {
@@ -81,7 +91,12 @@ pub fn cost_in_month(hourly: f64, created: DateTime<Utc>, ended: Option<DateTime
 }
 
 /// What it has cost since it was created, month by month.
-pub fn cost_since(hourly: f64, created: DateTime<Utc>, ended: Option<DateTime<Utc>>, now: DateTime<Utc>) -> f64 {
+pub fn cost_since(
+    hourly: f64,
+    created: DateTime<Utc>,
+    ended: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+) -> f64 {
     let last = ended.unwrap_or(now).min(now);
     let mut month = month_start(created);
     let mut total = 0.;
@@ -117,14 +132,47 @@ mod tests {
         let created = t("2026-10-09T18:53:00Z");
         let month = month_start(created);
         // Two hours in: two hours' worth, but at least a cent.
-        assert_eq!(cost_in_month(hourly, created, None, month, t("2026-10-09T20:53:00Z")), 0.02);
-        assert_eq!(cost_in_month(hourly, created, None, month, t("2026-10-09T18:54:00Z")), 0.01);
+        assert_eq!(
+            cost_in_month(hourly, created, None, month, t("2026-10-09T20:53:00Z")),
+            0.02
+        );
+        assert_eq!(
+            cost_in_month(hourly, created, None, month, t("2026-10-09T18:54:00Z")),
+            0.01
+        );
         // A whole month never costs more than the monthly price.
-        assert_eq!(cost_in_month(hourly, t("2026-09-01T00:00:00Z"), None, month_start(t("2026-09-15T00:00:00Z")), t("2026-10-05T00:00:00Z")), 6.0);
+        assert_eq!(
+            cost_in_month(
+                hourly,
+                t("2026-09-01T00:00:00Z"),
+                None,
+                month_start(t("2026-09-15T00:00:00Z")),
+                t("2026-10-05T00:00:00Z")
+            ),
+            6.0
+        );
         // Destroyed after a day.
-        assert_eq!(cost_in_month(hourly, created, Some(t("2026-10-10T18:53:00Z")), month, t("2026-10-20T00:00:00Z")), 0.21);
+        assert_eq!(
+            cost_in_month(
+                hourly,
+                created,
+                Some(t("2026-10-10T18:53:00Z")),
+                month,
+                t("2026-10-20T00:00:00Z")
+            ),
+            0.21
+        );
         // Not in a month it didn't exist in.
-        assert_eq!(cost_in_month(hourly, created, None, month_start(t("2026-09-15T00:00:00Z")), t("2026-10-20T00:00:00Z")), 0.0);
+        assert_eq!(
+            cost_in_month(
+                hourly,
+                created,
+                None,
+                month_start(t("2026-09-15T00:00:00Z")),
+                t("2026-10-20T00:00:00Z")
+            ),
+            0.0
+        );
     }
 
     #[test]
@@ -133,10 +181,16 @@ mod tests {
         let created = t("2026-09-20T00:00:00Z");
         let now = t("2026-10-02T00:00:00Z");
         // September: 11 days = 264h; October so far: 1 day.
-        assert_eq!(cost_since(hourly, created, None, now), round2(round2(264. * hourly) + round2(24. * hourly)));
+        assert_eq!(
+            cost_since(hourly, created, None, now),
+            round2(round2(264. * hourly) + round2(24. * hourly))
+        );
         // Kept all of October: capped at the monthly price.
         assert_eq!(month_if_kept(hourly, created, now), monthly_price(hourly));
         // Created late in the month: only what's left of it.
-        assert_eq!(month_if_kept(hourly, t("2026-10-30T00:00:00Z"), t("2026-10-30T00:00:00Z")), round2(48. * hourly));
+        assert_eq!(
+            month_if_kept(hourly, t("2026-10-30T00:00:00Z"), t("2026-10-30T00:00:00Z")),
+            round2(48. * hourly)
+        );
     }
 }

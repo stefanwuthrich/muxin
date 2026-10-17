@@ -19,7 +19,9 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 /// Physical pixels, not the scaled ones (a 150% display is its real size).
 fn dpi_aware() {
     unsafe {
-        windows_sys::Win32::UI::HiDpi::SetProcessDpiAwarenessContext(windows_sys::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        windows_sys::Win32::UI::HiDpi::SetProcessDpiAwarenessContext(
+            windows_sys::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+        );
     }
 }
 
@@ -29,21 +31,44 @@ fn monitors() -> Vec<(String, RECT, bool)> {
         let out = unsafe { &mut *(data as *mut Vec<(String, RECT, bool)>) };
         let mut info: MONITORINFOEXW = unsafe { std::mem::zeroed() };
         info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
-        if unsafe { GetMonitorInfoW(m, &mut info as *mut MONITORINFOEXW as *mut MONITORINFO) } != 0 {
-            let name = String::from_utf16_lossy(&info.szDevice).trim_end_matches('\0').trim_start_matches(r"\\.\").to_string();
-            out.push((name, info.monitorInfo.rcMonitor, info.monitorInfo.dwFlags & MONITORINFOF_PRIMARY != 0));
+        if unsafe { GetMonitorInfoW(m, &mut info as *mut MONITORINFOEXW as *mut MONITORINFO) } != 0
+        {
+            let name = String::from_utf16_lossy(&info.szDevice)
+                .trim_end_matches('\0')
+                .trim_start_matches(r"\\.\")
+                .to_string();
+            out.push((
+                name,
+                info.monitorInfo.rcMonitor,
+                info.monitorInfo.dwFlags & MONITORINFOF_PRIMARY != 0,
+            ));
         }
         1
     }
     let mut out: Vec<(String, RECT, bool)> = Vec::new();
-    unsafe { EnumDisplayMonitors(std::ptr::null_mut(), std::ptr::null(), Some(each), &mut out as *mut _ as LPARAM) };
+    unsafe {
+        EnumDisplayMonitors(
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            Some(each),
+            &mut out as *mut _ as LPARAM,
+        )
+    };
     out
 }
 
 fn virtual_screen() -> RECT {
     unsafe {
-        let (x, y) = (GetSystemMetrics(SM_XVIRTUALSCREEN), GetSystemMetrics(SM_YVIRTUALSCREEN));
-        RECT { left: x, top: y, right: x + GetSystemMetrics(SM_CXVIRTUALSCREEN), bottom: y + GetSystemMetrics(SM_CYVIRTUALSCREEN) }
+        let (x, y) = (
+            GetSystemMetrics(SM_XVIRTUALSCREEN),
+            GetSystemMetrics(SM_YVIRTUALSCREEN),
+        );
+        RECT {
+            left: x,
+            top: y,
+            right: x + GetSystemMetrics(SM_CXVIRTUALSCREEN),
+            bottom: y + GetSystemMetrics(SM_CYVIRTUALSCREEN),
+        }
     }
 }
 
@@ -82,8 +107,20 @@ impl WinScreen {
         let ms = monitors();
         let rect = match display {
             Some("all") => virtual_screen(),
-            Some(n) => ms.get(n.parse::<usize>().map_err(|_| format!("No display called {n}."))?.saturating_sub(1)).map(|m| m.1).ok_or_else(|| format!("No display called {n}."))?,
-            None => ms.iter().find(|m| m.2).or(ms.first()).map(|m| m.1).unwrap_or_else(virtual_screen),
+            Some(n) => ms
+                .get(
+                    n.parse::<usize>()
+                        .map_err(|_| format!("No display called {n}."))?
+                        .saturating_sub(1),
+                )
+                .map(|m| m.1)
+                .ok_or_else(|| format!("No display called {n}."))?,
+            None => ms
+                .iter()
+                .find(|m| m.2)
+                .or(ms.first())
+                .map(|m| m.1)
+                .unwrap_or_else(virtual_screen),
         };
         let (w, h) = (rect.right - rect.left, rect.bottom - rect.top);
         if w <= 0 || h <= 0 {
@@ -103,17 +140,36 @@ impl WinScreen {
             bmi.bmiHeader.biBitCount = 32;
             bmi.bmiHeader.biCompression = BI_RGB;
             let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
-            let bitmap = CreateDIBSection(mem_dc, &bmi, DIB_RGB_COLORS, &mut bits, std::ptr::null_mut(), 0);
+            let bitmap = CreateDIBSection(
+                mem_dc,
+                &bmi,
+                DIB_RGB_COLORS,
+                &mut bits,
+                std::ptr::null_mut(),
+                0,
+            );
             if bitmap.is_null() || bits.is_null() {
                 return Err("Can't make room for the screen.".into());
             }
             SelectObject(mem_dc, bitmap as HGDIOBJ);
-            Ok(WinScreen { rect, screen_dc, mem_dc, bitmap, bits: bits as *mut u8, frame: vec![0; (w * h * 4) as usize], held: Vec::new(), buttons: Vec::new() })
+            Ok(WinScreen {
+                rect,
+                screen_dc,
+                mem_dc,
+                bitmap,
+                bits: bits as *mut u8,
+                frame: vec![0; (w * h * 4) as usize],
+                held: Vec::new(),
+                buttons: Vec::new(),
+            })
         }
     }
 
     pub fn size(&self) -> (usize, usize) {
-        ((self.rect.right - self.rect.left) as usize, (self.rect.bottom - self.rect.top) as usize)
+        (
+            (self.rect.right - self.rect.left) as usize,
+            (self.rect.bottom - self.rect.top) as usize,
+        )
     }
 
     /// The screen now, with the mouse pointer drawn in.
@@ -122,7 +178,18 @@ impl WinScreen {
         unsafe {
             // Fails while the secure desktop is up (a UAC prompt, the lock
             // screen): keep showing the last frame.
-            if BitBlt(self.mem_dc, 0, 0, w as i32, h as i32, self.screen_dc, self.rect.left, self.rect.top, SRCCOPY | CAPTUREBLT) == 0 {
+            if BitBlt(
+                self.mem_dc,
+                0,
+                0,
+                w as i32,
+                h as i32,
+                self.screen_dc,
+                self.rect.left,
+                self.rect.top,
+                SRCCOPY | CAPTUREBLT,
+            ) == 0
+            {
                 return Some(None);
             }
             let mut ci: CURSORINFO = std::mem::zeroed();
@@ -130,8 +197,21 @@ impl WinScreen {
             if GetCursorInfo(&mut ci) != 0 && ci.flags & CURSOR_SHOWING != 0 {
                 let mut ii: ICONINFO = std::mem::zeroed();
                 if GetIconInfo(ci.hCursor, &mut ii) != 0 {
-                    let (x, y) = (ci.ptScreenPos.x - self.rect.left - ii.xHotspot as i32, ci.ptScreenPos.y - self.rect.top - ii.yHotspot as i32);
-                    DrawIconEx(self.mem_dc, x, y, ci.hCursor, 0, 0, 0, std::ptr::null_mut(), DI_NORMAL);
+                    let (x, y) = (
+                        ci.ptScreenPos.x - self.rect.left - ii.xHotspot as i32,
+                        ci.ptScreenPos.y - self.rect.top - ii.yHotspot as i32,
+                    );
+                    DrawIconEx(
+                        self.mem_dc,
+                        x,
+                        y,
+                        ci.hCursor,
+                        0,
+                        0,
+                        0,
+                        std::ptr::null_mut(),
+                        DI_NORMAL,
+                    );
                     if !ii.hbmMask.is_null() {
                         DeleteObject(ii.hbmMask as HGDIOBJ);
                     }
@@ -152,8 +232,10 @@ impl WinScreen {
         let x = self.rect.left as f64 + e["x"].as_f64().unwrap_or(0.) * w as f64 / frame.0 as f64;
         let y = self.rect.top as f64 + e["y"].as_f64().unwrap_or(0.) * h as f64 / frame.1 as f64;
         let v = virtual_screen();
-        let nx = ((x - v.left as f64) * 65535. / ((v.right - v.left - 1).max(1)) as f64).round() as i32;
-        let ny = ((y - v.top as f64) * 65535. / ((v.bottom - v.top - 1).max(1)) as f64).round() as i32;
+        let nx =
+            ((x - v.left as f64) * 65535. / ((v.right - v.left - 1).max(1)) as f64).round() as i32;
+        let ny =
+            ((y - v.top as f64) * 65535. / ((v.bottom - v.top - 1).max(1)) as f64).round() as i32;
         (nx, ny)
     }
 
@@ -161,7 +243,12 @@ impl WinScreen {
         match e["t"].as_str().unwrap_or("") {
             "move" => {
                 let (x, y) = self.absolute(e, frame);
-                send(&[mouse(x, y, 0, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK)]);
+                send(&[mouse(
+                    x,
+                    y,
+                    0,
+                    MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
+                )]);
             }
             "button" => {
                 let (x, y) = self.absolute(e, frame);
@@ -178,7 +265,10 @@ impl WinScreen {
                 };
                 let at = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
                 // A release from the app's "let go of everything" carries no position.
-                if down || e["x"].as_f64().unwrap_or(0.) != 0. || e["y"].as_f64().unwrap_or(0.) != 0. {
+                if down
+                    || e["x"].as_f64().unwrap_or(0.) != 0.
+                    || e["y"].as_f64().unwrap_or(0.) != 0.
+                {
                     send(&[mouse(x, y, 0, at), mouse(0, 0, 0, flag)]);
                 } else {
                     send(&[mouse(0, 0, 0, flag)]);
@@ -191,14 +281,27 @@ impl WinScreen {
             "scroll" => {
                 let (x, y) = self.absolute(e, frame);
                 let at = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
-                let (dy, dx) = (e["dy"].as_i64().unwrap_or(0).clamp(-20, 20), e["dx"].as_i64().unwrap_or(0).clamp(-20, 20));
+                let (dy, dx) = (
+                    e["dy"].as_i64().unwrap_or(0).clamp(-20, 20),
+                    e["dx"].as_i64().unwrap_or(0).clamp(-20, 20),
+                );
                 let mut events = vec![mouse(x, y, 0, at)];
                 // Down is positive here, negative for Windows' wheel.
                 if dy != 0 {
-                    events.push(mouse(0, 0, (-dy * WHEEL_DELTA as i64) as i32, MOUSEEVENTF_WHEEL));
+                    events.push(mouse(
+                        0,
+                        0,
+                        (-dy * WHEEL_DELTA as i64) as i32,
+                        MOUSEEVENTF_WHEEL,
+                    ));
                 }
                 if dx != 0 {
-                    events.push(mouse(0, 0, (dx * WHEEL_DELTA as i64) as i32, MOUSEEVENTF_HWHEEL));
+                    events.push(mouse(
+                        0,
+                        0,
+                        (dx * WHEEL_DELTA as i64) as i32,
+                        MOUSEEVENTF_HWHEEL,
+                    ));
                 }
                 send(&events);
             }
@@ -220,11 +323,17 @@ impl WinScreen {
                             let scan = unsafe { VkKeyScanW(u) };
                             if scan != -1 && u < 0x80 {
                                 let vk = (scan as u16) & 0xff;
-                                let mods: Vec<VIRTUAL_KEY> = [(0x100, VK_SHIFT), (0x200, VK_CONTROL), (0x400, VK_MENU)].iter().filter(|(bit, _)| scan as u16 & bit != 0).map(|(_, k)| *k).collect();
+                                let mods: Vec<VIRTUAL_KEY> =
+                                    [(0x100, VK_SHIFT), (0x200, VK_CONTROL), (0x400, VK_MENU)]
+                                        .iter()
+                                        .filter(|(bit, _)| scan as u16 & bit != 0)
+                                        .map(|(_, k)| *k)
+                                        .collect();
                                 events.extend(mods.iter().map(|m| key(*m, 0, 0)));
                                 events.push(key(vk, 0, 0));
                                 events.push(key(vk, 0, KEYEVENTF_KEYUP));
-                                events.extend(mods.iter().rev().map(|m| key(*m, 0, KEYEVENTF_KEYUP)));
+                                events
+                                    .extend(mods.iter().rev().map(|m| key(*m, 0, KEYEVENTF_KEYUP)));
                             } else {
                                 events.push(key(0, u, KEYEVENTF_UNICODE));
                                 events.push(key(0, u, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP));
@@ -237,7 +346,9 @@ impl WinScreen {
             "key" => {
                 let sym = e["keysym"].as_u64().unwrap_or(0) as u32;
                 let down = e["down"].as_bool().unwrap_or(false);
-                let Some((vk, extended)) = vk_of(sym) else { return };
+                let Some((vk, extended)) = vk_of(sym) else {
+                    return;
+                };
                 let mut flags = if extended { KEYEVENTF_EXTENDEDKEY } else { 0 };
                 if !down {
                     flags |= KEYEVENTF_KEYUP;
@@ -256,7 +367,11 @@ impl WinScreen {
 impl Drop for WinScreen {
     fn drop(&mut self) {
         // Nothing stays held down when the view goes away.
-        let keys: Vec<INPUT> = self.held.iter().map(|vk| key(*vk, 0, KEYEVENTF_KEYUP)).collect();
+        let keys: Vec<INPUT> = self
+            .held
+            .iter()
+            .map(|vk| key(*vk, 0, KEYEVENTF_KEYUP))
+            .collect();
         send(&keys);
         for b in self.buttons.clone() {
             let flag = match b {
@@ -275,16 +390,45 @@ impl Drop for WinScreen {
 }
 
 fn mouse(dx: i32, dy: i32, data: i32, flags: MOUSE_EVENT_FLAGS) -> INPUT {
-    INPUT { r#type: INPUT_MOUSE, Anonymous: INPUT_0 { mi: MOUSEINPUT { dx, dy, mouseData: data as u32, dwFlags: flags, time: 0, dwExtraInfo: 0 } } }
+    INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT {
+                dx,
+                dy,
+                mouseData: data as u32,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
 }
 
 fn key(vk: VIRTUAL_KEY, scan: u16, flags: KEYBD_EVENT_FLAGS) -> INPUT {
-    INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: vk, wScan: scan, dwFlags: flags, time: 0, dwExtraInfo: 0 } } }
+    INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: vk,
+                wScan: scan,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
 }
 
 fn send(events: &[INPUT]) {
     if !events.is_empty() {
-        unsafe { SendInput(events.len() as u32, events.as_ptr(), std::mem::size_of::<INPUT>() as i32) };
+        unsafe {
+            SendInput(
+                events.len() as u32,
+                events.as_ptr(),
+                std::mem::size_of::<INPUT>() as i32,
+            )
+        };
     }
 }
 
@@ -347,7 +491,9 @@ fn clipboard_text() -> Option<String> {
     use windows_sys::Win32::System::DataExchange::*;
     use windows_sys::Win32::System::Memory::*;
     unsafe {
-        if IsClipboardFormatAvailable(CF_UNICODETEXT) == 0 || OpenClipboard(std::ptr::null_mut()) == 0 {
+        if IsClipboardFormatAvailable(CF_UNICODETEXT) == 0
+            || OpenClipboard(std::ptr::null_mut()) == 0
+        {
             return None;
         }
         let h = GetClipboardData(CF_UNICODETEXT);
@@ -415,7 +561,8 @@ pub fn clip(rx: std::sync::mpsc::Receiver<String>, changed: impl Fn(&str) -> boo
         let now = unsafe { GetClipboardSequenceNumber() };
         if now != seen {
             seen = now;
-            if let Some(text) = clipboard_text().filter(|t| !t.is_empty() && t.len() <= super::clipboard::MAX)
+            if let Some(text) =
+                clipboard_text().filter(|t| !t.is_empty() && t.len() <= super::clipboard::MAX)
                 && !changed(&text)
             {
                 return;
@@ -428,9 +575,15 @@ pub fn clip(rx: std::sync::mpsc::Receiver<String>, changed: impl Fn(&str) -> boo
 
 /// Whether this process runs in the session on the screen (not sshd's session 0).
 pub fn in_desktop_session() -> bool {
-    use windows_sys::Win32::System::RemoteDesktop::{ProcessIdToSessionId, WTSGetActiveConsoleSessionId};
+    use windows_sys::Win32::System::RemoteDesktop::{
+        ProcessIdToSessionId, WTSGetActiveConsoleSessionId,
+    };
     let mut session = 0u32;
-    unsafe { ProcessIdToSessionId(std::process::id(), &mut session) != 0 && session != 0 && session == WTSGetActiveConsoleSessionId() }
+    unsafe {
+        ProcessIdToSessionId(std::process::id(), &mut session) != 0
+            && session != 0
+            && session == WTSGetActiveConsoleSessionId()
+    }
 }
 
 /// Where the desktop session's helper listens: "port token".
@@ -442,8 +595,13 @@ fn gui_port_file() -> std::path::PathBuf {
 /// stdin and stdout, as the connection.
 fn ask_gui_server(args: &[String]) -> io::Result<TcpStream> {
     let text = std::fs::read_to_string(gui_port_file())?;
-    let (port, token) = text.trim().split_once(' ').ok_or_else(|| io::Error::other("gui.port is damaged"))?;
-    let port: u16 = port.parse().map_err(|_| io::Error::other("gui.port is damaged"))?;
+    let (port, token) = text
+        .trim()
+        .split_once(' ')
+        .ok_or_else(|| io::Error::other("gui.port is damaged"))?;
+    let port: u16 = port
+        .parse()
+        .map_err(|_| io::Error::other("gui.port is damaged"))?;
     let mut s = TcpStream::connect(("127.0.0.1", port))?;
     s.write_all(format!("{token}\n{}\n", json!({ "run": args })).as_bytes())?;
     Ok(s)
@@ -473,16 +631,23 @@ pub fn start_in_desktop(args: &[String]) -> Result<TcpStream, String> {
     // It's up within a few seconds when someone is signed in.
     let deadline = Instant::now() + Duration::from_secs(12);
     let result = match started {
-        Err(e) => Err(format!("couldn't start a helper in the desktop session: {e}")),
-        Ok(_) => loop {
-            match ask_gui_server(args) {
+        Err(e) => Err(format!(
+            "couldn't start a helper in the desktop session: {e}"
+        )),
+        Ok(_) => {
+            loop {
+                match ask_gui_server(args) {
                 Ok(s) => break Ok(s),
                 Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(150)),
                 Err(_) => break Err("Nobody is signed in to Windows' desktop here, so there's no screen to show.".to_string()),
             }
-        },
+            }
+        }
     };
-    let _ = crate::win::ps(&format!("Unregister-ScheduledTask -TaskName {} -Confirm:$false -ErrorAction SilentlyContinue", q(&task)));
+    let _ = crate::win::ps(&format!(
+        "Unregister-ScheduledTask -TaskName {} -Confirm:$false -ErrorAction SilentlyContinue",
+        q(&task)
+    ));
     result
 }
 
@@ -500,26 +665,36 @@ pub fn gui_serve() -> i32 {
     if ask_gui_server(&["version".to_string()]).is_ok() {
         return 0; // one's already here
     }
-    let Ok(listener) = TcpListener::bind(("127.0.0.1", 0)) else { return 1 };
-    let Ok(port) = listener.local_addr().map(|a| a.port()) else { return 1 };
+    let Ok(listener) = TcpListener::bind(("127.0.0.1", 0)) else {
+        return 1;
+    };
+    let Ok(port) = listener.local_addr().map(|a| a.port()) else {
+        return 1;
+    };
     let mut bytes = [0u8; 24];
     if ring::rand::SystemRandom::new().fill(&mut bytes).is_err() {
         return 1;
     }
     let token: Arc<String> = Arc::new(bytes.iter().map(|b| format!("{b:02x}")).collect());
     let tmp = gui_port_file().with_extension(format!("port.{}", std::process::id()));
-    if std::fs::write(&tmp, format!("{port} {token}")).and_then(|_| std::fs::rename(&tmp, gui_port_file())).is_err() {
+    if std::fs::write(&tmp, format!("{port} {token}"))
+        .and_then(|_| std::fs::rename(&tmp, gui_port_file()))
+        .is_err()
+    {
         return 1;
     }
     let active = Arc::new(AtomicUsize::new(0));
     let last = Arc::new(std::sync::Mutex::new(Instant::now()));
     {
         let (active, last) = (active.clone(), last.clone());
-        std::thread::spawn(move || loop {
-            std::thread::sleep(Duration::from_secs(30));
-            if active.load(Ordering::Relaxed) == 0 && last.lock().unwrap().elapsed() > GUI_IDLE {
-                let _ = std::fs::remove_file(gui_port_file());
-                std::process::exit(0);
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(Duration::from_secs(30));
+                if active.load(Ordering::Relaxed) == 0 && last.lock().unwrap().elapsed() > GUI_IDLE
+                {
+                    let _ = std::fs::remove_file(gui_port_file());
+                    std::process::exit(0);
+                }
             }
         });
     }
@@ -543,10 +718,23 @@ pub fn gui_serve() -> i32 {
             if line(&mut conn).as_deref() != Some(token.as_str()) {
                 return;
             }
-            let Some(req) = line(&mut conn).and_then(|l| serde_json::from_str::<Value>(&l).ok()) else { return };
-            let args: Vec<String> = req["run"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
+            let Some(req) = line(&mut conn).and_then(|l| serde_json::from_str::<Value>(&l).ok())
+            else {
+                return;
+            };
+            let args: Vec<String> = req["run"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
             // Only the programs that need the desktop session.
-            if !matches!(args.first().map(String::as_str), Some("screen" | "clip" | "displays" | "version")) {
+            if !matches!(
+                args.first().map(String::as_str),
+                Some("screen" | "clip" | "displays" | "version")
+            ) {
                 return;
             }
             let _ = conn.set_read_timeout(None);
@@ -561,8 +749,13 @@ pub fn gui_serve() -> i32 {
 
 /// Runs `muxen-agent <args>` with the connection as its stdin and stdout, until either ends.
 fn serve_program(mut conn: TcpStream, args: &[String]) {
-    let Ok(exe) = std::env::current_exe() else { return };
-    let log = std::fs::OpenOptions::new().create(true).append(true).open(crate::home_dir().join("screen.log"));
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(crate::home_dir().join("screen.log"));
     let mut cmd = Command::new(exe);
     cmd.args(args).stdin(Stdio::piped()).stdout(Stdio::piped());
     match log {

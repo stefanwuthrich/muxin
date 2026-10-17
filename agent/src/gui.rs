@@ -58,21 +58,39 @@ pub fn serve() {
 /// One connection: `{"run": ["screen", ...]}`, then the program's stdin and
 /// stdout are the connection, until either side closes.
 fn run(mut conn: UnixStream) {
-    let Ok(req) = crate::proto::read_line(&mut conn) else { return };
-    let args: Vec<String> = req["run"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
+    let Ok(req) = crate::proto::read_line(&mut conn) else {
+        return;
+    };
+    let args: Vec<String> = req["run"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
     // Only the programs that need the session.
-    if !matches!(args.first().map(String::as_str), Some("screen" | "clip" | "displays" | "display-mode" | "vdisplay")) {
+    if !matches!(
+        args.first().map(String::as_str),
+        Some("screen" | "clip" | "displays" | "display-mode" | "vdisplay")
+    ) {
         return;
     }
     // A virtual display's holder outlives the connection: start it, say its id.
     #[cfg(target_os = "macos")]
     if args.first().map(String::as_str) == Some("vdisplay") {
-        let line = crate::displays::start_holder(&args).unwrap_or_else(|e| json!({ "error": e }).to_string());
+        let line = crate::displays::start_holder(&args)
+            .unwrap_or_else(|e| json!({ "error": e }).to_string());
         let _ = writeln!(conn, "{line}");
         return;
     }
-    let Ok(exe) = std::env::current_exe() else { return };
-    let log = std::fs::OpenOptions::new().create(true).append(true).open(crate::home_dir().join("screen.log"));
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(crate::home_dir().join("screen.log"));
     let mut cmd = Command::new(exe);
     cmd.args(&args).stdin(Stdio::piped()).stdout(Stdio::piped());
     match log {
@@ -108,8 +126,14 @@ pub fn connect(args: &[String]) -> Result<UnixStream, String> {
             loop {
                 match UnixStream::connect(socket()) {
                     Ok(s) => break s,
-                    Err(_) if Instant::now() < deadline => thread::sleep(Duration::from_millis(200)),
-                    Err(e) => return Err(format!("the agent's background service isn't running here ({e})")),
+                    Err(_) if Instant::now() < deadline => {
+                        thread::sleep(Duration::from_millis(200))
+                    }
+                    Err(e) => {
+                        return Err(format!(
+                            "the agent's background service isn't running here ({e})"
+                        ));
+                    }
                 }
             }
         }
@@ -121,7 +145,9 @@ pub fn connect(args: &[String]) -> Result<UnixStream, String> {
 /// Reads one frame (for the HELLO a program starts with).
 pub fn read_hello(r: &mut impl Read) -> Value {
     match crate::proto::read_frame(r) {
-        Ok((crate::desktop::HELLO, p)) => serde_json::from_slice::<Value>(&p).unwrap_or(Value::Null),
+        Ok((crate::desktop::HELLO, p)) => {
+            serde_json::from_slice::<Value>(&p).unwrap_or(Value::Null)
+        }
         _ => json!({ "error": "the screen capture stopped right away" }),
     }
 }

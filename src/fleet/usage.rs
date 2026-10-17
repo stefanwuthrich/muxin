@@ -103,20 +103,40 @@ pub const PRICES_AS_OF: &str = "October 2026";
 /// standard tier for the rest (October 2026). Unknown models have none
 /// rather than a guess.
 pub fn price(model: &str) -> Option<Price> {
-    let p = |input: f64, cache_write: f64, cache_write_1h: f64, cache_read: f64, output: f64| Some(Price { input, cache_write, cache_write_1h, cache_read, output });
+    let p = |input: f64, cache_write: f64, cache_write_1h: f64, cache_read: f64, output: f64| {
+        Some(Price {
+            input,
+            cache_write,
+            cache_write_1h,
+            cache_read,
+            output,
+        })
+    };
     // OpenAI's have no cache writes: they're input.
-    let o = |input: f64, cache_read: f64, output: f64| Some(Price { input, cache_write: input, cache_write_1h: input, cache_read, output });
+    let o = |input: f64, cache_read: f64, output: f64| {
+        Some(Price {
+            input,
+            cache_write: input,
+            cache_write_1h: input,
+            cache_read,
+            output,
+        })
+    };
     if let Some(rest) = model.strip_prefix("claude-") {
         // "claude-opus-5-5", "claude-sonnet-4-5-20250929", "claude-3-5-haiku-…".
         let name = match rest.rsplit_once('-') {
-            Some((head, date)) if date.len() == 8 && date.chars().all(|c| c.is_ascii_digit()) => head,
+            Some((head, date)) if date.len() == 8 && date.chars().all(|c| c.is_ascii_digit()) => {
+                head
+            }
             _ => rest,
         };
         return match name {
             "fable-5-1" | "mythos-5-1" => p(10., 12.5, 20., 0.25, 50.),
             "fable-5" | "mythos-5" => p(10., 12.5, 20., 1., 50.),
             "opus-5-5" => p(4., 5., 8., 0.20, 20.),
-            "opus-5" | "opus-4-8" | "opus-4-7" | "opus-4-6" | "opus-4-5" => p(5., 6.25, 10., 0.5, 25.),
+            "opus-5" | "opus-4-8" | "opus-4-7" | "opus-4-6" | "opus-4-5" => {
+                p(5., 6.25, 10., 0.5, 25.)
+            }
             "opus-4-1" | "opus-4" | "opus-4-0" => p(15., 18.75, 30., 1.5, 75.),
             "sonnet-5-5" => p(2., 2.5, 4., 0.10, 10.),
             "sonnet-5" => p(2., 2.5, 4., 0.20, 10.),
@@ -156,7 +176,14 @@ pub fn price(model: &str) -> Option<Price> {
 pub fn cost(model: &str, t: &Tokens) -> Option<f64> {
     let p = price(model)?;
     let m = 1_000_000.;
-    Some((t.input as f64 * p.input + t.output as f64 * p.output + t.cache_read as f64 * p.cache_read + t.cache_write as f64 * p.cache_write + t.cache_write_1h as f64 * p.cache_write_1h) / m)
+    Some(
+        (t.input as f64 * p.input
+            + t.output as f64 * p.output
+            + t.cache_read as f64 * p.cache_read
+            + t.cache_write as f64 * p.cache_write
+            + t.cache_write_1h as f64 * p.cache_write_1h)
+            / m,
+    )
 }
 
 /// An hour bucket's day, in this computer's time zone.
@@ -176,22 +203,39 @@ pub fn tool_name(tool: &str) -> &str {
 
 impl Engine {
     /// A machine's agents' tokens over the last `days`.
-    pub async fn usage(self: &Arc<Self>, machine_id: &str, days: u32) -> Result<MachineUsage, String> {
-        let (spec, probe) = self.machine(machine_id).ok_or_else(|| format!("No machine called {machine_id}."))?;
+    pub async fn usage(
+        self: &Arc<Self>,
+        machine_id: &str,
+        days: u32,
+    ) -> Result<MachineUsage, String> {
+        let (spec, probe) = self
+            .machine(machine_id)
+            .ok_or_else(|| format!("No machine called {machine_id}."))?;
         if self.demo_world().is_some() {
             return Ok(demo(machine_id, days));
         }
         super::sessions::agent::ensure(&spec, probe.as_ref()).await?;
-        let reply = super::sessions::agent::ctl(&spec, &json!({ "op": "usage", "days": days })).await?;
-        let mut u: MachineUsage = serde_json::from_value(reply).map_err(|_| format!("{} told its usage in a way Muxin can't read.", spec.name))?;
+        let reply =
+            super::sessions::agent::ctl(&spec, &json!({ "op": "usage", "days": days })).await?;
+        let mut u: MachineUsage = serde_json::from_value(reply)
+            .map_err(|_| format!("{} told its usage in a way Muxin can't read.", spec.name))?;
         u.machine_id = spec.id.clone();
         Ok(u)
     }
 
     /// Every reachable machine's, side by side (a machine that can't say is left out, with why).
-    pub async fn usage_all(self: &Arc<Self>, days: u32) -> Vec<(String, Result<MachineUsage, String>)> {
+    pub async fn usage_all(
+        self: &Arc<Self>,
+        days: u32,
+    ) -> Vec<(String, Result<MachineUsage, String>)> {
         // Not just the ones checked already: a machine not reached yet says why.
-        let ids: Vec<String> = self.current().machines.iter().filter(|m| !m.is_down() && !m.host.is_empty()).map(|m| m.id.clone()).collect();
+        let ids: Vec<String> = self
+            .current()
+            .machines
+            .iter()
+            .filter(|m| !m.is_down() && !m.host.is_empty())
+            .map(|m| m.id.clone())
+            .collect();
         let results = futures::future::join_all(ids.iter().map(|id| self.usage(id, days))).await;
         ids.into_iter().zip(results).collect()
     }
@@ -202,14 +246,23 @@ pub fn by_model(all: &[MachineUsage]) -> Vec<(String, String, Tokens, Option<f64
     let mut m: HashMap<(String, String), Tokens> = HashMap::new();
     for u in all {
         for h in &u.hours {
-            m.entry((h.tool.clone(), h.model.clone())).or_default().add(&h.tokens);
+            m.entry((h.tool.clone(), h.model.clone()))
+                .or_default()
+                .add(&h.tokens);
         }
     }
-    let mut out: Vec<(String, String, Tokens, Option<f64>)> = m.into_iter().map(|((tool, model), t)| {
-        let c = cost(&model, &t);
-        (tool, model, t, c)
-    }).collect();
-    out.sort_by(|a, b| b.3.unwrap_or(0.).total_cmp(&a.3.unwrap_or(0.)).then(b.2.total().cmp(&a.2.total())));
+    let mut out: Vec<(String, String, Tokens, Option<f64>)> = m
+        .into_iter()
+        .map(|((tool, model), t)| {
+            let c = cost(&model, &t);
+            (tool, model, t, c)
+        })
+        .collect();
+    out.sort_by(|a, b| {
+        b.3.unwrap_or(0.)
+            .total_cmp(&a.3.unwrap_or(0.))
+            .then(b.2.total().cmp(&a.2.total()))
+    });
     out
 }
 
@@ -218,7 +271,12 @@ fn demo(machine_id: &str, days: u32) -> MachineUsage {
         "forge" => ("claude", "claude-opus-5-5", 1.0),
         "orbit" => ("codex", "gpt-6.1-sol", 0.6),
         "beacon" => ("claude", "claude-sonnet-5-5", 0.8),
-        _ => return MachineUsage { machine_id: machine_id.into(), ..Default::default() },
+        _ => {
+            return MachineUsage {
+                machine_id: machine_id.into(),
+                ..Default::default()
+            };
+        }
     };
     let now = Utc::now();
     let hours = (0..(days.min(30) * 24))
@@ -230,12 +288,35 @@ fn demo(machine_id: &str, days: u32) -> MachineUsage {
                 hour: at.format("%Y-%m-%dT%H").to_string(),
                 tool: tool.into(),
                 model: model.into(),
-                tokens: Tokens { input: (2_000. * f) as u64, output: (60_000. * f) as u64, cache_read: (3_000_000. * f) as u64, cache_write: 0, cache_write_1h: (90_000. * f) as u64, requests: (40. * f) as u64 },
+                tokens: Tokens {
+                    input: (2_000. * f) as u64,
+                    output: (60_000. * f) as u64,
+                    cache_read: (3_000_000. * f) as u64,
+                    cache_write: 0,
+                    cache_write_1h: (90_000. * f) as u64,
+                    requests: (40. * f) as u64,
+                },
             }
         })
         .collect();
-    let folder = |cwd: &str| UsageFolder { tool: tool.into(), cwd: cwd.into(), last: now.to_rfc3339(), models: vec![model.into()], tokens: Tokens { output: 900_000, cache_read: 40_000_000, requests: 600, ..Default::default() } };
-    MachineUsage { machine_id: machine_id.into(), tools: vec![tool.into()], hours, folders: vec![folder("~/code/checkout"), folder("~/code/api")] }
+    let folder = |cwd: &str| UsageFolder {
+        tool: tool.into(),
+        cwd: cwd.into(),
+        last: now.to_rfc3339(),
+        models: vec![model.into()],
+        tokens: Tokens {
+            output: 900_000,
+            cache_read: 40_000_000,
+            requests: 600,
+            ..Default::default()
+        },
+    };
+    MachineUsage {
+        machine_id: machine_id.into(),
+        tools: vec![tool.into()],
+        hours,
+        folders: vec![folder("~/code/checkout"), folder("~/code/api")],
+    }
 }
 
 #[cfg(test)]
@@ -245,21 +326,49 @@ mod tests {
     #[test]
     fn prices_known_models_only() {
         assert_eq!(price("claude-opus-5-5").map(|p| p.output), Some(20.));
-        assert_eq!(price("claude-sonnet-4-5-20250929").map(|p| p.input), Some(3.));
-        assert_eq!(price("claude-3-5-haiku-20241022").map(|p| p.output), Some(4.));
+        assert_eq!(
+            price("claude-sonnet-4-5-20250929").map(|p| p.input),
+            Some(3.)
+        );
+        assert_eq!(
+            price("claude-3-5-haiku-20241022").map(|p| p.output),
+            Some(4.)
+        );
         assert_eq!(price("gpt-6.1-sol").map(|p| p.cache_read), Some(0.10));
         assert_eq!(price("claude-opus-9"), None);
         assert_eq!(price("gpt-5.1-codex-max"), None);
         // 1M output and 10M cache reads on Opus 5.5: $20 + $2.
-        let t = Tokens { output: 1_000_000, cache_read: 10_000_000, ..Default::default() };
+        let t = Tokens {
+            output: 1_000_000,
+            cache_read: 10_000_000,
+            ..Default::default()
+        };
         assert!((cost("claude-opus-5-5", &t).unwrap() - 22.).abs() < 1e-9);
     }
 
     #[test]
     fn totals_by_model() {
-        let h = |model: &str, out: u64| UsageHour { hour: "2026-10-12T17".into(), tool: "claude".into(), model: model.into(), tokens: Tokens { output: out, requests: 1, ..Default::default() } };
-        let a = MachineUsage { hours: vec![h("claude-opus-5-5", 1_000_000), h("claude-sonnet-5-5", 1_000_000)], ..Default::default() };
-        let b = MachineUsage { hours: vec![h("claude-opus-5-5", 1_000_000)], ..Default::default() };
+        let h = |model: &str, out: u64| UsageHour {
+            hour: "2026-10-12T17".into(),
+            tool: "claude".into(),
+            model: model.into(),
+            tokens: Tokens {
+                output: out,
+                requests: 1,
+                ..Default::default()
+            },
+        };
+        let a = MachineUsage {
+            hours: vec![
+                h("claude-opus-5-5", 1_000_000),
+                h("claude-sonnet-5-5", 1_000_000),
+            ],
+            ..Default::default()
+        };
+        let b = MachineUsage {
+            hours: vec![h("claude-opus-5-5", 1_000_000)],
+            ..Default::default()
+        };
         let m = by_model(&[a, b]);
         assert_eq!(m[0].1, "claude-opus-5-5");
         assert_eq!(m[0].2.output, 2_000_000);

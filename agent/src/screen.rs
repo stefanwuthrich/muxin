@@ -36,7 +36,11 @@ pub fn redraw<T: alacritty_terminal::event::EventListener>(term: &Term<T>) -> Ve
     if !alt {
         out.push_str("\x1b[3J");
     }
-    let history = if alt { 0 } else { grid.history_size().min(REDRAW_HISTORY) as i32 };
+    let history = if alt {
+        0
+    } else {
+        grid.history_size().min(REDRAW_HISTORY) as i32
+    };
     let content = term.renderable_content();
     let cursor = content.cursor.point;
     // Down to the last row with something on it (or the cursor), no further:
@@ -49,11 +53,20 @@ pub fn redraw<T: alacritty_terminal::event::EventListener>(term: &Term<T>) -> Ve
             s
         })
         .collect();
-    let keep = (lines.iter().rposition(|l| !l.is_empty()).map_or(0, |i| i + 1)).max((history + cursor.line.0 + 1).max(0) as usize);
+    let keep = (lines
+        .iter()
+        .rposition(|l| !l.is_empty())
+        .map_or(0, |i| i + 1))
+    .max((history + cursor.line.0 + 1).max(0) as usize);
     lines.truncate(keep);
     out.push_str(&lines.join("\r\n"));
 
-    let _ = write!(out, "\x1b[{};{}H", cursor.line.0 + content.display_offset as i32 + 1, cursor.column.0 + 1);
+    let _ = write!(
+        out,
+        "\x1b[{};{}H",
+        cursor.line.0 + content.display_offset as i32 + 1,
+        cursor.column.0 + 1
+    );
     for (flag, on) in [
         (TermMode::APP_CURSOR, "\x1b[?1h"),
         (TermMode::APP_KEYPAD, "\x1b="),
@@ -87,12 +100,21 @@ pub fn redraw<T: alacritty_terminal::event::EventListener>(term: &Term<T>) -> Ve
 
 /// One grid row with its colors, trailing blanks dropped.
 fn row(cells: &alacritty_terminal::grid::Row<Cell>, cols: usize, out: &mut String) {
-    let blank = |c: &Cell| c.c == ' ' && c.bg == Color::Named(NamedColor::Background) && !c.flags.intersects(STYLE);
-    let end = (0..cols).rev().find(|&i| !blank(&cells[Column(i)])).map(|i| i + 1).unwrap_or(0);
+    let blank = |c: &Cell| {
+        c.c == ' ' && c.bg == Color::Named(NamedColor::Background) && !c.flags.intersects(STYLE)
+    };
+    let end = (0..cols)
+        .rev()
+        .find(|&i| !blank(&cells[Column(i)]))
+        .map(|i| i + 1)
+        .unwrap_or(0);
     let mut current: Option<(Color, Color, Flags)> = None;
     for i in 0..end {
         let cell = &cells[Column(i)];
-        if cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
+        if cell
+            .flags
+            .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+        {
             continue;
         }
         let style = (cell.fg, cell.bg, cell.flags & STYLE);
@@ -105,7 +127,13 @@ fn row(cells: &alacritty_terminal::grid::Row<Cell>, cols: usize, out: &mut Strin
             out.extend(extra.iter());
         }
     }
-    if current.is_some_and(|s| s != (Color::Named(NamedColor::Foreground), Color::Named(NamedColor::Background), Flags::empty())) {
+    if current.is_some_and(|s| {
+        s != (
+            Color::Named(NamedColor::Foreground),
+            Color::Named(NamedColor::Background),
+            Flags::empty(),
+        )
+    }) {
         out.push_str("\x1b[0m");
     }
 }
@@ -168,7 +196,10 @@ pub fn text<T>(term: &Term<T>, history: usize) -> String {
             let mut s = String::with_capacity(cols);
             for i in 0..cols {
                 let cell = &row[Column(i)];
-                if !cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
+                if !cell
+                    .flags
+                    .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+                {
                     s.push(cell.c);
                 }
             }
@@ -227,13 +258,24 @@ mod tests {
     fn a_smaller_terminal_keeps_the_screen_in_view() {
         // A session's screen with 36 rows, mostly empty, shown in a terminal
         // with fewer (the window is smaller than the session was).
-        let feed = |t: &mut Term<VoidListener>, b: &[u8]| Processor::<alacritty_terminal::vte::ansi::StdSyncHandler>::new().advance(t, b);
+        let feed = |t: &mut Term<VoidListener>, b: &[u8]| {
+            Processor::<alacritty_terminal::vte::ansi::StdSyncHandler>::new().advance(t, b)
+        };
         let mut session = Term::new(Config::default(), &Size(120, 36), VoidListener);
         feed(&mut session, b"~\r\n> echo hi\r\nhi\r\n~\r\n> ");
         let mut client = Term::new(Config::default(), &Size(118, 31), VoidListener);
         feed(&mut client, &redraw(&session));
-        let row = |t: &Term<VoidListener>, l: i32| (0..10).map(|c| t.grid()[Line(l)][Column(c)].c).collect::<String>().trim_end().to_string();
-        assert_eq!((row(&client, 0), row(&client, 2), row(&client, 4)), ("~".into(), "hi".into(), ">".into()));
+        let row = |t: &Term<VoidListener>, l: i32| {
+            (0..10)
+                .map(|c| t.grid()[Line(l)][Column(c)].c)
+                .collect::<String>()
+                .trim_end()
+                .to_string()
+        };
+        assert_eq!(
+            (row(&client, 0), row(&client, 2), row(&client, 4)),
+            ("~".into(), "hi".into(), ">".into())
+        );
         let (a, b) = (session.grid().cursor.point, client.grid().cursor.point);
         assert_eq!((a.line, a.column), (b.line, b.column));
     }
