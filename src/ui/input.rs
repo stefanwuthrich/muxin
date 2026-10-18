@@ -6,9 +6,9 @@ use std::ops::Range;
 use gpui::{
     App, Bounds, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler, Entity,
     EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId, KeyBinding,
-    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point,
-    ShapedLine, SharedString, Style, TextRun, UTF16Selection, Window, actions, div, fill, point,
-    prelude::*, px, relative, size,
+    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, NoAction, PaintQuad,
+    Pixels, Point, ShapedLine, SharedString, Style, TextRun, UTF16Selection, Window, actions, div,
+    fill, point, prelude::*, px, relative, size,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -54,6 +54,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-right", End, Some(CONTEXT)),
         KeyBinding::new("enter", Enter, Some(CONTEXT)),
         KeyBinding::new("escape", Escape, Some(CONTEXT)),
+        // `/` focuses search on the window. In a field it has to type.
+        KeyBinding::new("/", NoAction, Some(CONTEXT)),
     ]);
 }
 

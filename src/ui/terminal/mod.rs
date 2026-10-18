@@ -6,6 +6,7 @@
 mod boxdraw;
 mod colors;
 mod keys;
+mod links;
 mod render;
 
 use std::borrow::Cow;
@@ -220,6 +221,11 @@ pub struct TerminalView {
     exited: bool,
     /// Dragging a local text selection.
     selecting: bool,
+    /// A link the current click started on. Opened on release, unless the
+    /// pointer moved into a selection.
+    pending_link: Option<String>,
+    /// The pointer is over a link a click would open.
+    link_hover: bool,
     /// The button held in mouse-reporting mode, and the last cell reported.
     pressed: Option<(u8, (usize, usize))>,
     scroll_rest: f32,
@@ -407,6 +413,8 @@ impl TerminalView {
             focus,
             exited: false,
             selecting: false,
+            pending_link: None,
+            link_hover: false,
             pressed: None,
             scroll_rest: 0.,
             cursor_on: true,
@@ -495,18 +503,33 @@ impl TerminalView {
             cx.notify();
         }
         let ks = &e.keystroke;
-        if ks.modifiers.platform
-            || (!cfg!(target_os = "macos") && ks.modifiers.control && ks.modifiers.shift)
-        {
-            let handled = match ks.key.as_str() {
-                "c" => self.copy(cx),
-                "v" => self.paste(cx),
-                _ => false,
+        // Copy and paste: ⌘C/⌘V on a Mac, Ctrl+Shift+C/V elsewhere. On a Mac
+        // every ⌘ chord stays with the app. Elsewhere, other Ctrl+Shift
+        // chords go to the program, as they do in a terminal there.
+        let app_chord = if cfg!(target_os = "macos") {
+            ks.modifiers.platform
+        } else {
+            ks.modifiers.control && ks.modifiers.shift
+        };
+        if app_chord {
+            let taken = match ks.key.as_str() {
+                "c" => {
+                    if self.copy(cx) {
+                        cx.stop_propagation();
+                    }
+                    true
+                }
+                "v" => {
+                    if self.paste(cx) {
+                        cx.stop_propagation();
+                    }
+                    true
+                }
+                _ => cfg!(target_os = "macos"),
             };
-            if handled {
-                cx.stop_propagation();
+            if taken {
+                return;
             }
-            return;
         }
         if self.exited {
             return;
@@ -550,6 +573,19 @@ impl TerminalView {
 
     fn cell(&self, pos: Point<Pixels>) -> Option<(usize, usize, bool)> {
         render::cell_at(&self.shared.geometry.lock().unwrap(), pos)
+    }
+
+    fn url_at(&self, col: usize, row: usize) -> Option<String> {
+        links::url_at(&self.shared.term.lock(), col, row)
+    }
+
+    /// A plain click opens a link. While a program is tracking the mouse,
+    /// Ctrl or Command does it instead, and Shift always selects.
+    fn opens_link(&self, mods: &Modifiers) -> bool {
+        if mods.shift {
+            return false;
+        }
+        self.reporting(mods).is_none() || mods.platform || mods.control
     }
 
     /// Programs that track the mouse (clicks, drags, wheel) get it,
@@ -598,6 +634,16 @@ impl TerminalView {
         let Some((col, row, right)) = self.cell(e.position) else {
             return;
         };
+        self.pending_link = None;
+        if button == MouseButton::Left && e.click_count == 1 && self.opens_link(&e.modifiers) {
+            if let Some(url) = self.url_at(col, row) {
+                if self.reporting(&e.modifiers).is_some() {
+                    cx.open_url(&url);
+                    return;
+                }
+                self.pending_link = Some(url);
+            }
+        }
         if let Some(mode) = self.reporting(&e.modifiers) {
             let code = match button {
                 MouseButton::Left => 0,
@@ -629,6 +675,7 @@ impl TerminalView {
         ));
         drop(term);
         self.selecting = true;
+        self.link_hover = false;
         cx.notify();
     }
 
@@ -643,6 +690,12 @@ impl TerminalView {
                 self.send_mouse(mode, code + 32, true, (col, row), &e.modifiers);
             }
             return;
+        }
+        let over =
+            !self.selecting && self.opens_link(&e.modifiers) && self.url_at(col, row).is_some();
+        if over != self.link_hover {
+            self.link_hover = over;
+            cx.notify();
         }
         if self.selecting && e.pressed_button == Some(MouseButton::Left) {
             let mut term = self.shared.term.lock();
@@ -672,10 +725,17 @@ impl TerminalView {
         if self.selecting {
             self.selecting = false;
             let mut term = self.shared.term.lock();
-            if term.selection.as_ref().is_some_and(|s| s.is_empty()) {
+            let empty = term.selection.as_ref().is_some_and(|s| s.is_empty());
+            if empty {
                 term.selection = None;
             }
             drop(term);
+            let url = self.pending_link.take();
+            if empty {
+                if let Some(url) = url {
+                    cx.open_url(&url);
+                }
+            }
             cx.notify();
         }
     }
@@ -733,7 +793,11 @@ impl Render for TerminalView {
             .track_focus(&self.focus)
             .size_full()
             .bg(palette.bg)
-            .cursor(CursorStyle::IBeam)
+            .cursor(if self.link_hover {
+                CursorStyle::PointingHand
+            } else {
+                CursorStyle::IBeam
+            })
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(
                 MouseButton::Left,
@@ -773,6 +837,7 @@ impl Render for TerminalView {
             .child(render::grid(
                 self.shared.clone(),
                 palette,
+                cx.theme().text_accent,
                 focused,
                 self.cursor_on || !focused,
                 Metrics::current(cx),

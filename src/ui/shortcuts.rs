@@ -332,6 +332,33 @@ pub fn label_for(cx: &App, id: &str) -> String {
     label(&keys(cx, id))
 }
 
+/// Chords this computer uses that Settings does not rebind: what they do,
+/// and how they read here (Ctrl on Linux, ⌘ on a Mac).
+pub fn fixed() -> Vec<(&'static str, String)> {
+    let (copy, paste) = if cfg!(target_os = "macos") {
+        ("cmd-c", "cmd-v")
+    } else {
+        ("ctrl-shift-c", "ctrl-shift-v")
+    };
+    let size = format!(
+        "{}   {}   {}",
+        label("secondary-+"),
+        label("secondary--"),
+        label("secondary-0")
+    );
+    vec![
+        ("Search, when not typing", label("/")),
+        ("Quit", label("secondary-q")),
+        ("Copy in a text field", label("secondary-c")),
+        ("Paste in a text field", label("secondary-v")),
+        ("Cut in a text field", label("secondary-x")),
+        ("Select all in a text field", label("secondary-a")),
+        ("Copy in a terminal", label(copy)),
+        ("Paste in a terminal", label(paste)),
+        ("Terminal text size", size),
+    ]
+}
+
 /// A key the user pressed in Settings, as the keys to bind: None when it
 /// can't be a shortcut (no ⌘, ⌃ or ⌥, so it would type instead).
 pub fn from_press(k: &Keystroke) -> Option<String> {
@@ -367,6 +394,20 @@ mod tests {
             })
         );
         assert_eq!(normalize(""), None);
+    }
+
+    #[test]
+    fn fixed_chords_follow_the_platform() {
+        let rows = fixed();
+        assert_eq!(rows[0], ("Search, when not typing", "/".into()));
+        let copy = rows.iter().find(|r| r.0 == "Copy in a terminal").unwrap();
+        if cfg!(target_os = "macos") {
+            assert_eq!(copy.1, "⌘C");
+        } else {
+            assert_eq!(copy.1, "Ctrl+Shift+C");
+        }
+        let size = rows.iter().find(|r| r.0 == "Terminal text size").unwrap();
+        assert!(!size.1.contains('⌘') || cfg!(target_os = "macos"));
     }
 
     #[test]

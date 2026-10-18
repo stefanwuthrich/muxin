@@ -2500,10 +2500,12 @@ impl Root {
     }
 
     fn focus_filter(&mut self, _: &FocusFilter, window: &mut Window, cx: &mut Context<Self>) {
-        // Not from under an open dialog.
-        if self.modal.is_none() {
-            window.focus(&self.filter.focus_handle(cx));
+        // A dialog is typing. Let `/` through instead of swallowing it.
+        if self.modal.is_some() {
+            cx.propagate();
+            return;
         }
+        window.focus(&self.filter.focus_handle(cx));
     }
 
     fn go_back(&mut self, _: &GoBack, window: &mut Window, cx: &mut Context<Self>) {

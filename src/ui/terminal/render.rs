@@ -14,6 +14,7 @@ use gpui::{
 
 use super::boxdraw::{self, Shape};
 use super::colors::{Palette, dim};
+use super::links;
 use super::{Geometry, Metrics, PAD_X, PAD_Y, Shared};
 use crate::ui::theme::mono_font;
 
@@ -92,6 +93,7 @@ pub(super) struct Frame {
 pub(super) fn grid(
     shared: Arc<Shared>,
     palette: Palette,
+    link: Hsla,
     focused: bool,
     cursor: bool,
     metrics: Metrics,
@@ -99,7 +101,7 @@ pub(super) fn grid(
     canvas(
         move |bounds, window, cx| {
             prepaint(
-                &shared, &palette, focused, cursor, metrics, bounds, window, cx,
+                &shared, &palette, link, focused, cursor, metrics, bounds, window, cx,
             )
         },
         |_, frame, window, cx| paint(frame, window, cx),
@@ -161,6 +163,7 @@ pub(super) fn family(window: &Window) -> SharedString {
 fn prepaint(
     shared: &Shared,
     palette: &Palette,
+    link_color: Hsla,
     focused: bool,
     show_cursor: bool,
     m: Metrics,
@@ -194,6 +197,7 @@ fn prepaint(
         let selection = content.selection;
         let cur = content.cursor;
         let screen_rows = term.screen_lines() as i32;
+        let link_cells = links::cells(&term);
         let mut cells = Vec::with_capacity(cols * rows);
         for indexed in content.display_iter {
             let row = indexed.point.line.0 + offset;
@@ -228,13 +232,32 @@ fn prepaint(
                 bg = Some(palette.cursor);
                 fg = palette.bg;
             }
-            let underline = if flags.contains(Flags::UNDERCURL) {
+            let mut underline = if flags.contains(Flags::UNDERCURL) {
                 Some(true)
             } else if flags.intersects(Flags::ALL_UNDERLINES) {
                 Some(false)
             } else {
                 None
             };
+            let cursor_block =
+                is_cursor && focused && show_cursor && cur.shape == CursorShape::Block;
+            let linked = link_cells
+                .get(row as usize * cols + indexed.point.column.0)
+                .copied()
+                .unwrap_or(false);
+            if linked && !cursor_block {
+                // Default-colored text becomes the app's link color. A color
+                // the program chose stays; the underline is what shows it's a link.
+                if matches!(
+                    cell.fg,
+                    Color::Named(NamedColor::Foreground | NamedColor::BrightForeground)
+                ) {
+                    fg = link_color;
+                }
+                if underline.is_none() {
+                    underline = Some(false);
+                }
+            }
             cells.push(CellOut {
                 row: row as usize,
                 col: indexed.point.column.0,

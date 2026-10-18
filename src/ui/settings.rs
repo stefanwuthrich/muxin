@@ -1657,9 +1657,32 @@ impl SettingsPage {
                     .into_any_element()
             })
             .collect();
-        let fixed = row("Terminal text size".into())
-            .child(kit::kbd(theme, "⌘+  ⌘−  ⌘0"))
-            .child(div().w(px(26.)));
+        let shown = |text: String| {
+            div()
+                .h(px(24.))
+                .min_w(px(72.))
+                .px(px(8.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(5.))
+                .border_1()
+                .border_color(theme.border_variant)
+                .bg(theme.element)
+                .font_family(mono_font())
+                .text_size(px(12.))
+                .text_color(theme.text)
+                .child(text)
+        };
+        let fixed_rows: Vec<AnyElement> = shortcuts::fixed()
+            .into_iter()
+            .map(|(what, keys)| {
+                row(what.into())
+                    .child(shown(keys))
+                    .child(div().w(px(26.)))
+                    .into_any_element()
+            })
+            .collect();
 
         div()
             .flex()
@@ -1702,9 +1725,16 @@ impl SettingsPage {
                     .py(px(4.))
                     .child(machines)
                     .child(div().h(px(1.)).my(px(4.)).bg(theme.border_variant))
-                    .children(rows)
-                    .child(fixed),
+                    .children(rows),
             )
+            .child(section_title(theme, "On this computer", None))
+            .child(
+                div()
+                    .text_size(px(12.5))
+                    .text_color(theme.text_placeholder)
+                    .child("These follow this computer. They aren't changed here."),
+            )
+            .child(card(theme).px(px(14.)).py(px(4.)).children(fixed_rows))
     }
 
     /// Waits for the keys of shortcut `id` (or stops waiting, on a second click).
