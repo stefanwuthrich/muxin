@@ -1033,12 +1033,24 @@ pub fn status_from(s: &Snapshot, surface: Surface) -> StatusResponse {
         .map(|a| {
             let target = a.action.as_ref().and_then(|x| x.target.clone());
             let kind = a.action.as_ref().map(|x| x.kind.as_str()).unwrap_or("");
+            let machine_id = match kind {
+                "machine" => target.clone(),
+                "install-runner" => target
+                    .as_deref()
+                    .and_then(|t| t.split('\n').next())
+                    .map(str::to_string),
+                _ => None,
+            };
+            let runner_id = match kind {
+                "runner" | "start-runner" => target,
+                _ => None,
+            };
             AttentionOut {
                 level: a.level.clone(),
                 title: a.title.clone(),
                 detail: a.detail.clone(),
-                machine_id: (kind == "machine").then(|| target.clone()).flatten(),
-                runner_id: (kind == "runner").then_some(target).flatten(),
+                machine_id,
+                runner_id,
             }
         })
         .collect::<Vec<_>>();

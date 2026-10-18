@@ -117,7 +117,7 @@ enum Command {
     Ps(PsArgs),
     /// Stop a process on a machine (--force kills it)
     Kill(KillArgs),
-    /// Run a command on several machines at once (--on a,b or --all)
+    /// Run a command on several machines at once, aliases included (--on a,b or --all)
     Run(FleetRunArgs),
     /// Wake a machine that's asleep or off (Wake on LAN)
     Wake(MachineArgs),

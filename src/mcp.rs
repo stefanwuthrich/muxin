@@ -1206,7 +1206,7 @@ pub fn tools() -> Vec<Value> {
         }),
         json!({
             "name": "run_on_machines",
-            "description": "Run one shell command on several machines at once: in each one's login shell (sh-family; PowerShell on Windows), from the home folder, without a terminal (nothing interactive). One operation per machine; waits for all unless wait is false, and returns each one's exit_code and log_tail. It runs on the user's real machines as the user: only when asked, and show the command first.",
+            "description": "Run one shell command on several machines at once: in each one's shell (sh-family, with the aliases from its .zshrc or .bashrc; PowerShell on Windows), from the home folder, without a terminal (nothing interactive). One operation per machine; waits for all unless wait is false, and returns each one's exit_code and log_tail. It runs on the user's real machines as the user: only when asked, and show the command first.",
             "inputSchema": schema(json!({
                 "machine_ids": { "type": "array", "items": { "type": "string" }, "description": "Machine ids (or names)." },
                 "command": { "type": "string" },

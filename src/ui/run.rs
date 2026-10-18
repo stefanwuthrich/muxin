@@ -101,7 +101,7 @@ impl Root {
             .flex_col()
             .gap(px(4.))
             .child(div().text_size(px(22.)).font_weight(FontWeight::SEMIBOLD).child("Run"))
-            .child(div().text_size(px(13.)).text_color(theme.text_muted).child("One command on several machines at once, in each one’s login shell from the home folder."));
+            .child(div().text_size(px(13.)).text_color(theme.text_muted).child("One command on several machines at once, in each one’s shell from the home folder, with its aliases."));
 
         let targets: HashSet<String> = self.run_targets().into_iter().collect();
         let running = self.run_last.as_ref().is_some_and(|b| {

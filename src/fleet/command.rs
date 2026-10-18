@@ -1,6 +1,7 @@
 //! Running one command on several machines at once (the Run page, `muxin
-//! run`): an operation per machine, in the user's login shell from their
-//! home folder, its output streamed into the operation's log.
+//! run`): an operation per machine, in the user's shell from their home
+//! folder, its output streamed into the operation's log. Aliases and
+//! functions from `.zshrc` or `.bashrc` apply, as they do in a terminal.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,11 +16,85 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// The longest it may run.
 pub const MAX_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
-/// sh: from the home folder, with the user's own shell when it's an sh-family one.
+/// The command, from the home folder, in the user's own shell.
+///
+/// The script itself runs in a login shell, so the profile's PATH is
+/// exported. zsh and bash then run the command interactively: that is what
+/// reads `.zshrc` / `.bashrc` and expands aliases. A prompt theme started
+/// with no terminal is not part of the command's output.
 fn sh_script(command: &str) -> String {
     format!(
-        "OR_CMD={}\ncd ~ 2>/dev/null\nexport NO_COLOR=1 GIT_TERMINAL_PROMPT=0 GIT_PAGER=cat PAGER=cat\nor_shell=sh\ncase \"$SHELL\" in */bash|*/zsh|*/ksh) or_shell=$SHELL ;; esac\n\"$or_shell\" -c \"$OR_CMD\" < /dev/null\nprintf '%s:exit=%s\\n' \"$OR_MARK\" \"$?\" >&2\n",
-        sh_quote(command)
+        r#"OR_CMD={cmd}
+cd ~ 2>/dev/null
+export NO_COLOR=1 GIT_TERMINAL_PROMPT=0 GIT_PAGER=cat PAGER=cat
+or_shell=sh
+case "$SHELL" in
+  */bash|*/zsh|*/ksh) or_shell=$SHELL ;;
+esac
+or_status=0
+case "$or_shell" in
+  */zsh)
+    or_dir=$(mktemp -d 2>/dev/null) || or_dir=
+    if [ -n "$or_dir" ]; then
+      printf '%s\n' \
+        'exec 3>&1 4>&2' \
+        'exec >/dev/null 2>&1' \
+        '[ -f "$HOME/.zshenv" ] && . "$HOME/.zshenv"' \
+        > "$or_dir/.zshenv"
+      printf '%s\n' \
+        '[ -f "$HOME/.zshrc" ] && . "$HOME/.zshrc"' \
+        'exec >&3 2>&4' \
+        'exec 3>&- 4>&-' \
+        > "$or_dir/.zshrc"
+      ZDOTDIR="$or_dir" "$or_shell" -ic "$OR_CMD" < /dev/null
+      or_status=$?
+      rm -rf "$or_dir"
+    else
+      "$or_shell" -ic "$OR_CMD" < /dev/null
+      or_status=$?
+    fi
+    ;;
+  */bash)
+    or_rc=$(mktemp 2>/dev/null) || or_rc=
+    or_fifo=$(mktemp 2>/dev/null) || or_fifo=
+    if [ -n "$or_rc" ] && [ -n "$or_fifo" ]; then
+      rm -f "$or_fifo"
+      printf '%s\n' \
+        'exec 3>&1 4>&2' \
+        'exec >/dev/null 2>&1' \
+        '[ -f "$HOME/.bashrc" ] && . "$HOME/.bashrc"' \
+        'exec >&3 2>&4' \
+        'exec 3>&- 4>&-' \
+        > "$or_rc"
+      if mkfifo "$or_fifo" 2>/dev/null; then
+        while IFS= read -r or_line; do
+          case "$or_line" in
+            "bash: cannot set terminal process group "*|"bash: no job control in this shell") ;;
+            *) printf '%s\n' "$or_line" >&2 ;;
+          esac
+        done < "$or_fifo" &
+        or_reader=$!
+        "$or_shell" --rcfile "$or_rc" -ic "$OR_CMD" < /dev/null 2>"$or_fifo"
+        or_status=$?
+        wait "$or_reader"
+      else
+        "$or_shell" --rcfile "$or_rc" -ic "$OR_CMD" < /dev/null
+        or_status=$?
+      fi
+      rm -f "$or_rc" "$or_fifo"
+    else
+      "$or_shell" -ic "$OR_CMD" < /dev/null
+      or_status=$?
+    fi
+    ;;
+  *)
+    "$or_shell" -ic "$OR_CMD" < /dev/null
+    or_status=$?
+    ;;
+esac
+printf '%s:exit=%s\n' "$OR_MARK" "$or_status" >&2
+"#,
+        cmd = sh_quote(command)
     )
 }
 
@@ -220,6 +295,26 @@ mod tests {
         assert!(
             s.starts_with("OR_CMD='echo '\\''hi'\\'' && uptime'\n"),
             "{s}"
+        );
+        assert!(
+            s.contains("ZDOTDIR=\"$or_dir\" \"$or_shell\" -ic \"$OR_CMD\""),
+            "{s}"
+        );
+        assert!(s.contains(".zshrc"), "{s}");
+        assert!(s.contains("--rcfile \"$or_rc\" -ic \"$OR_CMD\""), "{s}");
+        let mut n = std::process::Command::new("sh")
+            .arg("-n")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("sh");
+        std::io::Write::write_all(n.stdin.as_mut().unwrap(), s.as_bytes()).unwrap();
+        let out = n.wait_with_output().unwrap();
+        assert!(
+            out.status.success(),
+            "sh -n: {}",
+            String::from_utf8_lossy(&out.stderr)
         );
         assert!(ps_script("Write-Output 'hi'").starts_with("$OR_CMD = 'Write-Output ''hi'''\n"));
     }

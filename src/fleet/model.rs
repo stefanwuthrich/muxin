@@ -539,9 +539,11 @@ pub struct Attention {
 #[serde(rename_all = "camelCase")]
 pub struct Action {
     pub label: String,
-    /// "settings" | "check" | "machine" | "runner" | "link" | "queue"
+    /// "settings" | "check" | "machine" | "runner" | "link" | "queue" |
+    /// "start-runner" | "install-runner"
     pub kind: String,
-    /// machine/runner id or URL, depending on `kind`
+    /// Machine id, runner id, or URL, depending on `kind`. For
+    /// `install-runner`: the machine id, then one extra label per line.
     pub target: Option<String>,
 }
 

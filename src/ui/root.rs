@@ -1372,6 +1372,20 @@ impl Root {
                 }
             }
             "queue" => self.navigate(Route::Jobs, window, cx),
+            "start-runner" => {
+                if let Some(id) = &action.target {
+                    self.runner_action(id, RunnerAction::Start, cx);
+                }
+            }
+            "install-runner" => {
+                if let Some((machine, labels)) = action
+                    .target
+                    .as_deref()
+                    .and_then(crate::fleet::build::parse_install_action)
+                {
+                    self.show_install_dialog_with(&machine, &labels, window, cx);
+                }
+            }
             "link" => {
                 if let Some(t) = &action.target {
                     cx.open_url(t)

@@ -1244,6 +1244,135 @@ fn detected_scopes(settings: &Settings, probes: &HashMap<String, ProbeResult>) -
     found
 }
 
+/// What to do about a queued job no online runner can take.
+///
+/// Start a stopped runner that already has the labels, on a machine Muxin
+/// can reach. Otherwise offer to install one on the least busy online
+/// machine that can run the job. The queue is only the fallback, when
+/// neither of those is possible.
+fn stuck_fix(job: &Job, runners: &[Runner], machines: &[Machine]) -> Action {
+    if let Some(runner) = startable_match(job, runners, machines) {
+        return Action {
+            label: format!("Start {}", runner.name),
+            kind: "start-runner".into(),
+            target: Some(runner.id.clone()),
+        };
+    }
+    let labels = extra_labels(job);
+    if let Some(machine) = install_machine(job, machines) {
+        let label = match labels.as_slice() {
+            [] => "Install a runner".to_string(),
+            [one] => format!("Install a runner with {one}"),
+            many => format!("Install a runner with {}", many.join(", ")),
+        };
+        return Action {
+            label,
+            kind: "install-runner".into(),
+            target: Some(install_action_target(&machine.id, &labels)),
+        };
+    }
+    Action {
+        label: "View queue".into(),
+        kind: "queue".into(),
+        target: None,
+    }
+}
+
+/// A matching runner that is offline on a machine Muxin can still reach.
+fn startable_match<'a>(
+    job: &Job,
+    runners: &'a [Runner],
+    machines: &[Machine],
+) -> Option<&'a Runner> {
+    let mut found: Vec<&Runner> = runners
+        .iter()
+        .filter(|r| {
+            job.matching.iter().any(|id| id == &r.id)
+                && r.state == "offline"
+                && r.machine_id.as_deref().is_some_and(|id| {
+                    machines
+                        .iter()
+                        .find(|m| m.id == id)
+                        .is_some_and(|m| !m.is_down() && !m.host.is_empty())
+                })
+        })
+        .collect();
+    found.sort_by(|a, b| a.name.cmp(&b.name));
+    found.into_iter().next()
+}
+
+/// Labels the installer doesn't add itself: not `self-hosted`, and not a
+/// platform token GitHub puts on every runner (`linux`, `macOS`, `x64`, …).
+fn extra_labels(job: &Job) -> Vec<String> {
+    job.labels
+        .iter()
+        .filter(|l| platform_token(l).is_none() && !l.eq_ignore_ascii_case("self-hosted"))
+        .cloned()
+        .collect()
+}
+
+/// A label's platform, as it appears in a machine's `linux-x64`. Same
+/// mapping as the job's "Add runner" menu.
+fn platform_token(label: &str) -> Option<&'static str> {
+    match label.to_ascii_lowercase().as_str() {
+        "linux" => Some("linux"),
+        "macos" => Some("darwin"),
+        "windows" => Some("windows"),
+        "x64" => Some("x64"),
+        "arm64" => Some("arm64"),
+        "arm" => Some("arm"),
+        _ => None,
+    }
+}
+
+/// The online machine a new runner for `job` should go on: one whose
+/// platform fits, with the fewest runners, then by name.
+fn install_machine<'a>(job: &Job, machines: &'a [Machine]) -> Option<&'a Machine> {
+    let mut fits: Vec<&Machine> = machines
+        .iter()
+        .filter(|m| {
+            !m.host.is_empty()
+                && m.status == "online"
+                && job
+                    .labels
+                    .iter()
+                    .all(|l| platform_token(l).is_none_or(|p| m.platform.contains(p)))
+        })
+        .collect();
+    fits.sort_by(|a, b| {
+        a.summary
+            .total
+            .cmp(&b.summary.total)
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    fits.into_iter().next()
+}
+
+/// Machine id, then one extra label per line. Machine ids are slugs.
+pub(crate) fn install_action_target(machine_id: &str, labels: &[String]) -> String {
+    let mut out = machine_id.to_string();
+    for label in labels {
+        out.push('\n');
+        out.push_str(label);
+    }
+    out
+}
+
+/// The machine and extra labels encoded by [`install_action_target`].
+pub(crate) fn parse_install_action(target: &str) -> Option<(String, Vec<String>)> {
+    let mut lines = target.split('\n');
+    let machine = lines.next().unwrap_or("").trim();
+    if machine.is_empty() {
+        return None;
+    }
+    let labels = lines
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect();
+    Some((machine.to_string(), labels))
+}
+
 fn attention(
     input: &Inputs,
     machines: &[Machine],
@@ -1427,7 +1556,9 @@ fn attention(
             level: "warning".into(),
             title,
             detail,
-            action: action("View queue", "queue", None),
+            // The fix, not the queue: start a stopped runner that already
+            // matches, or install one that does.
+            action: Some(stuck_fix(first, runners, machines)),
         });
     }
 
@@ -1741,9 +1872,153 @@ mod tests {
         assert_eq!(snap.jobs.queued[0].matching, vec!["studio/s-01"]);
         assert_eq!(snap.jobs.queued[0].matching_online, 1);
         assert_eq!(snap.jobs.queued[1].matching_online, 0);
-        assert!(snap.attention.iter().any(|a| a.id == "stuck-jobs"));
+        let stuck = snap
+            .attention
+            .iter()
+            .find(|a| a.id == "stuck-jobs")
+            .unwrap();
+        let fix = stuck.action.as_ref().unwrap();
+        assert_eq!(fix.label, "Install a runner with gpu");
+        assert_eq!(fix.kind, "install-runner");
+        assert_eq!(fix.target.as_deref(), Some("studio\ngpu"));
         assert!(snap.attention.iter().any(|a| a.id == "unassigned"));
         assert!(snap.github.live);
+    }
+
+    #[test]
+    fn a_stuck_job_offers_the_fix() {
+        let now = Utc::now();
+        let queued = |id: u64, labels: &[&str]| JobData {
+            id,
+            run_id: 1,
+            name: format!("job-{id}"),
+            workflow: "CI".into(),
+            repo: "acme/api".into(),
+            branch: None,
+            event: None,
+            actor: None,
+            url: String::new(),
+            status: "queued".into(),
+            labels: labels.iter().map(|s| s.to_string()).collect(),
+            runner_name: None,
+            created_at: now - chrono::Duration::minutes(10),
+            started_at: None,
+        };
+        let gh_of = |runners: Vec<RunnerData>, jobs: Vec<JobData>| GitHubData {
+            synced_at: Some(now),
+            token_source: "gh".into(),
+            scopes: vec![ScopeData {
+                kind: ScopeKind::Org,
+                name: "acme".into(),
+                runners,
+                synced_at: Some(now),
+                error: None,
+                hint: None,
+            }],
+            jobs,
+            ..Default::default()
+        };
+        let settings = {
+            let mut s = Settings::default();
+            s.github.orgs = vec!["acme".into()];
+            s
+        };
+        let stuck = |snap: &Snapshot| {
+            snap.attention
+                .iter()
+                .find(|a| a.id == "stuck-jobs")
+                .and_then(|a| a.action.clone())
+                .unwrap()
+        };
+
+        // Stopped on a machine we can reach: start it, by name.
+        let inv = inventory(
+            "[[machine]]\nname = \"Studio\"\nhost = \"studio\"\nrunners = [\"mac-studio-02\", \"mac-studio-01\"]\n",
+        );
+        let mut probes = HashMap::new();
+        probes.insert(
+            "studio".into(),
+            probe_with(vec![
+                local("mac-studio-02", false, false),
+                local("mac-studio-01", false, false),
+            ]),
+        );
+        let labels = ["self-hosted", "macOS", "ARM64"];
+        let snap = run(
+            &inv,
+            &settings,
+            &probes,
+            Some(&gh_of(
+                vec![
+                    gh_runner("mac-studio-02", "offline", false, &labels),
+                    gh_runner("mac-studio-01", "offline", false, &labels),
+                ],
+                vec![queued(1, &["self-hosted", "macOS"])],
+            )),
+        );
+        let fix = stuck(&snap);
+        assert_eq!(fix.label, "Start mac-studio-01");
+        assert_eq!(fix.kind, "start-runner");
+        assert_eq!(fix.target.as_deref(), Some("studio/mac-studio-01"));
+
+        // The only matching runner is on a machine that's off: don't offer
+        // Start. Install on the other machine that's online.
+        let inv = inventory(
+            "[[machine]]\nname = \"Studio\"\nhost = \"studio\"\nrunners = [\"s-01\"]\n\n[[machine]]\nname = \"Laptop\"\nhost = \"laptop\"\n",
+        );
+        let mut probes = HashMap::new();
+        probes.insert(
+            "studio".into(),
+            ProbeResult {
+                ok: false,
+                error: Some("no answer".into()),
+                ..Default::default()
+            },
+        );
+        probes.insert("laptop".into(), probe_with(vec![]));
+        let snap = run(
+            &inv,
+            &settings,
+            &probes,
+            Some(&gh_of(
+                vec![gh_runner("s-01", "offline", false, &labels)],
+                vec![queued(1, &["self-hosted", "macOS", "gpu"])],
+            )),
+        );
+        let fix = stuck(&snap);
+        assert_eq!(fix.label, "Install a runner with gpu");
+        assert_eq!(fix.kind, "install-runner");
+        assert_eq!(fix.target.as_deref(), Some("laptop\ngpu"));
+
+        // Nothing extra to name, and an online machine: just install.
+        let inv = inventory("[[machine]]\nname = \"Studio\"\nhost = \"studio\"\n");
+        let mut probes = HashMap::new();
+        probes.insert("studio".into(), probe_with(vec![]));
+        let snap = run(
+            &inv,
+            &settings,
+            &probes,
+            Some(&gh_of(vec![], vec![queued(1, &["self-hosted"])])),
+        );
+        let fix = stuck(&snap);
+        assert_eq!(fix.label, "Install a runner");
+        assert_eq!(fix.target.as_deref(), Some("studio"));
+
+        // No online machine can run a Linux job: the queue is all that's left.
+        let inv = inventory("[[machine]]\nname = \"Studio\"\nhost = \"studio\"\n");
+        let snap = run(
+            &inv,
+            &settings,
+            &probes,
+            Some(&gh_of(
+                vec![],
+                vec![queued(1, &["self-hosted", "linux", "gpu"])],
+            )),
+        );
+        let fix = stuck(&snap);
+        assert_eq!(fix.label, "View queue");
+        assert_eq!(fix.kind, "queue");
+        assert!(fix.target.is_none());
     }
 
     #[test]

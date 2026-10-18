@@ -74,8 +74,8 @@ impl Root {
         use chrono::Timelike;
         let greeting = match chrono::Local::now().hour() {
             5..=11 => "Good morning, Bom Dia",
-            12..=17 => "Good afternoon",
-            _ => "Good evening",
+            12..=17 => "Good afternoon, Boa Tarde",
+            _ => "Good evening, Boa Noite",
         };
         let plural = |n: usize, one: &str| {
             if n == 1 {
@@ -194,9 +194,13 @@ impl Root {
                     .into_any_element()
                 });
                 // Explicit widths: GPUI 0.2 only ellipsizes text whose width it knows.
-                let text_w =
-                    (width - 2. - 28. - 14. - 12. - if button.is_some() { 140. } else { 0. })
-                        .max(120.);
+                // The button is as wide as its label ("Install a runner with gpu"
+                // is wider than "View machine"), and the title takes what's left.
+                let button_w = a
+                    .action
+                    .as_ref()
+                    .map_or(0., |action| action.label.chars().count() as f32 * 6.8 + 22.);
+                let text_w = (width - 2. - 28. - 14. - 12. - button_w).max(120.);
                 div()
                     .flex()
                     .items_center()
