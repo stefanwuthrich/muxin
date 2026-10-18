@@ -211,7 +211,7 @@ impl SettingsPage {
 
     /// Reads the login's permissions and organizations (fresh from the GitHub
     /// CLI, so a permission just granted shows).
-    fn load_access(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn load_access(&mut self, cx: &mut Context<Self>) {
         let engine = self.engine.clone();
         let job = engine.runtime().spawn({
             let engine = engine.clone();

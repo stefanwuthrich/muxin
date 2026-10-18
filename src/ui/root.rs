@@ -2527,6 +2527,18 @@ impl Root {
         }
     }
 
+    /// Leaves a session page for the one before it, when that session is what's shown.
+    pub(super) fn leave_shown_session(
+        &mut self,
+        id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.route == Route::Session(id.to_string()) {
+            self.go_back(&GoBack, window, cx);
+        }
+    }
+
     fn go_forward(&mut self, _: &GoForward, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(next) = self.forward.pop() {
             let current = std::mem::replace(&mut self.route, next);

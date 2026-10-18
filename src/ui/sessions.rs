@@ -2142,8 +2142,9 @@ impl Root {
         self.track(task);
     }
 
-    /// Opens a terminal on the machine running `gh auth login` in the browser
-    /// flow (it shows a code to enter at github.com/login/device).
+    /// Opens a terminal on the machine running `gh auth login`. GitHub CLI
+    /// prints a one-time code and polls without waiting for Enter; this window
+    /// opens the device page and copies the code.
     pub(super) fn gh_cli_sign_in(
         &mut self,
         machine_id: &str,
@@ -2160,7 +2161,8 @@ impl Root {
     }
 
     /// Runs a GitHub CLI command (sign-in, granting a permission) in a terminal
-    /// on a machine, where its browser steps can be followed.
+    /// on a machine. The browser step opens here, and a finished login refreshes
+    /// GitHub status.
     pub(super) fn gh_cli_run(
         &mut self,
         machine_id: &str,
@@ -2174,17 +2176,201 @@ impl Root {
             agent: "shell".into(),
             cwd: "~".into(),
             title: Some(title.into()),
-            command: Some(format!(
-                "gh {args}; printf '\\nPress Enter to close.'; read _"
-            )),
+            command: Some(gh_auth_command(args)),
             ..Default::default()
         };
-        self.notify_user(
-            "Follow the steps in the terminal: copy the code, then open github.com/login/device.",
-            false,
+        self.start_gh_auth(req, window, cx);
+    }
+
+    /// Starts the GitHub CLI session, then follows its screen until the login
+    /// finishes or the device code expires.
+    fn start_gh_auth(
+        &mut self,
+        mut req: StartSession,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let viewport = window.viewport_size();
+        let (cols, rows) = TerminalView::fit(
+            f32::from(viewport.width) - self.sidebar_width,
+            f32::from(viewport.height) - CHROME_HEIGHT,
+            window,
             cx,
         );
-        self.start_session(req, window, cx);
+        req.cols = cols;
+        req.rows = rows;
+        let machine = self
+            .snapshot
+            .machines
+            .iter()
+            .find(|m| m.id == req.machine_id)
+            .map(|m| m.name.clone())
+            .unwrap_or_default();
+        self.notify_user(format!("Starting Shell on {machine}…"), false, cx);
+        let engine = self.engine.clone();
+        let job = engine.runtime().spawn({
+            let engine = engine.clone();
+            async move { engine.start_session(req).await }
+        });
+        let task = cx.spawn_in(window, async move |this, cx| {
+            let result = job.await.unwrap_or_else(|e| Err(e.to_string()));
+            let session_id = match result {
+                Ok(s) => s.id,
+                Err(e) => {
+                    let _ = this.update_in(cx, |this, _, cx| this.notify_user(e, true, cx));
+                    return;
+                }
+            };
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.notice = None;
+                this.navigate(Route::Session(session_id.clone()), window, cx);
+                this.notify_user(
+                    "Opening GitHub in your browser. Paste the one-time code there; this page updates when GitHub accepts the code.",
+                    false,
+                    cx,
+                );
+                this.follow_gh_auth(session_id, window, cx);
+            });
+        });
+        self.track(task);
+    }
+
+    /// Watches a `gh auth` session: opens the device page once the code is up,
+    /// then reloads GitHub when the login is stored.
+    fn follow_gh_auth(&mut self, session_id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let engine = self.engine.clone();
+        let task = cx.spawn_in(window, async move |this, cx| {
+            let mut opened = false;
+            let mut misses = 0u8;
+            let started = std::time::Instant::now();
+            loop {
+                if started.elapsed() > Duration::from_secs(16 * 60) {
+                    let _ = this.update_in(cx, |this, _, cx| {
+                        this.notify_user(
+                            "GitHub didn't accept the sign-in in time. The one-time code may have expired.",
+                            true,
+                            cx,
+                        );
+                    });
+                    return;
+                }
+                let delay = if opened {
+                    Duration::from_secs(1)
+                } else {
+                    Duration::from_millis(400)
+                };
+                cx.background_executor().timer(delay).await;
+                let id = session_id.clone();
+                let job = engine.runtime().spawn({
+                    let engine = engine.clone();
+                    async move {
+                        engine
+                            .control_session(&id, Control::Read { lines: 200 })
+                            .await
+                    }
+                });
+                match job.await.unwrap_or_else(|e| Err(e.to_string())) {
+                    Ok(text) => {
+                        misses = 0;
+                        if !opened
+                            && let Some(prompt) = device_prompt(&text)
+                        {
+                            let code = prompt.code;
+                            let url = prompt.url;
+                            if this
+                                .update_in(cx, |_, _, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(code));
+                                    cx.open_url(&url);
+                                })
+                                .is_err()
+                            {
+                                return;
+                            }
+                            opened = true;
+                        }
+                        if gh_auth_succeeded(&text) {
+                            let id = session_id.clone();
+                            let _ = this.update_in(cx, |this, window, cx| {
+                                this.finish_github_sign_in(&id, window, cx);
+                            });
+                            return;
+                        }
+                        if let Some(msg) = gh_auth_failure(&text) {
+                            let _ = this.update_in(cx, |this, _, cx| this.notify_user(msg, true, cx));
+                            return;
+                        }
+                    }
+                    Err(e) if session_missing(&e) => {
+                        let machine = session_id.split('/').next().unwrap_or("").to_string();
+                        let name = session_id.split('/').nth(1).unwrap_or("").to_string();
+                        let job = engine.runtime().spawn({
+                            let engine = engine.clone();
+                            async move { engine.refresh_sessions(&machine).await }
+                        });
+                        let Some(found) = job.await.ok().and_then(Result::ok) else {
+                            misses += 1;
+                            if misses >= 3 {
+                                return;
+                            }
+                            continue;
+                        };
+                        let still = found
+                            .sessions
+                            .iter()
+                            .any(|s| s.name == name || s.id == session_id);
+                        if still {
+                            continue;
+                        }
+                        match shell_exit_code(&found, &name) {
+                            Some(0) => {
+                                let id = session_id.clone();
+                                let _ = this.update_in(cx, |this, window, cx| {
+                                    this.finish_github_sign_in(&id, window, cx);
+                                });
+                                return;
+                            }
+                            Some(code) => {
+                                let _ = this.update_in(cx, |this, _, cx| {
+                                    this.notify_user(
+                                        format!("GitHub CLI exited with code {code}."),
+                                        true,
+                                        cx,
+                                    );
+                                });
+                                return;
+                            }
+                            None => {
+                                misses += 1;
+                                if misses >= 3 {
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    Err(_) => {}
+                }
+            }
+        });
+        self.track(task);
+    }
+
+    /// The login is stored: drop the cached token, sync, and leave this session.
+    fn finish_github_sign_in(
+        &mut self,
+        session_id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.engine.github().reload_login();
+        self.engine.trigger_sync();
+        if let Some(page) = &self.settings {
+            page.update(cx, |page, cx| page.load_access(cx));
+        }
+        if let Some(machine) = session_id.split('/').next() {
+            self.refresh_machine_sessions(machine);
+        }
+        self.leave_shown_session(session_id, window, cx);
+        self.notify_user("Signed in to GitHub.", false, cx);
     }
 
     /// Gives a machine this computer's ssh key: a terminal here with
@@ -2679,4 +2865,263 @@ pub(super) fn git_line(
         );
     }
     row
+}
+
+/// The shell line for `gh auth …`. Prompting is off, so GitHub CLI prints the
+/// device code and polls immediately. A failure stays on screen until Enter;
+/// success lets the shell exit.
+fn gh_auth_command(args: &str) -> String {
+    format!(
+        "GH_PROMPT_DISABLED=1 gh {args}; status=$?; if [ \"$status\" -ne 0 ]; then printf '\\nPress Enter to close.'; read _; fi; exit $status"
+    )
+}
+
+/// A one-time device code and the page where it is entered.
+struct DevicePrompt {
+    code: String,
+    url: String,
+}
+
+/// The device-code screen, interactive (`Press Enter to open …`) or not
+/// (`Open this URL …`).
+fn device_prompt(text: &str) -> Option<DevicePrompt> {
+    let code = one_time_code(text)?;
+    let url = device_url(text)?;
+    Some(DevicePrompt { code, url })
+}
+
+fn one_time_code(text: &str) -> Option<String> {
+    for line in text.lines() {
+        if !line.to_ascii_lowercase().contains("one-time code") {
+            continue;
+        }
+        for token in line.split_whitespace() {
+            let token = token.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-');
+            if is_device_code(token) {
+                return Some(token.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn is_device_code(token: &str) -> bool {
+    let mut parts = token.split('-');
+    let (Some(a), Some(b)) = (parts.next(), parts.next()) else {
+        return false;
+    };
+    parts.next().is_none()
+        && (4..=8).contains(&a.len())
+        && (4..=8).contains(&b.len())
+        && a.chars().all(|c| c.is_ascii_alphanumeric())
+        && b.chars().all(|c| c.is_ascii_alphanumeric())
+}
+
+fn device_url(text: &str) -> Option<String> {
+    for line in text.lines() {
+        let lower = line.to_ascii_lowercase();
+        if !lower.contains("browser")
+            && !lower.contains("press enter")
+            && !lower.contains("open this url")
+            && !lower.contains("login/device")
+        {
+            continue;
+        }
+        if let Some(url) = https_url(line)
+            && url.contains("login/device")
+        {
+            return Some(url);
+        }
+    }
+    None
+}
+
+fn https_url(line: &str) -> Option<String> {
+    let start = line.find("https://")?;
+    let rest = &line[start..];
+    let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+    let url =
+        rest[..end].trim_end_matches(|c: char| matches!(c, '.' | ',' | ')' | ']' | '>' | '…'));
+    (!url.is_empty()).then(|| url.to_string())
+}
+
+/// GitHub CLI finished storing the login.
+fn gh_auth_succeeded(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains("authentication complete") || lower.contains("logged in as")
+}
+
+/// GitHub CLI gave up. The message is what it said, not our own "press Enter".
+fn gh_auth_failure(text: &str) -> Option<String> {
+    let lower = text.to_ascii_lowercase();
+    if !lower.contains("press enter to close")
+        && !lower.contains("failed to authenticate")
+        && !lower.contains("error refreshing credentials")
+    {
+        return None;
+    }
+    let msg = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .filter(|l| {
+            let l = l.to_ascii_lowercase();
+            !l.contains("press enter to close")
+                && !l.contains("one-time code")
+                && !l.contains("login/device")
+                && !l.contains("press enter to open")
+                && !l.contains("open this url")
+        })
+        .next_back()
+        .unwrap_or("GitHub CLI failed.");
+    Some(msg.to_string())
+}
+
+fn session_missing(err: &str) -> bool {
+    err.contains("no session")
+}
+
+/// Exit code from the agent's newest `closed` (or `exited`) event for this session.
+/// The stamp is the machine's clock, so it isn't compared with the time here.
+fn shell_exit_code(found: &crate::fleet::sessions::MachineSessions, name: &str) -> Option<i32> {
+    found.events.iter().rev().find_map(|e| {
+        if e.session != name {
+            return None;
+        }
+        if e.kind != "closed" && e.kind != "exited" {
+            return None;
+        }
+        e.detail.parse().ok()
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{device_prompt, gh_auth_command, gh_auth_failure, gh_auth_succeeded};
+
+    struct Screen {
+        text: &'static str,
+        code: Option<&'static str>,
+        url: Option<&'static str>,
+        success: bool,
+        /// A fragment of the failure message, when this screen is a failure.
+        failure: Option<&'static str>,
+    }
+
+    #[test]
+    fn device_and_outcome_lines() {
+        let interactive = "\
+! First copy your one-time code: 0CDF-7774
+Press Enter to open https://github.com/login/device in your browser...
+";
+        let quiet = "\
+! First copy your one-time code: ABCD-EFGH
+Open this URL to continue in your web browser: https://github.com/login/device
+";
+        let enterprise = "\
+one-time code: WXYZ-9999
+Open this URL to continue in your web browser: https://ghe.example.com/login/device
+";
+        let success = "\
+✓ Authentication complete.
+✓ Logged in as octocat
+";
+        let already = "Logged in as octocat\n";
+        let expired = "\
+failed to authenticate via web browser: the code expired
+
+Press Enter to close.
+";
+        let cases = [
+            Screen {
+                text: interactive,
+                code: Some("0CDF-7774"),
+                url: Some("https://github.com/login/device"),
+                success: false,
+                failure: None,
+            },
+            Screen {
+                text: quiet,
+                code: Some("ABCD-EFGH"),
+                url: Some("https://github.com/login/device"),
+                success: false,
+                failure: None,
+            },
+            Screen {
+                text: enterprise,
+                code: Some("WXYZ-9999"),
+                url: Some("https://ghe.example.com/login/device"),
+                success: false,
+                failure: None,
+            },
+            Screen {
+                text: success,
+                code: None,
+                url: None,
+                success: true,
+                failure: None,
+            },
+            Screen {
+                text: already,
+                code: None,
+                url: None,
+                success: true,
+                failure: None,
+            },
+            Screen {
+                text: expired,
+                code: None,
+                url: None,
+                success: false,
+                failure: Some("expired"),
+            },
+            Screen {
+                text: "Press Enter to close.\n",
+                code: None,
+                url: None,
+                success: false,
+                failure: Some("GitHub CLI failed."),
+            },
+        ];
+        for case in cases {
+            let prompt = device_prompt(case.text);
+            assert_eq!(
+                prompt.as_ref().map(|p| p.code.as_str()),
+                case.code,
+                "{}",
+                case.text
+            );
+            assert_eq!(
+                prompt.as_ref().map(|p| p.url.as_str()),
+                case.url,
+                "{}",
+                case.text
+            );
+            assert_eq!(gh_auth_succeeded(case.text), case.success, "{}", case.text);
+            match case.failure {
+                Some(part) => {
+                    let msg = gh_auth_failure(case.text)
+                        .unwrap_or_else(|| panic!("expected a failure for {:?}", case.text));
+                    assert!(
+                        msg.to_ascii_lowercase()
+                            .contains(&part.to_ascii_lowercase()),
+                        "{msg}"
+                    );
+                }
+                None => assert!(gh_auth_failure(case.text).is_none(), "{}", case.text),
+            }
+        }
+    }
+
+    #[test]
+    fn gh_auth_command_skips_the_prompt_and_waits_only_on_failure() {
+        let cmd = gh_auth_command("auth login --hostname github.com --git-protocol https --web");
+        assert!(cmd.starts_with(
+            "GH_PROMPT_DISABLED=1 gh auth login --hostname github.com --git-protocol https --web;"
+        ));
+        let if_at = cmd.find("-ne 0").expect("failure branch");
+        let close_at = cmd.find("Press Enter to close").expect("close prompt");
+        let read_at = cmd.find("read _").expect("read");
+        assert!(if_at < close_at && close_at < read_at);
+    }
 }
