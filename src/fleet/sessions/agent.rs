@@ -42,10 +42,12 @@ pub fn target(probe: Option<&ProbeResult>) -> Option<String> {
     Some(format!("{os}-{arch}"))
 }
 
-/// The folder of agent builds: in the app bundle, next to the binary, or (a
-/// debug build) `dist/agents` in the source checkout it was built from
-/// (`scripts/build-agents.sh`). Not any folder above the binary: one planted
-/// there (`/tmp/dist/agents`) would be uploaded to every machine.
+/// The folder of agent builds: in the app bundle, next to the binary, or
+/// `dist/agents` in the source checkout this binary was built from
+/// (`scripts/build-agents.sh`). The checkout path is the one compiled in, not
+/// a folder above the binary: one planted there (`/tmp/dist/agents`) would be
+/// uploaded to every machine. An installed copy, built somewhere else, won't
+/// find that path and uses the agents beside it.
 pub fn builds_dir() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("MUXEN_AGENTS_DIR") {
         return Some(PathBuf::from(dir));
@@ -57,14 +59,8 @@ pub fn builds_dir() -> Option<PathBuf> {
             return Some(candidate);
         }
     }
-    #[cfg(debug_assertions)]
-    {
-        let checkout = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/dist/agents"));
-        if checkout.is_dir() {
-            return Some(checkout);
-        }
-    }
-    None
+    let checkout = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/dist/agents"));
+    checkout.is_dir().then_some(checkout)
 }
 
 /// Where the build for `target` is.
@@ -510,4 +506,18 @@ pub async fn ctl_reply(spec: &MachineSpec, request: &Value) -> Result<Value, Str
         .and_then(|l| serde_json::from_str(l).ok())
         .ok_or_else(|| format!("The agent on {} gave no answer.", spec.name))?;
     Ok(reply)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_binary_from_this_checkout_finds_its_agents() {
+        let checkout = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/dist/agents"));
+        if !checkout.is_dir() {
+            return;
+        }
+        assert_eq!(builds_dir().as_deref(), Some(checkout.as_path()));
+    }
 }

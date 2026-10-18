@@ -72,6 +72,50 @@ impl Tokens {
     }
 }
 
+/// One window of a Claude subscription, as `/usage` shows it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct PlanWindow {
+    pub label: String,
+    /// 0–100, of the window's allowance.
+    #[serde(default)]
+    pub percent: f64,
+    /// When the window resets, RFC 3339. Empty when the reply didn't say.
+    #[serde(default)]
+    pub resets_at: String,
+    /// "warning" draws in the warning color. Empty is the ordinary meter.
+    #[serde(default)]
+    pub severity: String,
+}
+
+/// Extra usage on a Claude subscription: credits spent of the monthly limit,
+/// already scaled by the reply's decimal places.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct PlanExtra {
+    #[serde(default)]
+    pub used: f64,
+    #[serde(default)]
+    pub limit: f64,
+    #[serde(default)]
+    pub currency: String,
+}
+
+/// One Claude config's plan meters. `error` is set when that login couldn't
+/// be read; the rest of the machine's usage is still there.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct PlanUsage {
+    #[serde(default)]
+    pub tool: String,
+    /// The config directory, relative to the home folder (`.claude-a`).
+    #[serde(default)]
+    pub home: String,
+    #[serde(default)]
+    pub windows: Vec<PlanWindow>,
+    #[serde(default)]
+    pub extra: Option<PlanExtra>,
+    #[serde(default)]
+    pub error: String,
+}
+
 /// One machine's agents' use.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct MachineUsage {
@@ -84,6 +128,9 @@ pub struct MachineUsage {
     pub hours: Vec<UsageHour>,
     #[serde(default)]
     pub folders: Vec<UsageFolder>,
+    /// Claude subscription meters, one per config directory on the machine.
+    #[serde(default)]
+    pub plans: Vec<PlanUsage>,
 }
 
 /// A model's list price, per million tokens.
@@ -316,6 +363,7 @@ fn demo(machine_id: &str, days: u32) -> MachineUsage {
         tools: vec![tool.into()],
         hours,
         folders: vec![folder("~/code/checkout"), folder("~/code/api")],
+        plans: Vec::new(),
     }
 }
 

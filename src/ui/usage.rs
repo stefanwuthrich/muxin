@@ -1,6 +1,8 @@
 //! Usage: what your agents used and what it'd cost at the API's prices,
 //! over a day, a week or a month: by day, model, machine and folder. Read
 //! from each machine's Claude Code and Codex logs (see fleet/usage.rs).
+//! A Claude subscription's live meters (session, week, extra usage) sit
+//! above those totals.
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -33,6 +35,125 @@ fn tokens(n: u64) -> String {
         n if n >= 1_000_000 => format!("{:.1}M", n as f64 / 1e6),
         n if n >= 1_000 => format!("{:.0}K", n as f64 / 1e3),
         n => n.to_string(),
+    }
+}
+
+/// Claude subscription meters, one card per config directory.
+fn plan_section(theme: &super::theme::Theme, plans: &[(String, usage::PlanUsage)]) -> gpui::Div {
+    let mut col =
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .child(section_title(theme, "Claude plan", None));
+    for (machine, plan) in plans {
+        let title = if plan.home.is_empty() {
+            machine.clone()
+        } else {
+            format!("{machine} · {}", plan.home)
+        };
+        let mut block = card(theme).p(px(16.)).flex().flex_col().gap(px(12.)).child(
+            div()
+                .text_size(px(13.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(title),
+        );
+        if !plan.error.is_empty() {
+            block = block.child(
+                div()
+                    .text_size(px(13.))
+                    .text_color(theme.error)
+                    .child(plan.error.clone()),
+            );
+        }
+        for window in &plan.windows {
+            let color = if window.severity == "warning" {
+                theme.warning
+            } else {
+                theme.accent
+            };
+            let fill = (window.percent / 100.).clamp(0., 1.) as f32;
+            let resets = resets_line(&window.resets_at);
+            block = block.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.))
+                    .child(
+                        div()
+                            .flex()
+                            .justify_between()
+                            .text_size(px(12.))
+                            .child(div().text_color(theme.text).child(window.label.clone()))
+                            .child(
+                                div()
+                                    .font_family(mono_font())
+                                    .text_color(color)
+                                    .child(percent_text(window.percent)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .h(px(6.))
+                            .w_full()
+                            .rounded(px(3.))
+                            .bg(theme.track)
+                            .child(div().h_full().w(relative(fill)).rounded(px(3.)).bg(color)),
+                    )
+                    .when(!resets.is_empty(), |row| {
+                        row.child(
+                            div()
+                                .text_size(px(11.))
+                                .text_color(theme.text_muted)
+                                .child(resets),
+                        )
+                    }),
+            );
+        }
+        if let Some(extra) = &plan.extra {
+            block = block.child(
+                div()
+                    .text_size(px(12.))
+                    .text_color(theme.text)
+                    .child(extra_line(extra)),
+            );
+        }
+        col = col.child(block);
+    }
+    col
+}
+
+fn percent_text(percent: f64) -> String {
+    if percent.fract().abs() < 0.05 {
+        format!("{percent:.0}%")
+    } else {
+        format!("{percent:.1}%")
+    }
+}
+
+fn resets_line(at: &str) -> String {
+    let Ok(when) = chrono::DateTime::parse_from_rfc3339(at) else {
+        return String::new();
+    };
+    format!(
+        "Resets {}",
+        when.with_timezone(&Local).format("%a %-d %b, %-I:%M %p")
+    )
+}
+
+fn extra_line(extra: &usage::PlanExtra) -> String {
+    format!(
+        "Extra usage · {} of {} this month",
+        plan_money(extra.used, &extra.currency),
+        plan_money(extra.limit, &extra.currency)
+    )
+}
+
+fn plan_money(amount: f64, currency: &str) -> String {
+    if currency.is_empty() || currency.eq_ignore_ascii_case("usd") {
+        format!("${amount:.2}")
+    } else {
+        format!("{amount:.2} {currency}")
     }
 }
 
@@ -197,15 +318,51 @@ impl Root {
                 None => {}
             }
         }
+        let plans: Vec<(String, usage::PlanUsage)> = machines
+            .iter()
+            .flat_map(|m| {
+                let machine = name(&m.machine_id);
+                m.plans.iter().cloned().map(move |p| (machine.clone(), p))
+            })
+            .collect();
+        if !plans.is_empty() {
+            body = body.child(plan_section(&theme, &plans));
+        }
         if all.requests == 0 {
-            let none = if machines.iter().all(|m| m.tools.is_empty()) {
+            if plans.is_empty() && machines.iter().all(|m| m.tools.is_empty()) && !failed.is_empty()
+            {
+                let mut note = div().flex().flex_col().gap(px(8.));
+                for (id, e) in &failed {
+                    note = note.child(
+                        card(&theme)
+                            .p(px(16.))
+                            .text_size(px(13.))
+                            .text_color(theme.error)
+                            .child(format!("{}: {e}", name(id))),
+                    );
+                }
+                return body.child(note).into_any_element();
+            }
+            let none = if !plans.is_empty() {
+                "No token totals in this period."
+            } else if machines.iter().all(|m| m.tools.is_empty()) {
                 "No Claude Code or Codex logs on your machines yet."
             } else {
                 "No agent use in this period."
             };
-            return body
-                .child(card(&theme).child(kit::empty_state(&theme, "gauge", none)))
-                .into_any_element();
+            body = body.child(card(&theme).child(kit::empty_state(&theme, "gauge", none)));
+            if !plans.is_empty() {
+                for (id, e) in &failed {
+                    body = body.child(
+                        card(&theme)
+                            .p(px(16.))
+                            .text_size(px(13.))
+                            .text_color(theme.error)
+                            .child(format!("{}: {e}", name(id))),
+                    );
+                }
+            }
+            return body.into_any_element();
         }
         let top = models
             .first()

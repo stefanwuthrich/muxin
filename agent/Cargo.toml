@@ -13,6 +13,8 @@ base64 = "0.22"
 libc = "0.2"
 portable-pty = "0.9"
 serde_json = "1"
+# Claude plan meters (`usage`): the same call Claude Code's /usage makes.
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls"] }
 # Direct connections (`listen`): QUIC with mutually pinned certificates.
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 socket2 = "0.6"
