@@ -1266,6 +1266,13 @@ impl SettingsPage {
         } else {
             "this computer"
         };
+        // On Linux the hint is `x-kde-passwordManagerHint` (see os_clip); a copy
+        // without it can't be told from ordinary text.
+        let passwords = if cfg!(target_os = "linux") {
+            "A password manager's copies stay here when the clipboard says so."
+        } else {
+            "Passwords from a password manager aren't shared."
+        };
         let status = match (on, sharing.as_slice()) {
             (false, _) => "Off.".to_string(),
             (true, []) => "No machine with a desktop is connected right now.".to_string(),
@@ -1282,18 +1289,32 @@ impl SettingsPage {
                     .px(px(14.))
                     .py(px(12.))
                     .gap(px(6.))
-                    .child(kit::checkbox(theme, "share-clipboard", on, "Share the clipboard with your machines", move |on, _, cx| {
-                        let mut s = engine.settings();
-                        s.share_clipboard = *on;
-                        let _ = engine.update_settings(s);
-                        cx.refresh_windows();
-                    }))
-                    .child(div().text_size(px(11.5)).text_color(theme.text_placeholder).child(if cfg!(target_os = "macos") {
-                        format!("Copy on {here}, paste on your machines, and back. Passwords stay here.")
-                    } else {
-                        format!("Copy on {here}, paste on your machines, and back.")
-                    }))
-                    .child(div().text_size(px(11.5)).text_color(theme.text_muted).child(status)),
+                    .child(kit::checkbox(
+                        theme,
+                        "share-clipboard",
+                        on,
+                        "Share the clipboard with your machines",
+                        move |on, _, cx| {
+                            let mut s = engine.settings();
+                            s.share_clipboard = *on;
+                            let _ = engine.update_settings(s);
+                            cx.refresh_windows();
+                        },
+                    ))
+                    .child(
+                        div()
+                            .text_size(px(11.5))
+                            .text_color(theme.text_placeholder)
+                            .child(format!(
+                                "Copy on {here}, paste on your machines, and back. {passwords}"
+                            )),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.5))
+                            .text_color(theme.text_muted)
+                            .child(status),
+                    ),
             )
     }
 

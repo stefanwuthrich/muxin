@@ -2,6 +2,8 @@ mod api;
 mod cli;
 mod cloud;
 mod config;
+#[path = "../agent/src/crash.rs"]
+mod crash;
 mod demo;
 mod fleet;
 mod github;
@@ -56,7 +58,7 @@ enum Command {
     Machine(MachineArgs),
     /// Add a machine to config.toml (and check it)
     AddMachine(AddMachineArgs),
-    /// Remove a machine from config.toml (nothing on the machine changes)
+    /// Remove a machine from config.toml (on the machine, only a direct connection from this app is turned off)
     RemoveMachine(MachineArgs),
     /// Give a machine a new name (its id stays the same)
     RenameMachine(RenameMachineArgs),
@@ -189,7 +191,9 @@ struct CommonArgs {
 
 impl CommonArgs {
     fn paths(&self) -> Paths {
-        Paths::resolve(self.config_dir.clone(), self.inventory.clone())
+        let paths = Paths::resolve(self.config_dir.clone(), self.inventory.clone());
+        crash::log_to(paths.dir.join("crash.log"));
+        paths
     }
 }
 
@@ -598,7 +602,7 @@ enum CloudCommand {
     Destroy(CloudMachineArgs),
     /// Power a cloud machine on or off (DigitalOcean still bills it while off)
     Power(CloudPowerArgs),
-    /// Sign in to DigitalOcean: --token TOKEN, --doctl, or --browser
+    /// Sign in to DigitalOcean: --token - (reads the token from stdin), --doctl, or --browser
     Login(CloudLoginArgs),
     /// Forget the DigitalOcean sign-in
     Logout(AgentArgs),
@@ -649,7 +653,9 @@ struct CloudPowerArgs {
 struct CloudLoginArgs {
     #[command(flatten)]
     agent: AgentArgs,
-    /// A DigitalOcean API token (kept in the Keychain)
+    /// A DigitalOcean API token (kept in the Keychain). `-` reads it from stdin, which
+    /// keeps it out of your shell's history and the process list:
+    /// `pbpaste | muxin cloud login --token -`
     #[arg(long, conflicts_with_all = ["doctl", "browser"])]
     token: Option<String>,
     /// Use doctl's login
@@ -1370,6 +1376,10 @@ struct InitArgs {
 }
 
 fn main() -> ExitCode {
+    crash::install(
+        concat!("muxin ", env!("CARGO_PKG_VERSION")),
+        config::dir_from_env().join("crash.log"),
+    );
     // Logs always go to stderr: stdout is reserved for --json output and MCP messages.
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -1442,7 +1452,7 @@ fn main() -> ExitCode {
                 async move |e| api::remove_machine(&e, req).await,
                 |m| {
                     format!(
-                        "Removed {} ({}) from config.toml. Nothing on the machine changed.\n",
+                        "Removed {} ({}) from config.toml. On the machine, only a direct connection from this app (if it had one) is turned off.\n",
                         m.name, m.id
                     )
                 },
@@ -2771,10 +2781,20 @@ fn cloud(cmd: CloudCommand, runtime: &tokio::runtime::Runtime) -> u8 {
             } else {
                 "token"
             };
-            let token = a.token.clone();
+            let mut token = a.token.clone();
             if method == "token" && token.is_none() {
-                eprintln!("error: pass --token TOKEN, --doctl or --browser");
+                eprintln!("error: pass --token - (and the token on stdin), --doctl or --browser");
                 return 2;
+            }
+            if token.as_deref() == Some("-") {
+                let stdin = std::io::stdin();
+                if stdin.is_terminal() {
+                    eprint!("DigitalOcean API token: ");
+                }
+                token = match read_token(&mut stdin.lock()) {
+                    Ok(t) => Some(t),
+                    Err(e) => return report_error(&a.agent, &ApiError::invalid(e)),
+                };
             }
             run(
                 runtime,
@@ -2793,6 +2813,22 @@ fn cloud(cmd: CloudCommand, runtime: &tokio::runtime::Runtime) -> u8 {
             async move |e| Ok::<_, api::ApiError>(e.cloud_sign_out()),
             |_| "Signed out of DigitalOcean.\n".to_string(),
         ),
+    }
+}
+
+/// `--token -`: the first line on stdin, so the token stays out of the shell's
+/// history and the process list.
+fn read_token(input: &mut impl std::io::BufRead) -> Result<String, String> {
+    let mut line = String::new();
+    input
+        .read_line(&mut line)
+        .map_err(|e| format!("Couldn't read the token from stdin: {e}"))?;
+    match line.trim() {
+        "" => Err(
+            "No token came in on stdin. Pipe it in, e.g. muxin cloud login --token - < token.txt"
+                .into(),
+        ),
+        token => Ok(token.to_string()),
     }
 }
 
@@ -3396,6 +3432,18 @@ mod tests {
     }
 
     #[test]
+    fn crash_log_goes_in_the_config_dir_asked_for() {
+        let dir = std::env::temp_dir().join(format!("muxen-crash-dir-{}", std::process::id()));
+        let cli = Cli::try_parse_from(["muxin", "machines", "--config-dir", dir.to_str().unwrap()])
+            .unwrap();
+        let Some(Command::Machines(a)) = cli.command else {
+            panic!("not machines")
+        };
+        assert_eq!(a.common.paths().dir, dir);
+        assert_eq!(crash::current_log(), Some(dir.join("crash.log")));
+    }
+
+    #[test]
     fn joins_exec_commands() {
         let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert_eq!(
@@ -3465,5 +3513,34 @@ mod tests {
             ])
             .is_ok()
         );
+    }
+
+    #[test]
+    fn cloud_login_reads_the_token_from_stdin() {
+        let token = |args: &[&str]| match Cli::try_parse_from(args).unwrap().command {
+            Some(Command::Cloud(CloudCommand::Login(a))) => a.token,
+            _ => panic!("expected cloud login"),
+        };
+        assert_eq!(
+            token(&["muxin", "cloud", "login", "--token", "-"]).as_deref(),
+            Some("-")
+        );
+        assert_eq!(
+            token(&["muxin", "cloud", "login", "--token", "dop_v1_abc"]).as_deref(),
+            Some("dop_v1_abc")
+        );
+        assert!(
+            Cli::try_parse_from(["muxin", "cloud", "login", "--token", "-", "--doctl"]).is_err()
+        );
+
+        let read = |input: &str| read_token(&mut std::io::Cursor::new(input.as_bytes()));
+        assert_eq!(read("dop_v1_abc\n").as_deref(), Ok("dop_v1_abc"));
+        assert_eq!(
+            read("  dop_v1_abc\r\nmore\n").as_deref(),
+            Ok("dop_v1_abc"),
+            "only the first line, trimmed"
+        );
+        assert!(read("").is_err());
+        assert!(read("\n").is_err());
     }
 }

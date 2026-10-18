@@ -1,6 +1,6 @@
 [package]
 name = "muxin"
-version = "0.5.6"
+version = "0.5.7"
 edition = "2024"
 description = "All your machines, one app. For you and your AI agents."
 license = "Apache-2.0"
@@ -51,11 +51,14 @@ raw-window-handle = { version = "0.6", optional = true }
 # Already in the tree (through reqwest/native roots): the Keychain, for cloud sign-ins.
 security-framework = "3"
 
+# Already in the tree: to start this computer's agent in a session of its own.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 # The shared clipboard on Linux (see src/os_clip.rs): the X selection, and Wayland
 # data-control where the compositor offers it. Optional so a headless build
-# doesn't link them.
+# doesn't link them. libc itself comes from the unix target above.
 [target.'cfg(target_os = "linux")'.dependencies]
-libc = { version = "0.2", optional = true }
 x11rb = { version = "0.13", features = ["xfixes"], optional = true }
 wayland-client = { version = "0.31", optional = true }
 wayland-protocols = { version = "0.32", features = ["client", "staging"], optional = true }
@@ -65,9 +68,10 @@ wayland-protocols-wlr = { version = "0.3", features = ["client"], optional = tru
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
 
-# Starting without a console window (see main.rs `without_console_window`).
+# Starting without a console window (see main.rs `without_console_window`);
+# telling a password manager's copies on the clipboard (ui/mod.rs).
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_UI_WindowsAndMessaging", "Win32_Security_Credentials", "Win32_Graphics_Dwm"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_UI_WindowsAndMessaging", "Win32_Security_Credentials", "Win32_Graphics_Dwm", "Win32_System_DataExchange"] }
 # The window's handle, to color its title bar like the theme.
 raw-window-handle = { version = "0.6", optional = true }
 
@@ -78,7 +82,7 @@ members = [".", "agent"]
 default = ["gui"]
 # The native window. Build with `--no-default-features` for a headless CLI + MCP
 # server that needs no GUI libraries (Linux servers, CI, agent boxes).
-gui = ["dep:gpui", "dep:unicode-segmentation", "dep:cocoa", "dep:objc", "dep:raw-window-handle", "dep:alacritty_terminal", "dep:image", "dep:smallvec", "dep:libc", "dep:x11rb", "dep:wayland-client", "dep:wayland-protocols", "dep:wayland-protocols-wlr"]
+gui = ["dep:gpui", "dep:unicode-segmentation", "dep:cocoa", "dep:objc", "dep:raw-window-handle", "dep:alacritty_terminal", "dep:image", "dep:smallvec", "dep:x11rb", "dep:wayland-client", "dep:wayland-protocols", "dep:wayland-protocols-wlr"]
 
 [profile.release]
 lto = "thin"

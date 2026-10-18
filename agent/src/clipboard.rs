@@ -92,25 +92,45 @@ mod mac {
         }
     }
 
+    unsafe extern "C" {
+        fn muxen_pasteboard(concealed: *mut i32) -> i64;
+    }
+
+    /// The pasteboard's change count, and whether a password manager marked
+    /// what's there private (see mac_screen.m).
+    fn pasteboard() -> (i64, bool) {
+        let mut concealed = 0;
+        let count = unsafe { muxen_pasteboard(&mut concealed) };
+        (count, concealed != 0)
+    }
+
     pub fn run(rx: mpsc::Receiver<String>, changed: impl Fn(&str) -> bool) {
-        // What's there now is old news; only changes from here on count.
-        let mut last = paste().unwrap_or_default();
+        // What's there now is old news; only copies from here on count.
+        let mut seen = pasteboard().0;
         loop {
             match rx.recv_timeout(Duration::from_millis(600)) {
                 Ok(text) => {
                     copy(&text);
-                    last = text;
+                    seen = pasteboard().0;
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => return,
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
             }
-            if let Some(now) = paste() {
-                if now != last && now.len() <= MAX {
-                    if !changed(&now) {
-                        return;
-                    }
-                    last = now;
-                }
+            let (count, private) = pasteboard();
+            if count == seen {
+                continue;
+            }
+            // A password manager's copy stays on this Mac.
+            let text = if private { None } else { paste() };
+            // Copied again while reading: that copy is looked at next time.
+            if pasteboard().0 != count {
+                continue;
+            }
+            seen = count;
+            if let Some(now) = text.filter(|t| !t.is_empty() && t.len() <= MAX)
+                && !changed(&now)
+            {
+                return;
             }
         }
     }

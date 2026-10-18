@@ -77,6 +77,12 @@ fn worth_sharing(last: &str, text: &str) -> bool {
     !text.is_empty() && text.len() <= MAX && text != last
 }
 
+/// KeePassXC and other password managers on Linux mark a copy with
+/// `x-kde-passwordManagerHint: secret`. Those stay on this computer.
+fn password_secret(hint: &[u8]) -> bool {
+    hint.trim_ascii() == b"secret"
+}
+
 /// Watches the desktop clipboard until `rx` disconnects. `on_change` is a new
 /// copy made here; returning false stops the watch. Text sent on `rx` is copied here.
 pub fn run(
@@ -129,7 +135,7 @@ pub fn set_text(text: &str) -> bool {
 }
 
 mod x11 {
-    use super::{MAX, worth_sharing};
+    use super::{MAX, password_secret, worth_sharing};
     use std::sync::mpsc;
     use std::thread;
     use std::time::Duration;
@@ -179,6 +185,7 @@ mod x11 {
             atom("MUXEN_CLIP")?,
             atom("INCR")?,
         );
+        let hint = atom("x-kde-passwordManagerHint")?;
         let string: u32 = AtomEnum::STRING.into();
         conn.xfixes_query_version(5, 0)
             .map_err(|e| e.to_string())?
@@ -196,21 +203,30 @@ mod x11 {
         // text either way (so nothing echoes back).
         let mut owned: Option<Vec<u8>> = None;
         let mut last = String::new();
+        // When the copy being asked about was made (answers about an older one are dropped).
+        let mut asked_at = x11rb::CURRENT_TIME;
         loop {
             while let Some(event) = conn.poll_for_event().map_err(|e| e.to_string())? {
                 match event {
-                    // Something else took the clipboard: ask it for the text.
+                    // Something else took the clipboard: ask what it offers
+                    // first, since a password manager marks its copies.
                     Event::XfixesSelectionNotify(e) if e.owner != win && e.owner != NONE => {
-                        let _ = conn.convert_selection(
-                            win,
-                            clipboard,
-                            utf8,
-                            prop,
-                            e.selection_timestamp,
-                        );
+                        asked_at = e.selection_timestamp;
+                        let _ = conn.convert_selection(win, clipboard, targets, prop, asked_at);
                         let _ = conn.flush();
                     }
-                    Event::SelectionNotify(e) if e.requestor == win && e.property != NONE => {
+                    Event::SelectionNotify(e)
+                        if e.requestor == win
+                            && (e.time == asked_at || e.time == x11rb::CURRENT_TIME) =>
+                    {
+                        if e.property == NONE {
+                            if e.target == targets {
+                                let _ =
+                                    conn.convert_selection(win, clipboard, utf8, prop, asked_at);
+                                let _ = conn.flush();
+                            }
+                            continue;
+                        }
                         let Ok(cookie) = conn.get_property(
                             true,
                             win,
@@ -222,6 +238,24 @@ mod x11 {
                             continue;
                         };
                         let Ok(reply) = cookie.reply() else { continue };
+                        if e.target == targets {
+                            let offered: Vec<u32> = reply
+                                .value32()
+                                .map(|atoms| atoms.collect())
+                                .unwrap_or_default();
+                            let next = if offered.contains(&hint) { hint } else { utf8 };
+                            let _ = conn.convert_selection(win, clipboard, next, prop, asked_at);
+                            let _ = conn.flush();
+                            continue;
+                        }
+                        if e.target == hint {
+                            if !password_secret(&reply.value) {
+                                let _ =
+                                    conn.convert_selection(win, clipboard, utf8, prop, asked_at);
+                                let _ = conn.flush();
+                            }
+                            continue;
+                        }
                         if reply.type_ == incr || reply.value.len() > MAX {
                             continue;
                         }
@@ -297,7 +331,7 @@ mod x11 {
 }
 
 mod wayland {
-    use super::{MARKER, MAX, OFFER_MIMES, text_mime, worth_sharing};
+    use super::{MARKER, MAX, OFFER_MIMES, password_secret, text_mime, worth_sharing};
     use std::io::{self, Read, Write};
     use std::os::fd::{AsFd, AsRawFd};
     use std::os::unix::net::UnixStream;
@@ -509,6 +543,14 @@ mod wayland {
                 if offer.mimes.iter().any(|m| m == MARKER) {
                     return;
                 }
+                if offer.mimes.iter().any(|m| m == "x-kde-passwordManagerHint") {
+                    if let Some(bytes) =
+                        read_offer(offer.api.as_ref(), "x-kde-passwordManagerHint", conn)
+                        && password_secret(&bytes)
+                    {
+                        return;
+                    }
+                }
                 text_mime(&offer.mimes).map(str::to_string)
             };
             let Some(mime) = mime else { return };
@@ -524,6 +566,16 @@ mod wayland {
                 self.accept(String::from_utf8_lossy(&bytes).into_owned());
             }
         }
+    }
+
+    fn read_offer(api: &dyn OfferApi, mime: &str, conn: &Connection) -> Option<Vec<u8>> {
+        let Ok((read, write)) = UnixStream::pair() else {
+            return None;
+        };
+        api.recv(mime, write.as_fd());
+        drop(write);
+        let _ = conn.flush();
+        read_all(read)
     }
 
     fn read_all(mut read: UnixStream) -> Option<Vec<u8>> {
@@ -836,6 +888,14 @@ mod wayland {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_password_managers_copy_says_secret() {
+        assert!(password_secret(b"secret"));
+        assert!(password_secret(b"secret\n"));
+        assert!(!password_secret(b""));
+        assert!(!password_secret(b"public"));
+    }
 
     #[test]
     fn picks_a_clipboard_backend() {

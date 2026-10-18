@@ -1311,10 +1311,11 @@ pub fn open_window(
     cx: &mut App,
 ) {
     let bounds = Bounds::centered(None, gpui::size(px(1440.), px(900.)), cx);
+    let title = format!("{name} · Desktop");
     let options = gpui::WindowOptions {
         window_bounds: Some(gpui::WindowBounds::Windowed(bounds)),
         titlebar: Some(gpui::TitlebarOptions {
-            title: Some(format!("{name} · Desktop").into()),
+            title: Some(title.clone().into()),
             appears_transparent: cfg!(target_os = "macos"),
             traffic_light_position: None,
         }),
@@ -1324,6 +1325,8 @@ pub fn open_window(
         ..Default::default()
     };
     let opened = cx.open_window(options, |window, cx| {
+        // (Wayland gets no title from the options.)
+        window.set_window_title(&title);
         super::theme::apply(window, cx);
         let view = cx.new(|cx| {
             let mut v = DesktopView::new(engine, machine_id, window, cx);

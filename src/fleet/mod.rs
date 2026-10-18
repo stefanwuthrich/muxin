@@ -19,6 +19,7 @@ pub mod schedules;
 pub mod services;
 pub mod sessions;
 pub mod tailscale;
+pub mod tar_filter;
 pub mod usage;
 pub mod wake;
 pub mod workspaces;

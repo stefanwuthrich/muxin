@@ -1371,14 +1371,8 @@ pub async fn check(engine: &Arc<Engine>, req: CheckRequest) -> ApiResult<Vec<Mac
         }
         None => None,
     };
-    match &only {
-        Some(id) => {
-            engine.run_check(Some(vec![id.clone()])).await;
-            // Another check of the same machine may have been in flight; wait it out.
-            wait_checked(engine, id, CHECK_WAIT).await;
-        }
-        None => engine.run_check(None).await,
-    }
+    // This also waits out a check of the same machine that was already in flight.
+    engine.run_check(only.clone().map(|id| vec![id])).await;
     engine.sync_github().await;
     let s = engine.current();
     Ok(s.machines
@@ -1465,6 +1459,8 @@ pub async fn remove_machine(
     let s = engine.current();
     let m = find_machine(&s, &req.machine_id)?.clone();
     engine.remove_machine(&m.id).map_err(op_error)?;
+    // Its agent forgetting this app (when it was paired) finishes before a CLI run exits.
+    engine.unpaired(&m.id).await;
     Ok(machine_summary(&m))
 }
 

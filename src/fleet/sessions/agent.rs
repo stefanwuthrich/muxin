@@ -42,8 +42,10 @@ pub fn target(probe: Option<&ProbeResult>) -> Option<String> {
     Some(format!("{os}-{arch}"))
 }
 
-/// The folder of agent builds: in the app bundle, next to the binary, or
-/// `dist/agents` in a source checkout (`scripts/build-agents.sh`).
+/// The folder of agent builds: in the app bundle, next to the binary, or (a
+/// debug build) `dist/agents` in the source checkout it was built from
+/// (`scripts/build-agents.sh`). Not any folder above the binary: one planted
+/// there (`/tmp/dist/agents`) would be uploaded to every machine.
 pub fn builds_dir() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("MUXEN_AGENTS_DIR") {
         return Some(PathBuf::from(dir));
@@ -55,16 +57,19 @@ pub fn builds_dir() -> Option<PathBuf> {
             return Some(candidate);
         }
     }
-    dir.ancestors()
-        .map(|a| a.join("dist/agents"))
-        .find(|c| c.is_dir())
+    #[cfg(debug_assertions)]
+    {
+        let checkout = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/dist/agents"));
+        if checkout.is_dir() {
+            return Some(checkout);
+        }
+    }
+    None
 }
 
 /// Where the build for `target` is.
 fn build_path(target: &str) -> Result<PathBuf, String> {
-    let dir = builds_dir().ok_or(
-        "Muxin can't find its agent builds (run scripts/build-agents.sh in a source checkout).",
-    )?;
+    let dir = builds_dir().ok_or("Muxin can't find its agent builds (run scripts/build-agents.sh in a source checkout, or set MUXEN_AGENTS_DIR).")?;
     let exe = if target.starts_with("windows") {
         ".exe"
     } else {
@@ -263,7 +268,8 @@ async fn upload(spec: &MachineSpec, bytes: Vec<u8>) -> Result<String, String> {
 /// Puts an uploaded build (`muxen-agent.upload.exe`) in place on Windows and
 /// prints its hash. A running agent holds its file, but Windows lets it be
 /// renamed: the old one moves aside and goes once nothing runs it; the
-/// desktop helper, running the old build, goes now.
+/// desktop helper, running the old build, goes now. Then `migrate` brings up
+/// to date what an older build set up (its firewall rule).
 const SWAP_PS1: &str = "$ErrorActionPreference = 'Stop'\n\
          $d = Join-Path $env:USERPROFILE '.muxen\\bin'\n\
          $t = Join-Path $d 'muxen-agent.exe'\n\
@@ -271,6 +277,7 @@ const SWAP_PS1: &str = "$ErrorActionPreference = 'Stop'\n\
          Move-Item -Force (Join-Path $d 'muxen-agent.upload.exe') $t\n\
          Get-CimInstance Win32_Process -Filter \"Name='muxen-agent.exe'\" | Where-Object { $_.CommandLine -match ' gui-serve' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }\n\
          Get-ChildItem $d -Filter 'muxen-agent.old.*.exe' | ForEach-Object { Remove-Item -Force $_.FullName -ErrorAction SilentlyContinue }\n\
+         & $t migrate | Out-Null\n\
          & $t hash\n";
 
 /// Copies the build into place on Windows and prints its hash: over sftp

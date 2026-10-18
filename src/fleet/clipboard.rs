@@ -1,9 +1,10 @@
-//! The shared clipboard: text copied on this computer can be pasted on the
-//! machines (Linux desktops, Macs), and text copied on one of them lands here
-//! and on the others. Each machine's agent runs `muxen-agent clip` on a link
-//! channel (see agent/src/clipboard.rs). The window watches this computer's
-//! clipboard and calls `local_changed`; on Linux that watch owns the desktop
-//! clipboard directly (`src/os_clip.rs`), not through GPUI.
+//! The shared clipboard, once it's turned on in Settings: text copied on this
+//! computer can be pasted on the machines (Linux desktops, Macs), and text
+//! copied on one of them lands here and on the others. Each machine's agent
+//! runs `muxen-agent clip` on a link channel (see agent/src/clipboard.rs). The
+//! window watches this computer's clipboard and calls `local_changed`; on Linux
+//! that watch owns the desktop clipboard directly (`src/os_clip.rs`), not
+//! through GPUI.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -22,6 +23,8 @@ const MAX: usize = 256 * 1024;
 struct Shared {
     /// The text last copied anywhere (so nothing echoes back).
     last: Mutex<String>,
+    /// What a program in a terminal here last put on the clipboard (see `keep_here`).
+    kept: Mutex<Option<String>>,
     /// Machines sharing the clipboard: their link and channel.
     peers: Mutex<HashMap<String, (Arc<Link>, u32)>>,
     /// Text copied on a machine, for this computer's clipboard.
@@ -32,6 +35,7 @@ fn shared() -> &'static Shared {
     static SHARED: OnceLock<Shared> = OnceLock::new();
     SHARED.get_or_init(|| Shared {
         last: Mutex::new(String::new()),
+        kept: Mutex::new(None),
         peers: Mutex::new(HashMap::new()),
         incoming: broadcast::channel(16).0,
     })
@@ -46,7 +50,7 @@ pub fn subscribe() -> broadcast::Receiver<String> {
 /// Something new was copied on this computer: offer it to every machine.
 #[cfg_attr(not(feature = "gui"), allow(dead_code))]
 pub fn local_changed(text: &str) {
-    if text.is_empty() || text.len() > MAX {
+    if text.is_empty() || text.len() > MAX || kept(text) {
         return;
     }
     {
@@ -59,6 +63,24 @@ pub fn local_changed(text: &str) {
     for (link, channel) in shared().peers.lock().unwrap().values() {
         link.send(*channel, CLIP, text.as_bytes());
     }
+}
+
+/// A program in one of the terminals here put this on the clipboard (OSC 52):
+/// it stays on this computer, so `local_changed` doesn't offer it to the machines.
+#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+pub fn keep_here(text: &str) {
+    *shared().kept.lock().unwrap() = Some(text.to_string());
+}
+
+/// Whether this is the terminal program's copy, seen once (copying the same
+/// text yourself afterwards shares it as usual).
+fn kept(text: &str) -> bool {
+    let mut kept = shared().kept.lock().unwrap();
+    let is = kept.as_deref() == Some(text);
+    if is {
+        *kept = None;
+    }
+    is
 }
 
 /// Something new was copied on a machine: here, and the other machines.
@@ -147,4 +169,19 @@ pub fn stop_all() {
 #[cfg_attr(not(feature = "gui"), allow(dead_code))]
 pub fn sharing(machine_id: &str) -> bool {
     shared().peers.lock().unwrap().contains_key(machine_id) && link::current(machine_id).is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_terminal_programs_copy_isnt_offered_to_the_machines() {
+        keep_here("from a program");
+        assert!(kept("from a program"));
+        // The same text copied by hand afterwards is shared as usual.
+        assert!(!kept("from a program"));
+        keep_here("osc 52");
+        assert!(!kept("something else"));
+    }
 }
