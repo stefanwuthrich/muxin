@@ -14,6 +14,7 @@ pub mod logs;
 pub mod model;
 pub mod ports;
 pub mod procs;
+pub mod remote_desktop;
 pub mod report;
 pub mod schedules;
 pub mod services;

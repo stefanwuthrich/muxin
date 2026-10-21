@@ -707,30 +707,32 @@ impl Root {
                     .flex_1()
                     .min_w(px(0.))
                     .gap(px(2.))
-                    .child(
-                        div()
-                            .text_size(px(14.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(theme.text)
-                            .child(info.title.clone()),
-                    )
+                    .child(div().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).text_color(theme.text).child(info.title.clone()))
+                    // A folder too long to fit goes onto its own line (and wraps at
+                    // its slashes) instead of running under the buttons.
                     .child(
                         div()
                             .flex()
+                            .flex_wrap()
                             .items_center()
-                            .gap(px(6.))
+                            .gap_x(px(6.))
+                            .gap_y(px(2.))
                             .text_size(px(12.))
                             .text_color(theme.text_placeholder)
                             .child(info.agent_name.clone())
                             .child("·")
                             .child(machine)
-                            .child("·")
-                            .child(
-                                div()
-                                    .font_family(mono_font())
-                                    .text_size(px(11.5))
-                                    .child(info.cwd.clone()),
-                            ),
+                            .when(!info.cwd.is_empty(), |d| {
+                                d.child(
+                                    div()
+                                        .flex()
+                                        .items_start()
+                                        .gap(px(4.))
+                                        .min_w(px(0.))
+                                        .child(kit::icon("folder", 12., theme.text_placeholder).flex_none().mt(px(2.)))
+                                        .child(div().flex_1().min_w(px(0.)).font_family(mono_font()).text_size(px(11.5)).child(info.cwd.clone())),
+                                )
+                            }),
                     )
                     .children(
                         info.git
@@ -2162,21 +2164,24 @@ impl Root {
 
     /// Runs a GitHub CLI command (sign-in, granting a permission) in a terminal
     /// on a machine. The browser step opens here, and a finished login refreshes
-    /// GitHub status.
-    pub(super) fn gh_cli_run(
-        &mut self,
-        machine_id: &str,
-        args: &str,
-        title: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    /// GitHub status. Windows runs it in PowerShell (no printf or read), and gh
+    /// by the path the agent found, in case the shell's PATH is older.
+    pub(super) fn gh_cli_run(&mut self, machine_id: &str, args: &str, title: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let windows = self.snapshot.machines.iter().any(|m| m.id == machine_id && m.platform.starts_with("windows"));
+        let command = if windows {
+            let gh = self.engine.sessions_of(machine_id).and_then(|s| s.gh).and_then(|g| g.path).map(|p| crate::ops::remote::ps_quote(&p)).unwrap_or_else(|| "gh".into());
+            // Prompting is off, so the device code is printed and polled at once.
+            // A failure stays on screen until Enter; success lets the shell exit.
+            format!("$env:GH_PROMPT_DISABLED = '1'; & {gh} {args}; if ($LASTEXITCODE -ne 0) {{ Write-Host ''; [void](Read-Host 'Press Enter to close'); exit $LASTEXITCODE }}")
+        } else {
+            gh_auth_command(args)
+        };
         let req = StartSession {
             machine_id: machine_id.to_string(),
             agent: "shell".into(),
             cwd: "~".into(),
             title: Some(title.into()),
-            command: Some(gh_auth_command(args)),
+            command: Some(command),
             ..Default::default()
         };
         self.start_gh_auth(req, window, cx);
@@ -2376,23 +2381,12 @@ impl Root {
     /// Gives a machine this computer's ssh key: a terminal here with
     /// `ssh-copy-id` typed in (making a key first if there's none), for the
     /// user to run and type their password for that machine once.
-    pub(super) fn setup_ssh_access(
-        &mut self,
-        machine_id: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some((spec, _)) = self.engine.machine(machine_id) else {
-            return;
-        };
-        let Some(local) = self
-            .snapshot
-            .machines
-            .iter()
-            .find(|m| m.local)
-            .map(|m| m.id.clone())
-        else {
-            let cmd = format!("ssh-copy-id {}", spec.host.trim());
+    pub(super) fn setup_ssh_access(&mut self, machine_id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((spec, probe)) = self.engine.machine(machine_id) else { return };
+        // The account to sign in as, so ssh-copy-id doesn't guess another one.
+        let user = crate::probe::ssh_user(&spec, probe.as_ref());
+        let Some(local) = self.snapshot.machines.iter().find(|m| m.local).map(|m| m.id.clone()) else {
+            let cmd = crate::probe::copy_id_command(&spec, user.as_deref(), None);
             cx.write_to_clipboard(ClipboardItem::new_string(cmd));
             self.notify_user("Copied. Run it in Terminal, then check again.", false, cx);
             return;
@@ -2403,10 +2397,12 @@ impl Root {
         });
         let task = cx.spawn_in(window, async move |this, cx| {
             let key = job.await.ok().flatten();
-            let host = spec.host.trim().to_string();
             let typed = match key {
-                Some(k) => format!("ssh-copy-id -i {k} {host}"),
-                None => format!("ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N '' && ssh-copy-id -i ~/.ssh/id_ed25519.pub {host}"),
+                Some(k) => crate::probe::copy_id_command(&spec, user.as_deref(), Some(&k)),
+                None => format!(
+                    "ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N '' && {}",
+                    crate::probe::copy_id_command(&spec, user.as_deref(), Some("~/.ssh/id_ed25519.pub"))
+                ),
             };
             let _ = this.update_in(cx, |this, window, cx| {
                 let req = StartSession {
@@ -2417,7 +2413,10 @@ impl Root {
                     typed: Some(typed),
                     ..Default::default()
                 };
-                let then = format!("Press Enter and type your password for {}, then check again.", spec.name);
+                let then = match &user {
+                    Some(u) => format!("Press Enter and type your password for {u} on {}, then check again.", spec.name),
+                    None => format!("Press Enter and type your password for {}, then check again.", spec.name),
+                };
                 this.start_session_then(req, Some(then), window, cx);
             });
         });

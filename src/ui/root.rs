@@ -109,7 +109,8 @@ pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("secondary-q", Quit, None),
         KeyBinding::new("escape", Dismiss, Some(WORKSPACE)),
-        KeyBinding::new("/", FocusFilter, Some(WORKSPACE)),
+        // Not while typing in a text field (see input.rs), where "/" is a slash.
+        KeyBinding::new("/", FocusFilter, Some("Root && !TextInput")),
     ]);
 }
 
@@ -296,6 +297,20 @@ pub struct PulseSample {
     pub online: usize,
 }
 
+/// This computer's clipboard as the shared clipboard last saw it.
+/// Linux owns that clipboard in `os_clip` and does not read this.
+#[derive(Default)]
+#[cfg_attr(target_os = "linux", allow(dead_code))]
+struct ClipboardSeen {
+    /// Its change number (see pasteboard_state; 0 on Linux).
+    count: i64,
+    /// Its text.
+    text: String,
+    /// Text from the machines written there last, until a copy made here
+    /// goes out. Wayland takes it a moment later, which isn't a new copy.
+    written: Option<String>,
+}
+
 pub struct Root {
     pub(super) engine: Arc<Engine>,
     pub(super) snapshot: Arc<Snapshot>,
@@ -407,7 +422,7 @@ pub struct Root {
     window_active: bool,
     pub(super) ws_ui: WorkspaceUi,
     /// This computer's clipboard as last seen (see watch_clipboard).
-    clipboard_seen: (i64, String),
+    clipboard_seen: ClipboardSeen,
     _tasks: Vec<Task<()>>,
     pub(super) _subscriptions: Vec<Subscription>,
 }
@@ -486,14 +501,7 @@ impl Root {
             loop {
                 match copied_there.recv().await {
                     Ok(text) => {
-                        let alive = this.update(cx, |this, cx| {
-                            #[cfg(target_os = "linux")]
-                            crate::os_clip::set_text(&text);
-                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.clone()));
-                            this.clipboard_seen =
-                                (super::pasteboard_state().map(|s| s.0).unwrap_or(0), text);
-                        });
-                        if alive.is_err() {
+                        if this.update(cx, |this, cx| this.paste_copied_there(text, cx)).is_err() {
                             break;
                         }
                     }
@@ -640,10 +648,7 @@ impl Root {
             palette: None,
             window_active: false,
             ws_ui: WorkspaceUi::default(),
-            clipboard_seen: (
-                super::pasteboard_state().map(|s| s.0).unwrap_or(0),
-                String::new(),
-            ),
+            clipboard_seen: ClipboardSeen { count: super::pasteboard_state().map(|s| s.0).unwrap_or(0), ..Default::default() },
             _tasks: {
                 #[cfg(target_os = "linux")]
                 {
@@ -685,8 +690,12 @@ impl Root {
         }
         self.announce_notices(&snapshot);
         // Terminals of sessions that ended go away (one without the agent stops with its terminal).
-        self.terminals
-            .retain(|id, _| snapshot.sessions.iter().any(|s| &s.id == id));
+        self.terminals.retain(|id, _| snapshot.sessions.iter().any(|s| &s.id == id));
+        // A session that ended may have changed git or the GitHub CLI there (the
+        // sign-in terminal does): the machine's Git card looks again when shown.
+        for s in self.snapshot.sessions.iter().filter(|s| !snapshot.sessions.iter().any(|n| n.id == s.id)) {
+            self.machine_git.remove(&s.machine_id);
+        }
         // Looking at a session that just closed: back to its machine.
         if let Route::Session(id) = self.route.clone() {
             let gone = !snapshot.sessions.iter().any(|s| s.id == id)
@@ -1526,37 +1535,86 @@ impl Root {
     }
 
     /// Offers what was just copied on this computer to the machines sharing
-    /// the clipboard (not a password manager's copies). Linux watches the
-    /// desktop clipboard on its own thread instead (`os_clip`).
+    /// the clipboard (not a password manager's copies). Whether something
+    /// new was copied here since the last look, text or not. Linux watches
+    /// the desktop clipboard on its own thread instead (`os_clip`).
     #[cfg(not(target_os = "linux"))]
-    fn watch_clipboard(&mut self, cx: &mut Context<Self>) {
+    fn watch_clipboard(&mut self, cx: &mut Context<Self>) -> bool {
         if self.engine.is_demo() || !self.engine.settings().share_clipboard {
-            return;
+            return false;
+        }
+        // Wayland says what's on the clipboard only to the program with the
+        // keyboard: with no Muxin window focused, GPUI reads an old copy.
+        if cx.compositor_name() == "Wayland" && cx.active_window().is_none() {
+            return false;
         }
         // Without a change counter (Linux), the text is compared; a password
         // manager's copies can't be told apart there (see pasteboard_state).
         let state = super::pasteboard_state();
         if let Some((count, private)) = state {
-            if count == self.clipboard_seen.0 {
-                return;
+            if count == self.clipboard_seen.count {
+                return false;
             }
-            self.clipboard_seen.0 = count;
+            // A copy made here: a write from the machines is counted as soon
+            // as it's made (see paste_copied_there).
+            self.clipboard_seen.count = count;
+            self.clipboard_seen.written = None;
             if private {
-                return;
+                return true;
             }
         }
-        let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
-            return;
-        };
+        let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else { return state.is_some() };
         // Copied again while reading: that copy is looked at next time.
         if let Some((count, _)) = state
             && super::pasteboard_state().map(|s| s.0) != Some(count)
         {
+            return true;
+        }
+        let seen = &mut self.clipboard_seen;
+        if text == seen.text {
+            return false;
+        }
+        // What was written from the machines, set a moment later (Wayland).
+        if seen.written.as_ref() == Some(&text) {
+            seen.text = text;
+            seen.written = None;
+            return false;
+        }
+        crate::fleet::clipboard::local_changed(&text);
+        seen.text = text;
+        seen.written = None;
+        true
+    }
+
+    /// Puts text copied on a machine on this computer's clipboard: not when
+    /// a newer copy was made here (that one goes to the machines instead),
+    /// nor when it's there already. Then notes what the clipboard really
+    /// holds, which isn't always the text: Wayland ignores the write while no
+    /// Muxin window has focus, and the old text still there isn't a new copy
+    /// to offer the machines (#20).
+    fn paste_copied_there(&mut self, text: String, cx: &mut Context<Self>) {
+        if !self.engine.settings().share_clipboard {
             return;
         }
-        if text != self.clipboard_seen.1 {
-            crate::fleet::clipboard::local_changed(&text);
-            self.clipboard_seen.1 = text;
+        // Linux owns the desktop clipboard directly. GPUI's only works while
+        // this window is focused, so a copy from a machine goes through os_clip.
+        #[cfg(target_os = "linux")]
+        {
+            crate::os_clip::set_text(&text);
+            self.clipboard_seen = ClipboardSeen { count: 0, text: text.clone(), written: Some(text) };
+            let _ = cx;
+            return;
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            if self.watch_clipboard(cx) {
+                return;
+            }
+            let holds = |cx: &Context<Self>| cx.read_from_clipboard().and_then(|item| item.text());
+            if holds(cx).as_ref() != Some(&text) {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.clone()));
+            }
+            self.clipboard_seen = ClipboardSeen { count: super::pasteboard_state().map(|s| s.0).unwrap_or(0), text: holds(cx).unwrap_or_default(), written: Some(text) };
         }
     }
 
@@ -1636,6 +1694,24 @@ impl Root {
             let result = job.await.unwrap_or_else(|e| Err(e.to_string()));
             let _ = this.update(cx, |this, cx| match result {
                 Ok(name) => this.notify_user(format!("Opening it in {name}…"), false, cx),
+                Err(e) => this.notify_user(e, true, cx),
+            });
+        });
+        self.track(task);
+    }
+
+    /// Opens a machine's own remote desktop (RDP, VNC) in this computer's app for it.
+    pub(super) fn open_remote_desktop(&mut self, machine_id: &str, cx: &mut Context<Self>) {
+        let (engine, machine) = (self.engine.clone(), machine_id.to_string());
+        let name = self.snapshot.machines.iter().find(|m| m.id == machine).map(|m| m.name.clone()).unwrap_or_else(|| machine.clone());
+        let job = engine.runtime().spawn({
+            let engine = engine.clone();
+            async move { engine.open_remote_desktop(&machine, None).await }
+        });
+        let task = cx.spawn(async move |this, cx| {
+            let result = job.await.unwrap_or_else(|e| Err(e.to_string()));
+            let _ = this.update(cx, |this, cx| match result {
+                Ok(r) => this.notify_user(r.summary(&name), false, cx),
                 Err(e) => this.notify_user(e, true, cx),
             });
         });

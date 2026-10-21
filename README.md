@@ -58,9 +58,11 @@ Muxin was called Muxen before 0.5.1. Updating keeps your settings, machines and 
 
 ```sh
 git clone https://github.com/stefanwuthrich/muxin && cd muxin
-cargo build --release
+cargo build --release --workspace
 ./target/release/muxin            # opens the window
 ```
+
+`--workspace` also builds Muxin's agent for this computer, which the app sets up on it. For your other machines' platforms, `./scripts/build-agents.sh` builds every agent into `dist/agents` (it needs zig and cargo-zigbuild).
 
 Requirements:
 
@@ -345,7 +347,7 @@ The GitHub page is built for the loop of picking an issue, handing it to an agen
 
 - **For you:** pull requests waiting for your review, issues assigned to you, and your open pull requests.
 - **Repositories:** everything you own, collaborate on or reach through your orgs, with each one's open issues, pull requests and GitHub Actions runs. Star the ones you work on to keep them at the top, and show the list as one list or grouped by owner (you, then your organizations, then repositories other people shared with you).
-- **On your machines:** each machine's agent finds git checkouts in your code folders (`~/Developer`, `~/code`, `~/src`, … set in `config.toml` as `code_folders` under `[settings]`) and links them to their GitHub repository, with branch, commits ahead/behind and uncommitted changes. Fetch, Pull and Push from there.
+- **On your machines:** each machine's agent finds git checkouts in your code folders (`~/Developer`, `~/code`, `~/src`, … add yours in Settings › General › Code folders) and links them to their GitHub repository, with branch, commits ahead/behind and uncommitted changes. Fetch, Pull and Push from there.
 - **Fix with agent:** on any issue (or **Review with agent** on a pull request), one click opens a new session in that repository's checkout on the machine you pick (this computer first), with the issue's link, title and description as the agent's first message. Right-click an issue or pull request for **Fix in a new workspace…**: pick any machine and agent, and Muxin clones the repository there (an issue gets its own branch, like `issue-910-content-excalidraw`; a pull request checks out its branch, forks included), then starts the agent in it.
 
 Muxin uses the GitHub CLI's login (`gh auth login`) or `GITHUB_TOKEN`. Settings has a **Sign in with GitHub** button that runs the CLI's browser sign-in; each machine's page shows whether its own `gh` is signed in (agents there use it for issues and pull requests) and can sign it in too.
@@ -415,6 +417,14 @@ Muxin first reaches a machine with `ssh`, installs its small agent there, and fr
 **Servers.** A machine's page lists what's listening there: web servers first, with their page's title (a dev server, a Docker container's site), then its other ports. **Open** puts one on this computer at `localhost` (the same port number when it's free) and opens it in your browser; no desktop needed. Each connection goes through the machine's live connection, so it works over ssh or direct alike, even for servers that listen only on the machine itself. Open ports are listed under their machine in the sidebar (click to open, × to close) and come back when Muxin starts. **Open a port** takes any port number. From a terminal: `muxin ports <machine>` and `muxin forward <machine> <port>`.
 
 **Desktop.** On a Linux machine with an X11 desktop, a Mac, or a Windows PC someone is signed in to, **Show desktop** (on its page, or its right-click menu) shows its screen live and sends your mouse and keyboard to it. On Linux ⌘ works as Ctrl; on a Mac it stays ⌘. An open desktop is listed under its machine in the sidebar (and keeps streaming while you look elsewhere); close it there.
+
+**Nobody signed in.** Muxin shows the screen of the account it connects as, so that account has to be signed in there. Servers often have nobody signed in, and a Remote Desktop window closed without signing out leaves a session with no screen. Muxin says so right away and offers **Open with Remote Desktop** (Windows), **Open with Screen Sharing** (Mac) or **Open with RDP or VNC** (Linux); the machine's right-click menu has it too. It opens the machine's own remote desktop in your app for it: Windows App or Remote Desktop Connection, Screen Sharing, Remmina or FreeRDP. That shows the sign-in screen, so you can sign in. It goes through Muxin's connection to the machine, so it works away from home too and nothing has to be opened in a firewall. Here it's at `localhost:3390` (VNC: `localhost:5901`), listed under Servers. The machine needs it turned on:
+
+- **Windows:** Remote Desktop, in Settings › System › Remote Desktop (on Windows Server: Server Manager › Local Server). Windows Home can't be reached this way. Windows Server allows two admin sessions at once without extra licenses.
+- **Mac:** Screen Sharing, in System Settings › General › Sharing.
+- **Linux:** xrdp, GNOME's Remote Desktop, or a VNC server such as x11vnc.
+
+From a terminal: `muxin desktop rdp <machine>` or `muxin desktop vnc <machine>`.
 
 **Monitors, real and virtual.** A machine with more than one monitor gets a picker above its desktop: show one monitor at a time (on Linux, or all of them). **Add monitor** (or **Add virtual monitor…** in the machine's right-click menu) plugs in a monitor that isn't there, the way [DeskPad](https://github.com/Stengo/DeskPad) does on a Mac: pick a name and a size (720p to 4K), and it joins the desktop like a real one, to the right of the others. Windows move onto it, the machine's own tools (System Settings, RustDesk) see it, and while the machine's desktop is open, Muxin lists it under the Desktop item in the sidebar to open it directly. It starts at the main monitor's size and offers every common one (720p to 4K). Above a monitor, pick its resolution, and on Linux desktops that offer it, its scale: 200% makes things twice as big and just as sharp, so a 4K monitor reads like 1080p (the stream is always the screen's own size, so it stays crisp). Right-click a monitor (in the picker or the sidebar) to rename or remove it, and in the all-screens view, click a monitor's name to open it. On Cinnamon each virtual monitor gets copies of the main monitor's panels (menu, clock, dock with the same pinned apps), so it's usable on its own. It stays until you remove it (**Remove monitor**) or the machine restarts. Handy on a machine with no screen (a dummy HDMI plug, a server), or to give an agent a monitor of its own. On a Mac it's a CGVirtualDisplay. On Linux (X11) it's a software dummy plug: Muxin plugs a made-up monitor (at the size you picked) into a video output with nothing connected, and the desktop sets it up like a real one. That takes root, so when sudo wants a password Muxin asks for yours, only then, sends it to sudo over its encrypted connection, and keeps it in memory only until you quit. Nothing is installed.
 
@@ -573,7 +583,7 @@ muxin schedule log beelink s-ab12cd
 **Windows machines** are managed like the others, over OpenSSH (Settings › System › Optional features › OpenSSH Server, then key-based login; an administrator account for services and runners). Muxin installs its agent in `%USERPROFILE%\.muxen\bin` and works with PowerShell or cmd as sshd's shell:
 
 - **Sessions** keep running after Muxin closes (ConPTY, in the agent's session server).
-- **Desktop and clipboard:** the screen, mouse and keyboard of whoever is signed in; Muxin starts its helper in their session through a one-off scheduled task (no window flashes).
+- **Desktop and clipboard:** the screen, mouse and keyboard of the account Muxin connects as, while it's signed in; Muxin starts its helper in its session through a one-off scheduled task (no window flashes). With nobody signed in, use **Open with Remote Desktop** (see Desktop above).
 - **Pages:** Processes and GPUs, Services (Windows services; "at boot" is the startup type), Servers, Logs (the System, Application and Security event logs, a service's events, files), Usage, Copy files, git, Run (PowerShell), workspaces (sync copies through the agent; it doesn't delete).
 - **Checks** report admin rights, Docker, the network card (for Wake on LAN), pending reboots and failed services.
 - **Direct connections** run `listen` as a scheduled task at sign-in, with a Windows Firewall rule for the agent.

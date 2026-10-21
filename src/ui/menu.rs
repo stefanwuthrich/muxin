@@ -55,6 +55,8 @@ pub struct ContextMenu {
 enum Action {
     NewTerminal(String),
     ShowDesktop(String),
+    /// The machine's own remote desktop (RDP, VNC), in this computer's app for it.
+    OpenRemoteDesktop(String),
     ShowLogs(String),
     ShowServices(String),
     CopyFiles(String),
@@ -276,15 +278,11 @@ impl Root {
                             Action::ShowDesktop(id.clone()),
                         )));
                     }
-                    if super::format::has_desktop(m)
-                        && !s.demo
-                        && !m.platform.starts_with("windows")
-                    {
-                        items.push(needs_up(act(
-                            "Add virtual monitor…",
-                            "monitor",
-                            Action::AddDisplay(id.clone()),
-                        )));
+                    if super::format::has_desktop(m) && !m.local && !s.demo {
+                        items.push(needs_up(act(crate::fleet::remote_desktop::open_label(&m.platform), "external-link", Action::OpenRemoteDesktop(id.clone()))));
+                    }
+                    if super::format::has_desktop(m) && !s.demo && !m.platform.starts_with("windows") {
+                        items.push(needs_up(act("Add virtual monitor…", "monitor", Action::AddDisplay(id.clone()))));
                     }
                     items.push(needs_up(act(
                         "Logs",
@@ -868,6 +866,7 @@ impl Root {
                 self.show_new_session_with(Some(machine), Some(agent), window, cx)
             }
             Action::ShowDesktop(machine) => self.navigate(Route::Desktop(machine), window, cx),
+            Action::OpenRemoteDesktop(machine) => self.open_remote_desktop(&machine, cx),
             Action::ShowLogs(machine) => self.navigate(Route::Logs(machine), window, cx),
             Action::ShowServices(machine) => self.navigate(Route::Services(machine), window, cx),
             Action::CopyFiles(machine) => self.show_copy_files(Some(machine), None, window, cx),

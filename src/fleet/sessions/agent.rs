@@ -42,36 +42,66 @@ pub fn target(probe: Option<&ProbeResult>) -> Option<String> {
     Some(format!("{os}-{arch}"))
 }
 
+/// This binary, its symlinks resolved.
+fn this_exe() -> Option<PathBuf> {
+    std::env::current_exe().ok()?.canonicalize().ok()
+}
+
+/// The source checkout this binary was built in, when it still runs from
+/// there (`target/release/muxin`, debug or release).
+fn checkout(exe: &std::path::Path) -> Option<PathBuf> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).canonicalize().ok()?;
+    exe.starts_with(&root).then_some(root)
+}
+
 /// The folder of agent builds: in the app bundle, next to the binary, or
-/// `dist/agents` in the source checkout this binary was built from
-/// (`scripts/build-agents.sh`). The checkout path is the one compiled in, not
-/// a folder above the binary: one planted there (`/tmp/dist/agents`) would be
-/// uploaded to every machine. An installed copy, built somewhere else, won't
-/// find that path and uses the agents beside it.
+/// `dist/agents` in the source checkout it was built in and runs from
+/// (`scripts/build-agents.sh`). Not any folder above the binary: one planted
+/// there (`/tmp/dist/agents`) would be uploaded to every machine.
 pub fn builds_dir() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("MUXEN_AGENTS_DIR") {
         return Some(PathBuf::from(dir));
     }
-    let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
+    let exe = this_exe()?;
     let dir = exe.parent()?;
     for candidate in [dir.join("../Resources/agents"), dir.join("agents")] {
         if candidate.is_dir() {
             return Some(candidate);
         }
     }
-    let checkout = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/dist/agents"));
-    checkout.is_dir().then_some(checkout)
+    let dist = checkout(&exe)?.join("dist/agents");
+    dist.is_dir().then_some(dist)
 }
 
-/// Where the build for `target` is.
+/// This computer's agent build name ("darwin-aarch64").
+fn host_target() -> String {
+    let os = if std::env::consts::OS == "macos" { "darwin" } else { std::env::consts::OS };
+    format!("{os}-{}", std::env::consts::ARCH)
+}
+
+/// Where the build for `target` is. With no folder of builds, a
+/// `muxen-agent` built next to the binary (`cargo build --workspace` in a
+/// checkout) serves this computer's own platform.
 fn build_path(target: &str) -> Result<PathBuf, String> {
-    let dir = builds_dir().ok_or("Muxin can't find its agent builds (run scripts/build-agents.sh in a source checkout, or set MUXEN_AGENTS_DIR).")?;
-    let exe = if target.starts_with("windows") {
-        ".exe"
-    } else {
-        ""
-    };
-    Ok(dir.join(format!("muxen-agent-{target}{exe}")))
+    let exe = if target.starts_with("windows") { ".exe" } else { "" };
+    if let Some(dir) = builds_dir() {
+        return Ok(dir.join(format!("muxen-agent-{target}{exe}")));
+    }
+    let this = this_exe();
+    if target == host_target()
+        && let Some(sibling) = this.as_deref().and_then(|e| e.parent()).map(|d| d.join(format!("muxen-agent{exe}")))
+        && sibling.is_file()
+    {
+        return Ok(sibling);
+    }
+    Err(match this {
+        Some(e) if checkout(&e).is_some() => {
+            let cargo = if cfg!(debug_assertions) { "cargo build --workspace" } else { "cargo build --release --workspace" };
+            format!("This build of Muxin has no agent builds. In its checkout, run `{cargo}` for this computer, or scripts/build-agents.sh for every platform.")
+        }
+        Some(e) => format!("Muxin can't find its agent builds next to {}. Reinstall Muxin, or set MUXEN_AGENTS_DIR to a folder of them.", e.display()),
+        None => "Muxin can't tell where it's installed, so it can't find its agent builds. Set MUXEN_AGENTS_DIR to a folder of them.".to_string(),
+    })
 }
 
 /// The build for `target` and its hash (what `muxen-agent hash` prints).
@@ -184,11 +214,7 @@ pub async fn ensure(spec: &MachineSpec, probe: Option<&ProbeResult>) -> Result<(
     if installed.trim() != hash {
         tracing::info!("installing muxen-agent ({target}) on {}", spec.name);
         // Boxed: these futures are big, and `ensure` sits inside nearly every request's.
-        let got = if windows {
-            Box::pin(upload_windows(spec, &build_path(&target)?)).await?
-        } else {
-            Box::pin(upload(spec, bytes)).await?
-        };
+        let got = if windows { Box::pin(upload_windows(spec, &build_path(&target)?, &hash)).await? } else { Box::pin(upload(spec, bytes, &hash)).await? };
         if got.trim() != hash {
             return Err(format!(
                 "The agent didn't install correctly on {} (got {}).",
@@ -211,22 +237,16 @@ pub fn forget(machine_id: &str) {
 }
 
 /// Copies the build into place atomically and prints its hash.
-async fn upload(spec: &MachineSpec, bytes: Vec<u8>) -> Result<String, String> {
-    // The folder from before the rename (OpenRunner) moves over first: running
-    // sessions keep their server (its socket moves with the folder). Then the
-    // direct-connection service (if set up) moves to the new name or restarts
-    // onto the new build. A listener the service doesn't know about (one left
-    // from before, holding the port) goes first, or the old build would keep
-    // answering.
-    let script = r#"set -e; if [ -d "$HOME/.openrunner" ] && [ ! -e "$HOME/.muxen" ]; then mv "$HOME/.openrunner" "$HOME/.muxen"; fi; d="$HOME/.muxen/bin"; mkdir -p "$d"; n="$d/muxen-agent.new.$$"; cat > "$n"; chmod 755 "$n"; mv -f "$n" "$d/muxen-agent"; rm -f "$d/openrunner-agent"; "$d/muxen-agent" migrate >/dev/null 2>&1 || true; rmdir "$HOME/.openrunner" 2>/dev/null || true; if systemctl --user is-enabled muxen-agent.service >/dev/null 2>&1; then pkill -f "$d/muxen-agent listen" >/dev/null 2>&1 || true; systemctl --user restart muxen-agent.service >/dev/null 2>&1 || true; elif launchctl print "gui/$(id -u)/com.lumarylabs.muxen-agent" >/dev/null 2>&1; then pkill -f "$d/muxen-agent listen" >/dev/null 2>&1 || true; launchctl kickstart -k "gui/$(id -u)/com.lumarylabs.muxen-agent" >/dev/null 2>&1 || true; fi; "$d/muxen-agent" hash"#;
+async fn upload(spec: &MachineSpec, bytes: Vec<u8>, hash: &str) -> Result<String, String> {
+    let script = upload_script(hash);
     let mut cmd = if spec.is_local() {
         let mut c = Command::new("/bin/sh");
-        c.args(["-c", script]);
+        c.args(["-c", &script]);
         c
     } else {
         let mut c = Command::new("ssh");
         c.args(probe::ssh_args(spec));
-        c.arg(format!("sh -c {}", sh_quote(script)));
+        c.arg(format!("sh -c {}", sh_quote(&script)));
         c
     };
     cmd.stdin(Stdio::piped())
@@ -261,25 +281,56 @@ async fn upload(spec: &MachineSpec, bytes: Vec<u8>) -> Result<String, String> {
         .map_err(|_| format!("{} took too long to receive the agent.", spec.name))?
 }
 
+/// The script that puts the build streamed to its stdin in place. The upload
+/// is checked first: a stream cut off on the way (`cat` just sees its end)
+/// would otherwise replace the working agent with part of one. The staged
+/// file has to say it's the build (`hash` hashes its own file); else it goes,
+/// and the agent there stays as it was. (It runs in a shell of its own, so a
+/// crash's "Segmentation fault" stays out of the message.)
+///
+/// Then the folder from before the rename (OpenRunner) moves over: running
+/// sessions keep their server (its socket moves with the folder). Then the
+/// direct-connection service (if set up) moves to the new name or restarts
+/// onto the new build. A listener the service doesn't know about (one left
+/// from before, holding the port) goes first, or the old build would keep
+/// answering. (With no service, `migrate` starts the listener again.)
+fn upload_script(hash: &str) -> String {
+    format!(
+        "want={}; {}",
+        sh_quote(hash),
+        r#"set -e; if [ -d "$HOME/.openrunner" ] && [ ! -e "$HOME/.muxen" ]; then mv "$HOME/.openrunner" "$HOME/.muxen"; fi; d="$HOME/.muxen/bin"; mkdir -p "$d"; n="$d/muxen-agent.new.$$"; cat > "$n"; chmod 755 "$n"; got=$(sh -c '"$1" hash; exit $?' sh "$n" 2>/dev/null) || got=; if [ "$got" != "$want" ]; then rm -f "$n"; echo "the upload arrived incomplete (its hash is ${got:-unreadable}, not $want), so the agent there is as it was" >&2; exit 3; fi; mv -f "$n" "$d/muxen-agent"; rm -f "$d/openrunner-agent"; "$d/muxen-agent" migrate >/dev/null 2>&1 || true; rmdir "$HOME/.openrunner" 2>/dev/null || true; if systemctl --user is-enabled muxen-agent.service >/dev/null 2>&1; then pkill -f "$d/muxen-agent listen" >/dev/null 2>&1 || true; systemctl --user restart muxen-agent.service >/dev/null 2>&1 || true; elif launchctl print "gui/$(id -u)/com.lumarylabs.muxen-agent" >/dev/null 2>&1; then pkill -f "$d/muxen-agent listen" >/dev/null 2>&1 || true; launchctl kickstart -k "gui/$(id -u)/com.lumarylabs.muxen-agent" >/dev/null 2>&1 || true; fi; "$d/muxen-agent" hash"#
+    )
+}
+
 /// Puts an uploaded build (`muxen-agent.upload.exe`) in place on Windows and
-/// prints its hash. A running agent holds its file, but Windows lets it be
-/// renamed: the old one moves aside and goes once nothing runs it; the
-/// desktop helper, running the old build, goes now. Then `migrate` brings up
-/// to date what an older build set up (its firewall rule).
+/// prints its hash, once the upload says it's the build (`hash`); else it
+/// goes, and the agent there stays as it was. A running agent holds its file,
+/// but Windows lets it be renamed: the old one moves aside and goes once
+/// nothing runs it; the desktop helper, running the old build, goes now. Then
+/// `migrate` brings up to date what an older build set up (its firewall rule)
+/// and starts the direct-connection listener again from the new build.
+fn swap_ps1(hash: &str) -> String {
+    format!("$want = {}\n{SWAP_PS1}", crate::ops::remote::ps_quote(hash))
+}
+
 const SWAP_PS1: &str = "$ErrorActionPreference = 'Stop'\n\
          $d = Join-Path $env:USERPROFILE '.muxen\\bin'\n\
          $t = Join-Path $d 'muxen-agent.exe'\n\
+         $u = Join-Path $d 'muxen-agent.upload.exe'\n\
+         $got = ''\n\
+         try { $got = (& $u hash | Out-String).Trim() } catch { }\n\
+         if ($got -ne $want) { Remove-Item -Force $u -ErrorAction SilentlyContinue; [Console]::Error.WriteLine(\"error: the upload arrived incomplete (its hash is $(if ($got) { $got } else { 'unreadable' }), not $want), so the agent there is as it was\"); exit 3 }\n\
          if (Test-Path $t) { Move-Item -Force $t (Join-Path $d \"muxen-agent.old.$PID.exe\") }\n\
-         Move-Item -Force (Join-Path $d 'muxen-agent.upload.exe') $t\n\
+         Move-Item -Force $u $t\n\
          Get-CimInstance Win32_Process -Filter \"Name='muxen-agent.exe'\" | Where-Object { $_.CommandLine -match ' gui-serve' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }\n\
-         Get-ChildItem $d -Filter 'muxen-agent.old.*.exe' | ForEach-Object { Remove-Item -Force $_.FullName -ErrorAction SilentlyContinue }\n\
          & $t migrate | Out-Null\n\
+         Get-ChildItem $d -Filter 'muxen-agent.old.*.exe' | ForEach-Object { Remove-Item -Force $_.FullName -ErrorAction SilentlyContinue }\n\
          & $t hash\n";
 
 /// Copies the build into place on Windows and prints its hash: over sftp
 /// (Windows' sshd stalls on a few hundred KB through a program's stdin), or
 /// a copy on this computer; then SWAP_PS1.
-async fn upload_windows(spec: &MachineSpec, build: &std::path::Path) -> Result<String, String> {
+async fn upload_windows(spec: &MachineSpec, build: &std::path::Path, hash: &str) -> Result<String, String> {
     let fail = |e: String| format!("couldn't install the agent on {}: {e}", spec.name);
     if spec.is_local() {
         // This computer: a copy, then the same swap.
@@ -288,9 +339,8 @@ async fn upload_windows(spec: &MachineSpec, build: &std::path::Path) -> Result<S
             .join(".muxen")
             .join("bin");
         std::fs::create_dir_all(&bin).map_err(|e| fail(e.to_string()))?;
-        std::fs::copy(build, bin.join("muxen-agent.upload.exe"))
-            .map_err(|e| fail(e.to_string()))?;
-        return run_ps(spec, SWAP_PS1, CTL_TIMEOUT).await.map_err(fail);
+        std::fs::copy(build, bin.join("muxen-agent.upload.exe")).map_err(|e| fail(e.to_string()))?;
+        return run_ps(spec, &swap_ps1(hash), CTL_TIMEOUT).await.map_err(fail);
     }
     // sftp takes ssh's options, but its own spelling of the port and user.
     let mut args: Vec<String> = Vec::new();
@@ -344,11 +394,8 @@ async fn upload_windows(spec: &MachineSpec, build: &std::path::Path) -> Result<S
                 .to_string())
         }
     };
-    tokio::time::timeout(UPLOAD_TIMEOUT, sent)
-        .await
-        .map_err(|_| fail("the copy took too long".into()))?
-        .map_err(fail)?;
-    run_ps(spec, SWAP_PS1, CTL_TIMEOUT).await.map_err(fail)
+    tokio::time::timeout(UPLOAD_TIMEOUT, sent).await.map_err(|_| fail("the copy took too long".into()))?.map_err(fail)?;
+    run_ps(spec, &swap_ps1(hash), CTL_TIMEOUT).await.map_err(fail)
 }
 
 /// Runs a short PowerShell script on a Windows machine (with the user's profile, like workspace commands).
@@ -513,11 +560,58 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_binary_from_this_checkout_finds_its_agents() {
-        let checkout = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/dist/agents"));
-        if !checkout.is_dir() {
-            return;
+    fn the_install_scripts_check_the_upload_before_the_swap() {
+        let sh = upload_script("0123456789abcdef");
+        assert!(sh.starts_with("want='0123456789abcdef'; set -e;"));
+        assert!(sh.find("hash; exit $?' sh \"$n\"").unwrap() < sh.find("mv -f \"$n\"").unwrap());
+        let ps = swap_ps1("0123456789abcdef");
+        assert!(ps.starts_with("$want = '0123456789abcdef'\n"));
+        assert!(ps.find("& $u hash").unwrap() < ps.find("Move-Item -Force $u $t").unwrap());
+    }
+
+    /// An upload that stops partway (or isn't the build) doesn't replace the
+    /// agent: it's left as it was, and the upload goes. (The script stops
+    /// before anything that touches services.)
+    #[cfg(unix)]
+    #[test]
+    fn a_cut_off_upload_leaves_the_agent_alone() {
+        use std::io::Write as _;
+        let cut_off: &[u8] = b"\x7fELF\x02\x01\x01\x00 and then the stream stopped";
+        let not_the_build: &[u8] = b"#!/bin/sh\necho 0000000000000000\n";
+        for (i, upload) in [cut_off, not_the_build].into_iter().enumerate() {
+            let home = std::env::temp_dir().join(format!("muxen-upload-{}-{i}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&home);
+            let bin = home.join(".muxen/bin");
+            std::fs::create_dir_all(&bin).unwrap();
+            std::fs::write(bin.join("muxen-agent"), b"the agent that works").unwrap();
+            let mut child = std::process::Command::new("/bin/sh")
+                .args(["-c", &upload_script("0123456789abcdef")])
+                .env("HOME", &home)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            child.stdin.take().unwrap().write_all(upload).unwrap();
+            let out = child.wait_with_output().unwrap();
+            assert!(!out.status.success(), "case {i}");
+            assert!(String::from_utf8_lossy(&out.stderr).contains("arrived incomplete"), "case {i}");
+            assert_eq!(std::fs::read(bin.join("muxen-agent")).unwrap(), b"the agent that works", "case {i}");
+            assert_eq!(std::fs::read_dir(&bin).unwrap().count(), 1, "case {i}: the upload is gone");
+            let _ = std::fs::remove_dir_all(&home);
         }
-        assert_eq!(builds_dir().as_deref(), Some(checkout.as_path()));
+    }
+
+    #[test]
+    fn host_target_names_a_build_like_a_check_would() {
+        let probe = ProbeResult { os: Some(std::env::consts::OS.into()), arch: Some(std::env::consts::ARCH.into()), ..Default::default() };
+        assert_eq!(target(Some(&probe)), Some(host_target()));
+    }
+
+    #[test]
+    fn only_a_binary_inside_the_checkout_uses_it() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).canonicalize().unwrap();
+        assert_eq!(checkout(&root.join("target/release/muxin")), Some(root));
+        assert_eq!(checkout(std::path::Path::new("/Applications/Muxin.app/Contents/MacOS/muxin")), None);
     }
 }

@@ -5,6 +5,7 @@
 
 mod boxdraw;
 mod colors;
+mod ime;
 mod keys;
 mod links;
 mod render;
@@ -232,6 +233,7 @@ pub struct TerminalView {
     /// The blinking cursor's phase, and the last key press (which shows it).
     cursor_on: bool,
     typed_at: Instant,
+    ime: ime::Composition,
     _tasks: Vec<Task<()>>,
     _subscriptions: Vec<gpui::Subscription>,
 }
@@ -419,6 +421,7 @@ impl TerminalView {
             scroll_rest: 0.,
             cursor_on: true,
             typed_at: Instant::now(),
+            ime: ime::Composition::default(),
             _tasks: vec![events, blink],
             _subscriptions: subscriptions,
         }
@@ -491,6 +494,9 @@ impl TerminalView {
     }
 
     fn report_focus(&mut self, focused: bool, cx: &mut Context<Self>) {
+        if !focused {
+            self.ime.clear();
+        }
         if self.mode().contains(TermMode::FOCUS_IN_OUT) {
             self.shared.write(if focused {
                 b"\x1b[I".as_slice()
@@ -503,6 +509,25 @@ impl TerminalView {
 
     // -----------------------------------------------------------------------
     // Keyboard
+
+    fn prepare_input(&mut self, cx: &mut Context<Self>) {
+        self.typed_at = Instant::now();
+        self.cursor_on = true;
+        let mut term = self.shared.term.lock();
+        term.scroll_display(Scroll::Bottom);
+        term.selection = None;
+        drop(term);
+        cx.notify();
+    }
+
+    fn write_input(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
+        if self.exited || bytes.is_empty() {
+            return;
+        }
+        self.ime.clear();
+        self.prepare_input(cx);
+        self.shared.write(bytes);
+    }
 
     fn key_down(&mut self, e: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.typed_at = Instant::now();
@@ -542,14 +567,13 @@ impl TerminalView {
         if self.exited {
             return;
         }
+        // Let the platform input method compose/commit printable text. Raw
+        // key bytes here would swallow the first pinyin key or send it twice.
+        if keys::is_text_input(ks) {
+            return;
+        }
         if let Some(bytes) = keys::to_bytes(ks, self.mode()) {
-            // Typing goes back to the live screen and drops any local selection.
-            {
-                let mut term = self.shared.term.lock();
-                term.scroll_display(Scroll::Bottom);
-                term.selection = None;
-            }
-            self.shared.write(bytes);
+            self.write_input(bytes, cx);
             cx.stop_propagation();
             cx.notify();
         }
@@ -571,7 +595,7 @@ impl TerminalView {
             return false;
         };
         if !self.exited {
-            self.shared.write(keys::paste(&text, self.mode()));
+            self.write_input(keys::paste(&text, self.mode()), cx);
         }
         true
     }
@@ -831,24 +855,9 @@ impl Render for TerminalView {
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::mouse_up))
             .on_mouse_move(cx.listener(Self::mouse_move))
             .on_scroll_wheel(cx.listener(Self::scroll))
-            .on_action(cx.listener(|_, _: &IncreaseFontSize, _, cx| {
-                theme_mod::update_terminal(cx, |a| a.terminal_font_size += 1.)
-            }))
-            .on_action(cx.listener(|_, _: &DecreaseFontSize, _, cx| {
-                theme_mod::update_terminal(cx, |a| a.terminal_font_size -= 1.)
-            }))
-            .on_action(cx.listener(|_, _: &ResetFontSize, _, cx| {
-                theme_mod::update_terminal(cx, |a| {
-                    a.terminal_font_size = theme_mod::TERMINAL_FONT_SIZE
-                })
-            }))
-            .child(render::grid(
-                self.shared.clone(),
-                palette,
-                cx.theme().text_accent,
-                focused,
-                self.cursor_on || !focused,
-                Metrics::current(cx),
-            ))
+            .on_action(cx.listener(|_, _: &IncreaseFontSize, _, cx| theme_mod::update_terminal(cx, |a| a.terminal_font_size += 1.)))
+            .on_action(cx.listener(|_, _: &DecreaseFontSize, _, cx| theme_mod::update_terminal(cx, |a| a.terminal_font_size -= 1.)))
+            .on_action(cx.listener(|_, _: &ResetFontSize, _, cx| theme_mod::update_terminal(cx, |a| a.terminal_font_size = theme_mod::TERMINAL_FONT_SIZE)))
+            .child(render::grid(cx.entity(), palette, focused, self.cursor_on || !focused, Metrics::current(cx)))
     }
 }

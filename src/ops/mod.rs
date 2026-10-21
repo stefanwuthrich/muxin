@@ -1808,6 +1808,30 @@ Match host x
     }
 
     #[test]
+    fn windows_scripts_start_a_runner_outside_the_ssh_session() {
+        // sshd ends everything the connection that started it leaves behind when
+        // it closes, so a runner started over ssh has to come from outside that
+        // session: WMI, which is how the agent starts itself too.
+        for script in [INSTALL_PS1, CONTROL_PS1] {
+            let wmi = "Invoke-CimMethod -ClassName Win32_Process -MethodName Create";
+            assert!(script.contains(wmi), "{script}");
+            assert!(!script.contains("Start-Process -FilePath"), "{script}");
+        }
+    }
+
+    #[test]
+    fn windows_stop_asks_the_runner_before_killing_it() {
+        // Killed outright, the listener leaves its session on GitHub for minutes
+        // and a runner started meanwhile can't connect. Ctrl+C in its console
+        // (what the runner's own service sends) makes it delete the session first.
+        let stop = &CONTROL_PS1[CONTROL_PS1.find("function Send-CtrlC").unwrap()..CONTROL_PS1.find("switch ($OR_ACTION)").unwrap()];
+        let ctrl_c = stop.find("$sent = Send-CtrlC").unwrap();
+        let kill = stop.find("foreach ($p in $left) { Stop-Process").unwrap();
+        assert!(stop.contains("GenerateConsoleCtrlEvent(0, 0)"));
+        assert!(ctrl_c < kill, "{stop}");
+    }
+
+    #[test]
     fn fallback_release_has_a_checksum_for_every_package() {
         let release = fallback_release();
         assert_eq!(release.version, FALLBACK_RUNNER_VERSION);
@@ -2427,6 +2451,66 @@ mod engine_tests {
             "{log:?}"
         );
         assert!(!engine.current().runners.iter().any(|r| r.id == id));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// How Muxin reads what its PowerShell scripts print on a real Windows
+    /// machine, which keeps nothing: text both ways, output that isn't UTF-8,
+    /// and errors as their message, not CLIXML.
+    /// Run with: MUXEN_TEST_WINDOWS_HOST=<ssh host> cargo test windows_script_output -- --ignored
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "needs a Windows machine: MUXEN_TEST_WINDOWS_HOST=<ssh host>"]
+    async fn windows_script_output_on_real_host() {
+        let Ok(host) = std::env::var("MUXEN_TEST_WINDOWS_HOST") else { return };
+        let tmp = std::env::temp_dir().join(format!("muxen-windows-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("config.toml"), format!("[[machine]]\nname = \"Box\"\nhost = \"{host}\"\n")).unwrap();
+        let engine = Engine::new(Paths::resolve(Some(tmp.clone()), None), false);
+        engine.run_check(None).await;
+        let (spec, probe) = engine.machine("box").unwrap();
+        let probe = probe.expect("checked");
+        assert!(probe.ok, "{:?}", probe.error);
+        let shell = remote::shell_for(&spec, Some(&probe));
+        assert_eq!(shell, Shell::Powershell, "{host} isn't Windows");
+        let run_script = |script: String| {
+            let engine = engine.clone();
+            let spec = spec.clone();
+            async move {
+                let op = engine.begin_op("test", "test".into(), Some("box".into()), None);
+                let ran = remote::run(&engine, op, &spec, shell, script, &[], CONTROL_TIMEOUT).await;
+                engine.op_finish(op, Ok(()));
+                (ran, op_log(&engine, op).await)
+            }
+        };
+
+        // 1. Text both ways; a program printing in the console's code page, as
+        //    config.cmd does; and bytes that aren't UTF-8, with output after them.
+        let script = "$arch = 'x64'\nWrite-Output \"for win-$arch…\"\nWrite-Output '✓ café'\n\
+            & powershell -NoProfile -Command \"[Console]::Out.WriteLine([string][char]0x221A + ' Connected to GitHub')\"\n\
+            $o = [Console]::OpenStandardOutput(); $o.Write([byte[]](0xFB, 0x20, 0x34, 0x33, 0x37, 0x0A), 0, 6); $o.Flush()\n\
+            Write-Output 'read after it'\n";
+        let (ran, log) = run_script(script.into()).await;
+        assert!(ran.is_ok(), "{ran:?} {log:?}");
+        for line in ["for win-x64…", "✓ café", "√ Connected to GitHub", "\u{FFFD} 437", "read after it"] {
+            assert!(log.contains(&line.to_string()), "{line:?} not in {log:?}");
+        }
+
+        // 2. control.ps1's trap: the error is the message.
+        let dir = format!("C:\\muxen-test-no-such-dir-{}", std::process::id());
+        let params = [("OR_ACTION", Param::Str("logs")), ("OR_DIR", Param::Str(&dir)), ("OR_TOKEN", Param::Str("")), ("OR_DELETE", Param::Bool(false))];
+        let (ran, log) = run_script(with_params(shell, &params, CONTROL_PS1)).await;
+        assert_eq!(ran, Err(format!("{dir} doesn't exist.")), "{log:?}");
+
+        // 3. PowerShell's own records (a warning, an error that doesn't stop it),
+        //    which it writes as CLIXML when it exits, after the trap's line.
+        let script = "$ErrorActionPreference = 'Stop'\ntrap { [Console]::Error.WriteLine(\"error: \" + $_.Exception.Message); exit 1 }\n\
+            Write-Warning 'careful'\nWrite-Error 'not the end' -ErrorAction Continue\nthrow 'the end, ünïcode'\n";
+        let (ran, log) = run_script(script.into()).await;
+        assert_eq!(ran, Err("the end, ünïcode".to_string()), "{log:?}");
+        assert!(log.iter().all(|l| !l.contains("<Objs") && !l.contains("CLIXML") && !l.contains("Invoke-Expression")), "{log:?}");
+        assert!(log.contains(&"WARNING: careful".to_string()) && log.contains(&"not the end".to_string()), "{log:?}");
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
