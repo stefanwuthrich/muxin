@@ -839,23 +839,13 @@ impl Root {
                         })),
                 )
             })
-            .child(
-                Button::new("session-end", "End")
-                    .icon("power")
-                    .style(ButtonStyle::Ghost)
-                    .disabled(offline.is_some())
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        if let Some(s) = this
-                            .snapshot
-                            .sessions
-                            .iter()
-                            .find(|x| x.id == sid2)
-                            .cloned()
-                        {
-                            this.confirm_end_session(&s, window, cx);
-                        }
-                    })),
-            );
+            // Others watching (or typing) by link, peer to peer.
+            .when(info.persistent && !exited && offline.is_none() && !self.engine.is_demo(), |d| d.child(self.share_button(&info, cx)))
+            .child(Button::new("session-end", "End").icon("power").style(ButtonStyle::Ghost).disabled(offline.is_some()).on_click(cx.listener(move |this, _, window, cx| {
+                if let Some(s) = this.snapshot.sessions.iter().find(|x| x.id == sid2).cloned() {
+                    this.confirm_end_session(&s, window, cx);
+                }
+            })));
 
         // The terminal, or the panes of its split.
         let body = match self.pane_layout(id).cloned() {
@@ -956,13 +946,8 @@ impl Root {
             }
             None => body.into_any_element(),
         };
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .child(header)
-            .child(body)
-            .into_any_element()
+        let body = div().flex_1().min_h(px(0.)).flex().child(body);
+        div().size_full().flex().flex_col().child(header).child(body).into_any_element()
     }
 
     /// A session's terminal, under what covers it while it can't be used
@@ -1217,19 +1202,11 @@ impl Root {
             .iter()
             .any(|m| m.id == s.machine_id && m.is_down());
         // Explicit width: GPUI 0.2 only ellipsizes text whose width it knows up front.
-        let trailing = if exited {
-            40.
-        } else if s.busy || s.attention.is_some() {
-            20.
-        } else {
-            0.
-        };
-        let trailing = trailing
-            + if exited && s.attention.is_some() {
-                14.
-            } else {
-                0.
-            };
+        let shared = self.share_of(&s.id);
+        let knocking = shared.is_some_and(|sh| sh.guests.iter().any(|g| g.state == "waiting"));
+        let watched = shared.is_some_and(|sh| sh.guests.iter().any(|g| g.state == "in"));
+        let trailing = if exited { 40. } else if s.busy || s.attention.is_some() { 20. } else { 0. } + if knocking || watched { 18. } else { 0. };
+        let trailing = trailing + if exited && s.attention.is_some() { 14. } else { 0. };
         let text_w = (self.row_width() - 20. - 22. - 8. - 16. - 8. - trailing).max(40.);
         div()
             .id(SharedString::from(format!("side-s-{}", s.id)))
@@ -1260,13 +1237,10 @@ impl Root {
                     .child(s.title.clone()),
             )
             .child(div().flex_1())
-            .when(s.busy && !exited, |d| {
-                d.child(spinner(
-                    SharedString::from(format!("side-s-spin-{}", s.id)),
-                    11.,
-                    theme.accent,
-                ))
-            })
+            // Shared: someone's asking to join, or watching.
+            .when(watched && !knocking, |d| d.child(kit::icon("eye", 12., theme.text_accent)))
+            .when(knocking, |d| d.child(div().size(px(8.)).rounded_full().bg(theme.accent)))
+            .when(s.busy && !exited, |d| d.child(spinner(SharedString::from(format!("side-s-spin-{}", s.id)), 11., theme.accent)))
             // Unread: it finished, rang the bell, or exited. Cleared by opening it.
             .when(!s.busy && !selected, |d| {
                 d.children(

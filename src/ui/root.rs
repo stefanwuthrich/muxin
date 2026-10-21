@@ -57,6 +57,7 @@ actions!(
         ToggleActivity,
         ToggleSidebar,
         AddMachine,
+        JoinShare,
         NewSession,
         SplitRight,
         SplitDown,
@@ -153,6 +154,8 @@ pub fn menus() -> Vec<Menu> {
                 MenuItem::separator(),
                 MenuItem::action("Add Machine…", AddMachine),
                 MenuItem::action("New Session…", NewSession),
+                MenuItem::separator(),
+                MenuItem::action("Join a Share…", JoinShare),
             ],
         },
         Menu {
@@ -246,6 +249,8 @@ pub enum Route {
     Logs(String),
     /// A machine's services and containers.
     Services(String),
+    /// A session someone shared with you, joined here.
+    Shared(String),
     Settings,
     About,
 }
@@ -282,6 +287,8 @@ pub enum Modal {
     Rename(Entity<RenameDialog>),
     AddDisplay(Entity<AddDisplayDialog>),
     MonitorPassword(Entity<MonitorPasswordDialog>),
+    Share(Entity<super::share::ShareDialog>),
+    Join(Entity<super::share::JoinDialog>),
 }
 
 pub struct Notice {
@@ -423,6 +430,14 @@ pub struct Root {
     pub(super) ws_ui: WorkspaceUi,
     /// This computer's clipboard as last seen (see watch_clipboard).
     clipboard_seen: ClipboardSeen,
+    /// Sessions this app shares, and the guests already announced.
+    pub(super) shares: Vec<crate::share::host::ShareView>,
+    pub(super) knocks_seen: HashSet<(String, u64)>,
+    /// Sessions others shared with you, joined here.
+    pub(super) joined: Vec<super::share::JoinedShare>,
+    pub(super) joined_count: u32,
+    /// A share link opened with Muxin, for the Join dialog on the next render.
+    pending_join: Option<String>,
     _tasks: Vec<Task<()>>,
     pub(super) _subscriptions: Vec<Subscription>,
 }
@@ -649,6 +664,11 @@ impl Root {
             window_active: false,
             ws_ui: WorkspaceUi::default(),
             clipboard_seen: ClipboardSeen { count: super::pasteboard_state().map(|s| s.0).unwrap_or(0), ..Default::default() },
+            shares: Vec::new(),
+            knocks_seen: HashSet::new(),
+            joined: Vec::new(),
+            joined_count: 0,
+            pending_join: None,
             _tasks: {
                 #[cfg(target_os = "linux")]
                 {
@@ -674,6 +694,29 @@ impl Root {
             }
         });
         ws._tasks.push(watch);
+        // Shares: guests knocking, coming and going.
+        let mut shares = crate::share::host::subscribe();
+        let sharing = cx.spawn(async move |this, cx| {
+            while shares.changed().await.is_ok() {
+                if this.update(cx, |this, cx| this.shares_changed(cx)).is_err() {
+                    break;
+                }
+            }
+        });
+        ws._tasks.push(sharing);
+        // Share links opened with Muxin (muxin://join...).
+        if let Some(mut links) = super::take_opened_links() {
+            let opened = cx.spawn(async move |this, cx| {
+                use futures::StreamExt;
+                while let Some(link) = links.next().await {
+                    let _ = this.update(cx, |this, cx| {
+                        this.pending_join = Some(link);
+                        cx.notify()
+                    });
+                }
+            });
+            ws._tasks.push(opened);
+        }
         ws
     }
 
@@ -1175,6 +1218,17 @@ impl Root {
             }
             "activity" => self.show(Route::Activity, cx),
             "about" => self.navigate(Route::About, window, cx),
+            // A share link, in the Join dialog.
+            "join" => {
+                self.show_join((!arg.is_empty()).then(|| arg.to_string()), window, cx);
+            }
+            // A share link, joined right away (for screenshots).
+            "join-go" => {
+                let dialog = self.show_join(Some(arg.to_string()), window, cx);
+                dialog.update(cx, |d, cx| d.join(cx));
+            }
+            // The Share dialog for a session.
+            "share" => self.show_share(arg, window, cx),
             // "desktop:<machine>", or "desktop:<machine>@<display>" for one of its displays.
             "desktop" => match arg.split_once('@') {
                 Some((machine, display)) => {
@@ -2346,6 +2400,8 @@ impl Root {
             Modal::Rename(d) => d.read(cx).first_focus(cx),
             Modal::AddDisplay(d) => d.read(cx).first_focus(cx),
             Modal::MonitorPassword(d) => d.read(cx).first_focus(cx),
+            Modal::Share(d) => d.read(cx).first_focus(cx),
+            Modal::Join(d) => d.read(cx).first_focus(cx),
             Modal::Licenses(d) => d.focus_handle(cx),
         };
         window.focus(&focus);
@@ -2372,23 +2428,19 @@ impl Root {
                 self.open_settings_tab(super::settings::SettingsTab::Cloud, window, cx)
             }
             DialogEvent::NewCloudMachine => self.show_cloud_dialog(window, cx),
+            DialogEvent::JoinShare(link) => {
+                let _ = self.show_join(link.clone(), window, cx);
+            }
             DialogEvent::NewVm => self.show_vm_dialog(None, window, cx),
             DialogEvent::ScheduleSaved => {
                 self.notify_user("Scheduled".to_string(), false, cx);
                 self.navigate(Route::Schedules, window, cx);
             }
-            DialogEvent::CreateWorkspace(req, iso) => {
-                self.create_workspace(req.clone(), iso.clone(), window, cx)
-            }
-            DialogEvent::StartInWorkspace(req, session) => {
-                self.start_in_workspace(req.clone(), session.clone(), window, cx)
-            }
-            DialogEvent::StartInNewVm(vm, workspace, session) => {
-                self.start_in_new_vm(vm.clone(), workspace.clone(), session.clone(), window, cx)
-            }
-            DialogEvent::DisplayAdded(machine, display) => {
-                self.show_display(machine.clone(), Some(display.clone()), window, cx)
-            }
+            DialogEvent::CreateWorkspace(req, iso) => self.create_workspace(req.clone(), iso.clone(), window, cx),
+            DialogEvent::StartInWorkspace(req, session) => self.start_in_workspace(req.clone(), session.clone(), window, cx),
+            DialogEvent::StartInNewVm(vm, workspace, session) => self.start_in_new_vm(vm.clone(), workspace.clone(), session.clone(), window, cx),
+            DialogEvent::DisplayAdded(machine, display) => self.show_display(machine.clone(), Some(display.clone()), window, cx),
+            DialogEvent::JoinedShare(handle) => self.open_joined(handle, window, cx),
             DialogEvent::StartSession(req) => {
                 self.start_session(req.clone(), window, cx);
                 cx.notify();
@@ -2635,6 +2687,10 @@ impl Root {
         self.show_add_machine(window, cx);
     }
 
+    fn join_share(&mut self, _: &JoinShare, window: &mut Window, cx: &mut Context<Self>) {
+        let _ = self.show_join(None, window, cx);
+    }
+
     /// ⌘T: a new session on the machine being looked at, if any.
     fn new_session(&mut self, _: &NewSession, window: &mut Window, cx: &mut Context<Self>) {
         let machine = match &self.route {
@@ -2700,10 +2756,7 @@ impl Root {
             .filter(|r| r.machine_id.is_none() && matches_runner(r))
             .collect();
 
-        rows.push(
-            self.section_header("Machines", runner_machines.len(), true, cx)
-                .into_any_element(),
-        );
+        rows.push(self.section_header("Machines", Some(runner_machines.len()), Some(SectionAdd::Machine), cx).into_any_element());
         let pinned_desktops = cx.global::<super::theme::Appearance>().desktops.clone();
         let forwards = self.engine.forwards();
         // The tree: where each machine sits (not while searching, which lists them flat).
@@ -2922,11 +2975,14 @@ impl Root {
             }
             self.sidebar_indent.set(0.);
         }
+        // Always there (but in the demo), so joining a share is easy to find.
+        if !self.engine.is_demo() {
+            let count = (!self.joined.is_empty()).then_some(self.joined.len());
+            rows.push(self.section_header("Shared with you", count, Some(SectionAdd::Share), cx).into_any_element());
+            rows.extend(self.joined_rows(&theme, cx));
+        }
         if !unassigned.is_empty() {
-            rows.push(
-                self.section_header("On GitHub only", unassigned.len(), false, cx)
-                    .into_any_element(),
-            );
+            rows.push(self.section_header("On GitHub only", Some(unassigned.len()), None, cx).into_any_element());
             for r in unassigned {
                 rows.push(
                     self.runner_row(&theme, &s, r, selected_runner.as_deref() == Some(&r.id), cx)
@@ -3201,13 +3257,7 @@ impl Root {
             .on_click(cx.listener(|this, _, _, cx| this.show(Route::Activity, cx)))
     }
 
-    fn section_header(
-        &self,
-        title: &'static str,
-        count: usize,
-        with_add: bool,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn section_header(&self, title: &'static str, count: Option<usize>, add: Option<SectionAdd>, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         div()
             .flex()
@@ -3221,20 +3271,16 @@ impl Root {
             .font_weight(FontWeight::MEDIUM)
             .text_color(theme.text_placeholder)
             .child(title)
-            .child(div().font_family(mono_font()).child(count.to_string()))
+            .children(count.map(|n| div().font_family(mono_font()).child(n.to_string())))
             .child(div().flex_1())
-            .when(with_add, |d| {
-                d.child(
-                    Button::icon_only("sidebar-add-machine", "plus")
-                        .tooltip(tip(
-                            "Add machine",
-                            &super::shortcuts::label_for(cx, "add-machine"),
-                        ))
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.show_add_machine(window, cx)),
-                        ),
-                )
-            })
+            .children(add.map(|add| match add {
+                SectionAdd::Machine => Button::icon_only("sidebar-add-machine", "plus")
+                    .tooltip(tip("Add machine", &super::shortcuts::label_for(cx, "add-machine")))
+                    .on_click(cx.listener(|this, _, window, cx| this.show_add_machine(window, cx))),
+                SectionAdd::Share => Button::icon_only("sidebar-join-share", "plus").tooltip("Join a share (paste a link someone sent you)").on_click(cx.listener(|this, _, window, cx| {
+                    let _ = this.show_join(None, window, cx);
+                })),
+            }))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3951,7 +3997,13 @@ impl Root {
     fn render_toolbar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let s = self.snapshot.clone();
-        let (section, title) = route_title(&s, &self.route);
+        let (section, mut title) = route_title(&s, &self.route);
+        // A shared machine goes by its name.
+        if let Route::Shared(id) = &self.route
+            && let Some(j) = self.joined.iter().find(|j| &j.id == id && j.info.whole_machine)
+        {
+            title = j.info.title.clone();
+        }
         // Without the sidebar, the macOS window buttons sit on this bar.
         let traffic_lights =
             self.sidebar_hidden && cfg!(target_os = "macos") && !window.is_fullscreen();
@@ -4617,9 +4669,8 @@ impl Root {
                 }
             },
             Route::About => self.render_about(cx),
-            Route::Github | Route::GithubRepo(_) | Route::GithubItem(..) => {
-                self.render_github(window, cx)
-            }
+            Route::Shared(id) => self.render_joined(&id, cx),
+            Route::Github | Route::GithubRepo(_) | Route::GithubItem(..) => self.render_github(window, cx),
             Route::Settings => match &self.settings {
                 Some(page) => page.clone().into_any_element(),
                 None => {
@@ -4633,6 +4684,9 @@ impl Root {
 
 impl Render for Root {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(link) = self.pending_join.take() {
+            let _ = self.show_join(Some(link), window, cx);
+        }
         let theme = cx.theme();
         // A drag released outside the window never reaches `on_drop`.
         if self.sidebar_resizing && !cx.has_active_drag() {
@@ -4668,6 +4722,8 @@ impl Render for Root {
         let modal_top = if window_height > 800. { 96. } else { 40. };
         let modal_max_height = (window_height - modal_top - 24.).max(200.);
         let page = self.render_page(window, cx);
+        // Someone asking to join a share: over whatever page shows.
+        let knocks = self.knock_cards(cx);
         let modal = self.modal.as_ref().map(|m| match m {
             Modal::AddMachine(d) => d.clone().into_any_element(),
             Modal::Install(d) => d.clone().into_any_element(),
@@ -4681,6 +4737,8 @@ impl Render for Root {
             Modal::Rename(d) => d.clone().into_any_element(),
             Modal::AddDisplay(d) => d.clone().into_any_element(),
             Modal::MonitorPassword(d) => d.clone().into_any_element(),
+            Modal::Share(d) => d.clone().into_any_element(),
+            Modal::Join(d) => d.clone().into_any_element(),
             Modal::Licenses(d) => d.clone().into_any_element(),
         });
         let notice = self.render_notice(&theme);
@@ -4718,6 +4776,7 @@ impl Render for Root {
             .on_action(cx.listener(Self::go_forward))
             .on_action(cx.listener(Self::toggle_activity))
             .on_action(cx.listener(Self::add_machine))
+            .on_action(cx.listener(Self::join_share))
             .on_action(cx.listener(Self::new_session))
             .on_action(cx.listener(|this, _: &SplitRight, window, cx| this.split_session(false, window, cx)))
             .on_action(cx.listener(|this, _: &SplitDown, window, cx| this.split_session(true, window, cx)))
@@ -4756,7 +4815,14 @@ impl Render for Root {
                     .flex_1()
                     .min_w(px(0.))
                     .child(self.render_toolbar(window, cx))
-                    .child(div().flex_1().min_h(px(0.)).child(page)),
+                    .child(
+                        div()
+                            .relative()
+                            .flex_1()
+                            .min_h(px(0.))
+                            .child(page)
+                            .when(!knocks.is_empty(), |d| d.child(div().absolute().top_0().left_0().right_0().flex().flex_col().children(knocks))),
+                    ),
             )
             .when(!self.sidebar_hidden, |d| d.child(self.sidebar_handle(&theme, cx)))
             .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| this.toggle_sidebar(cx)))
@@ -4801,6 +4867,13 @@ impl Focusable for Root {
     }
 }
 
+/// What a sidebar section's + adds.
+#[derive(Clone, Copy)]
+enum SectionAdd {
+    Machine,
+    Share,
+}
+
 pub(super) fn github_status(theme: &Theme, s: &Snapshot) -> (gpui::Hsla, String) {
     let g = &s.github;
     if g.token_source.is_empty() && !s.demo {
@@ -4842,6 +4915,7 @@ fn route_title(s: &Snapshot, route: &Route) -> (Option<&'static str>, String) {
         ),
         Route::Settings => (None, "Settings".into()),
         Route::About => (None, "About".into()),
+        Route::Shared(_) => (Some("Shared with you"), "Session".into()),
         Route::Github => (None, "GitHub".into()),
         Route::GithubRepo(name) => (Some("GitHub"), name.clone()),
         Route::GithubItem(repo, n) => (Some("GitHub"), format!("{repo} #{n}")),

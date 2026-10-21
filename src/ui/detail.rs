@@ -175,6 +175,9 @@ impl Root {
                             .into_any_element(),
                     );
                 }
+                if !self.engine.is_demo() {
+                    buttons.push(self.machine_share_button(&m, m.host.is_empty() || offline, cx));
+                }
                 {
                     let mid = m.id.clone();
                     buttons.push(

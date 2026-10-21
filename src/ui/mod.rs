@@ -27,6 +27,7 @@ mod schedule_dialog;
 mod schedules;
 mod services;
 mod sessions;
+mod share;
 mod settings;
 mod shortcuts;
 mod terminal;
@@ -52,24 +53,31 @@ pub fn run(engine: Arc<Engine>, initial_view: Option<String>) {
     if !engine.is_demo() {
         std::thread::spawn(crate::renamed::retire_old_app);
     }
-    Application::new()
-        .with_assets(assets::Assets)
-        .run(move |cx: &mut App| {
-            assets::load_fonts(cx);
-            assets::set_dock_icon();
-            // The look lives in config.toml ([ui]); demo mode keeps it in memory.
-            let prefs_path = (!engine.is_demo()).then(|| engine.paths().config.clone());
-            let appearance = Appearance::load(prefs_path);
-            cx.set_global(appearance.resolve(cx.window_appearance()));
-            cx.set_global(appearance);
-            input::bind_keys(cx);
-            terminal::bind_keys(cx);
-            desktop::bind_keys(cx);
-            root::bind_keys(cx);
-            cx.on_action(|_: &Quit, cx| cx.quit());
-            root::bind_app_actions(cx);
-            cx.set_menus(root::menus());
-            updates::start(engine.clone(), cx);
+    let app = Application::new().with_assets(assets::Assets);
+    // Share links (muxin://join?server=...#...) opened with Muxin.
+    app.on_open_urls(|urls| urls.into_iter().filter(|u| u.starts_with("muxin://join")).for_each(open_link));
+    app.run(move |cx: &mut App| {
+        assets::load_fonts(cx);
+        assets::set_dock_icon();
+        // The look lives in config.toml ([ui]); demo mode keeps it in memory.
+        let prefs_path = (!engine.is_demo()).then(|| engine.paths().config.clone());
+        let appearance = Appearance::load(prefs_path);
+        cx.set_global(appearance.resolve(cx.window_appearance()));
+        cx.set_global(appearance);
+        input::bind_keys(cx);
+        terminal::bind_keys(cx);
+        desktop::bind_keys(cx);
+        root::bind_keys(cx);
+        cx.on_action(|_: &Quit, cx| cx.quit());
+        // Quitting ends this app's shares: guests hear so if there's time.
+        cx.on_app_quit(|cx| {
+            crate::share::host::stop_all();
+            cx.background_executor().timer(std::time::Duration::from_millis(90))
+        })
+        .detach();
+        root::bind_app_actions(cx);
+        cx.set_menus(root::menus());
+        updates::start(engine.clone(), cx);
 
             // `--view size:960x640` (screenshots and layout checks) overrides the default size.
             let (w, h) = initial_view
@@ -157,6 +165,24 @@ pub fn run(engine: Arc<Engine>, initial_view: Option<String>) {
                 cx.activate(true);
             }
         });
+}
+
+fn opened_links() -> &'static (futures::channel::mpsc::UnboundedSender<String>, std::sync::Mutex<Option<futures::channel::mpsc::UnboundedReceiver<String>>>) {
+    static LINKS: std::sync::OnceLock<(futures::channel::mpsc::UnboundedSender<String>, std::sync::Mutex<Option<futures::channel::mpsc::UnboundedReceiver<String>>>)> = std::sync::OnceLock::new();
+    LINKS.get_or_init(|| {
+        let (tx, rx) = futures::channel::mpsc::unbounded();
+        (tx, std::sync::Mutex::new(Some(rx)))
+    })
+}
+
+/// A share link opened with Muxin: the window offers to join it.
+pub fn open_link(url: String) {
+    let _ = opened_links().0.unbounded_send(url);
+}
+
+/// The links opened with Muxin, for the window (once).
+fn take_opened_links() -> Option<futures::channel::mpsc::UnboundedReceiver<String>> {
+    opened_links().1.lock().unwrap().take()
 }
 
 /// This computer's clipboard right now: a number that changes with every
