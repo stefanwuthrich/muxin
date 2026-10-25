@@ -123,7 +123,7 @@ impl Root {
                 .h(px(28.))
                 .pl(px(4.))
                 .pr(px(10.))
-                .rounded(px(7.))
+                .rounded(crate::ui::kit::corner(7.))
                 .border_1()
                 .border_color(if on {
                     theme.accent
@@ -243,7 +243,7 @@ impl Root {
                             .h(px(24.))
                             .flex()
                             .items_center()
-                            .rounded(px(6.))
+                            .rounded(crate::ui::kit::corner(6.))
                             .bg(theme.element)
                             .cursor_pointer()
                             .hover(|st| st.bg(theme.element_hover))

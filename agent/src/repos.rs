@@ -314,13 +314,8 @@ pub fn act(path: &str, action: &str) -> Result<String, String> {
     }
 }
 
-fn run_with_timeout(cmd: &mut Command, limit: Duration) -> Result<(bool, String, String), String> {
-    let child = cmd
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| e.to_string())?;
+pub(crate) fn run_with_timeout(cmd: &mut Command, limit: Duration) -> Result<(bool, String, String), String> {
+    let child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| e.to_string())?;
     let started = Instant::now();
     let id = child.id();
     let (tx, rx) = std::sync::mpsc::channel();

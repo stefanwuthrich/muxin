@@ -132,6 +132,17 @@ pub fn handle(req: &Value) -> Value {
         "schedule_delete" => crate::schedules::delete(&req),
         "schedule_run" => crate::schedules::run_now(&req),
         "schedule_log" => crate::schedules::log(&req),
+        "boxes" => crate::boxes::list(),
+        "box_save" => crate::boxes::save(&req),
+        "box_resume" => crate::boxes::resume(&req),
+        "box_pause" => crate::boxes::pause(&req),
+        "box_delete" => crate::boxes::delete(&req),
+        "box_shell" => crate::boxes::shell(&req),
+        "box_switch" => crate::boxes::switch(&req),
+        "handoff" => crate::handoff::note(&req),
+        "carry_pack" => crate::carry::pack(&req),
+        "carry_unpack" => crate::carry::unpack(&req),
+        "carry_drop" => crate::carry::drop(&req),
         _ => request(&req, false),
     }
 }
@@ -266,6 +277,7 @@ fn discover(req: &Value) -> Value {
         json!({})
     };
     let mut sessions = list.get("sessions").cloned().unwrap_or_else(|| json!([]));
+    let boxes = crate::boxes::list_with(sessions.as_array().map(Vec::as_slice).unwrap_or_default());
     let mut titles = read_titles();
     if !titles.is_empty() {
         apply_titles(&mut sessions, &titles);
@@ -284,6 +296,7 @@ fn discover(req: &Value) -> Value {
         "server": running,
         "now": now(),
         "sessions": sessions,
+        "boxes": boxes,
         "events": list.get("events").cloned().unwrap_or_else(|| json!([])),
     })
 }

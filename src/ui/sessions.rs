@@ -374,9 +374,16 @@ impl Root {
             ..Default::default()
         };
         let engine = self.engine.clone();
+        // Beside a box's agent (or shell): a shell in the box.
+        let in_box = info.box_id.clone();
         let job = engine.runtime().spawn({
             let engine = engine.clone();
-            async move { engine.start_session(req).await }
+            async move {
+                match in_box {
+                    Some(b) => engine.box_shell(&b, cols, rows).await,
+                    None => engine.start_session(req).await,
+                }
+            }
         });
         let task = cx.spawn_in(window, async move |this, cx| {
             let result = job.await.unwrap_or_else(|e| Err(e.to_string()));
@@ -557,12 +564,13 @@ impl Root {
         self.track(task);
     }
 
-    pub(super) fn confirm_end_session(
-        &mut self,
-        s: &SessionInfo,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(super) fn confirm_end_session(&mut self, s: &SessionInfo, window: &mut Window, cx: &mut Context<Self>) {
+        // A box's agent: ending it pauses the box, which Resume undoes (a
+        // shell in the box just ends).
+        if let Some(b) = s.box_id.clone().filter(|b| *b == s.name) {
+            self.pause_box(&b, cx);
+            return;
+        }
         let sid = s.id.clone();
         let detail = if s.agent == "shell" || s.agent.is_empty() {
             "The shell and anything still running in it stop.".to_string()
@@ -622,6 +630,10 @@ impl Root {
                 }
                 return looking(&theme);
             }
+            // A box's agent isn't running while the box is paused.
+            if let Some(b) = s.boxes.iter().find(|b| id == format!("{}/{}", b.machine_id, b.id)).cloned() {
+                return self.paused_box(&theme, &b, cx);
+            }
             return ended(&theme, id, cx);
         };
         // Attaching to a machine that's offline only waits for ssh to give up.
@@ -651,6 +663,10 @@ impl Root {
         let split = self.page_split(&info.id).is_some();
         let (icon_name, (from, to)) = kit::agent_look(&info.agent);
         let exited = info.status == "exited";
+        // A box's agent and shells run in the box's container (its checkout at
+        // the same path there); ending its agent pauses the box.
+        let in_box = info.box_id.is_some();
+        let box_agent = info.box_id.as_deref() == Some(info.name.as_str());
 
         let status = if exited {
             kit::pill(
@@ -707,7 +723,33 @@ impl Root {
                     .flex_1()
                     .min_w(px(0.))
                     .gap(px(2.))
-                    .child(div().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).text_color(theme.text).child(info.title.clone()))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(div().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).text_color(theme.text).child(info.title.clone()))
+                            .when(in_box, |d| {
+                                d.child(
+                                    div()
+                                        .id("session-box-link")
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(4.))
+                                        .px(px(6.))
+                                        .h(px(18.))
+                                        .rounded(crate::ui::kit::corner(4.))
+                                        .bg(theme.accent.opacity(0.12))
+                                        .text_size(px(11.))
+                                        .text_color(theme.text_accent)
+                                        .cursor_pointer()
+                                        .hover(|st| st.bg(theme.accent.opacity(0.2)))
+                                        .child(kit::icon("box", 11., theme.text_accent))
+                                        .child("Box")
+                                        .on_click(cx.listener(|this, _, window, cx| this.navigate(Route::Boxes, window, cx))),
+                                )
+                            }),
+                    )
                     // A folder too long to fit goes onto its own line (and wraps at
                     // its slashes) instead of running under the buttons.
                     .child(
@@ -721,7 +763,7 @@ impl Root {
                             .text_color(theme.text_placeholder)
                             .child(info.agent_name.clone())
                             .child("·")
-                            .child(machine)
+                            .child(if in_box { format!("in a container on {machine}") } else { machine })
                             .when(!info.cwd.is_empty(), |d| {
                                 d.child(
                                     div()
@@ -751,9 +793,7 @@ impl Root {
                     d.child(
                         Button::new("session-actions", "Actions")
                             .icon("zap")
-                            .tooltip(
-                                "Ask the agent to commit, open a pull request, review its work…",
-                            )
+                            .tooltip("Ask the agent to commit, open a pull request, review its work…")
                             .on_click(cx.listener(move |this, e: &gpui::ClickEvent, _, cx| {
                                 this.open_menu(
                                     super::menu::MenuTarget::SessionActions(sid.clone()),
@@ -764,6 +804,18 @@ impl Root {
                     )
                 },
             )
+            // Another agent takes over (an exited one's work too: it may have run out of usage).
+            .when(info.agent != "shell" && !info.agent.is_empty() && info.persistent && offline.is_none() && (!in_box || box_agent), |d| {
+                let sid = info.id.clone();
+                let handing = self.handing_off.contains(&info.id);
+                d.child(
+                    Button::new("session-handoff", "Hand off")
+                        .icon("arrow-right-left")
+                        .loading(handing)
+                        .tooltip("Another agent takes over, with a note of the conversation so far and where the code stands")
+                        .on_click(cx.listener(move |this, e: &gpui::ClickEvent, _, cx| this.open_menu(super::menu::MenuTarget::Handoff(sid.clone()), e.position(), cx))),
+                )
+            })
             .when(info.persistent, |d| {
                 d.child(
                     Button::icon_only("session-copy-attach", "copy")
@@ -790,25 +842,19 @@ impl Root {
                 )
             })
             // Another shell beside it or below it, like splitting a terminal.
-            .when(
-                info.persistent && offline.is_none() && !self.engine.is_demo(),
-                |d| {
-                    d.child(
-                        Button::icon_only("session-split-right", "columns-2")
-                            .tooltip("Split right (⌘D)")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.split_session(false, window, cx)
-                            })),
-                    )
-                    .child(
-                        Button::icon_only("session-split-down", "rows-2")
-                            .tooltip("Split down (⇧⌘D)")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.split_session(true, window, cx)
-                            })),
-                    )
-                },
-            )
+            .when(info.persistent && offline.is_none() && !self.engine.is_demo(), |d| {
+                let (right, down) = if in_box { ("Split right (⌘D): a shell in the box", "Split down (⇧⌘D): a shell in the box") } else { ("Split right (⌘D)", "Split down (⇧⌘D)") };
+                d.child(
+                    Button::icon_only("session-split-right", "columns-2")
+                        .tooltip(right)
+                        .on_click(cx.listener(|this, _, window, cx| this.split_session(false, window, cx))),
+                )
+                .child(
+                    Button::icon_only("session-split-down", "rows-2")
+                        .tooltip(down)
+                        .on_click(cx.listener(|this, _, window, cx| this.split_session(true, window, cx))),
+                )
+            })
             .when(exited, |d| {
                 d.child(
                     Button::new("session-restart", "Restart")
@@ -841,11 +887,18 @@ impl Root {
             })
             // Others watching (or typing) by link, peer to peer.
             .when(info.persistent && !exited && offline.is_none() && !self.engine.is_demo(), |d| d.child(self.share_button(&info, cx)))
-            .child(Button::new("session-end", "End").icon("power").style(ButtonStyle::Ghost).disabled(offline.is_some()).on_click(cx.listener(move |this, _, window, cx| {
-                if let Some(s) = this.snapshot.sessions.iter().find(|x| x.id == sid2).cloned() {
-                    this.confirm_end_session(&s, window, cx);
-                }
-            })));
+            .child(
+                Button::new("session-end", if box_agent { "Pause" } else { "End" })
+                    .icon(if box_agent { "pause" } else { "power" })
+                    .style(ButtonStyle::Ghost)
+                    .disabled(offline.is_some())
+                    .when(box_agent, |b| b.tooltip("Pause the box: its agent and container stop, its files and conversation stay. Resume picks it up again."))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        if let Some(s) = this.snapshot.sessions.iter().find(|x| x.id == sid2).cloned() {
+                            this.confirm_end_session(&s, window, cx);
+                        }
+                    })),
+            );
 
         // The terminal, or the panes of its split.
         let body = match self.pane_layout(id).cloned() {
@@ -1030,7 +1083,7 @@ impl Root {
                             .gap(px(8.))
                             .px(px(14.))
                             .py(px(8.))
-                            .rounded(px(8.))
+                            .rounded(crate::ui::kit::corner(8.))
                             .bg(theme.elevated)
                             .border_1()
                             .border_color(theme.border_variant)
@@ -1120,7 +1173,7 @@ impl Root {
                             .id(SharedString::from(format!("pane-close-{id}")))
                             .flex_none()
                             .p(px(3.))
-                            .rounded(px(4.))
+                            .rounded(crate::ui::kit::corner(4.))
                             .cursor_pointer()
                             .hover(|st| st.bg(theme.ghost_hover))
                             .tooltip(|window, cx| {
@@ -1215,9 +1268,9 @@ impl Root {
             .gap(px(8.))
             .h(px(26.))
             .mx(px(10.))
-            .pl(px(22.))
+            .pl(px(super::root::CHILD_PAD))
             .pr(px(8.))
-            .rounded(px(7.))
+            .rounded(crate::ui::kit::corner(7.))
             .cursor_pointer()
             .when(selected, |d| d.bg(theme.element_selected))
             .when(!selected, |d| d.hover(|st| st.bg(theme.ghost_hover)))
@@ -1272,20 +1325,10 @@ impl Root {
 
 impl Root {
     /// The machine page's list of agent sessions, with a way to start one.
-    pub(super) fn machine_sessions(
-        &self,
-        theme: &Theme,
-        s: &Snapshot,
-        m: &Machine,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let sessions: Vec<&SessionInfo> =
-            s.sessions.iter().filter(|x| x.machine_id == m.id).collect();
-        let installed: Vec<&str> = AGENTS
-            .iter()
-            .filter(|a| m.agents.iter().any(|i| i == a.id))
-            .map(|a| a.name)
-            .collect();
+    pub(super) fn machine_sessions(&self, theme: &Theme, s: &Snapshot, m: &Machine, cx: &mut Context<Self>) -> AnyElement {
+        // Boxes' agents are on the Boxes page.
+        let sessions: Vec<&SessionInfo> = s.sessions.iter().filter(|x| x.machine_id == m.id && x.box_id.is_none()).collect();
+        let installed: Vec<&str> = AGENTS.iter().filter(|a| m.agents.iter().any(|i| i == a.id)).map(|a| a.name).collect();
         let mid = m.id.clone();
         let title = div()
             .flex()
@@ -2620,12 +2663,56 @@ fn demo_screen(agent: &str) -> Vec<u8> {
 impl Root {
     /// Asks a session's agent to do one of the session actions (commit, open
     /// a pull request, ...): its prompt is typed in.
-    pub(super) fn run_session_action(
-        &mut self,
-        id: &str,
-        action: &'static str,
-        cx: &mut Context<Self>,
-    ) {
+    /// The Move dialog: a session's work to another machine.
+    pub(super) fn show_move_dialog(&mut self, id: &str, machine: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(s) = self.snapshot.sessions.iter().find(|s| s.id == id).cloned() else { return };
+        let engine = self.engine.clone();
+        let dialog = cx.new(|cx| super::move_dialog::MoveDialog::new(engine, s, machine, cx));
+        self.show_modal(super::root::Modal::Move(dialog.clone()), window, cx);
+        self._subscriptions.push(cx.subscribe_in(&dialog, window, Self::on_dialog_event));
+    }
+
+    /// Hands a session's work to another agent (see fleet::sessions::handoff),
+    /// on another machine with `machine`, then shows the new agent's session.
+    pub(super) fn handoff_session(&mut self, id: &str, to: &'static str, machine: Option<String>, keep: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.handing_off.insert(id.to_string()) {
+            return;
+        }
+        if let Some(m) = &machine {
+            let name = self.snapshot.machines.iter().find(|x| &x.id == m).map(|x| x.name.clone()).unwrap_or_else(|| m.clone());
+            self.notify_user(format!("Moving it to {name}. Activity shows each step."), false, cx);
+        }
+        cx.notify();
+        let (engine, id) = (self.engine.clone(), id.to_string());
+        let name = crate::fleet::sessions::agent(to).map(|k| k.name).unwrap_or(to);
+        let job = engine.runtime().spawn({
+            let (engine, id) = (engine.clone(), id.clone());
+            async move { engine.handoff_session(&id, to, keep, machine.as_deref()).await }
+        });
+        let task = cx.spawn_in(window, async move |this, cx| {
+            let result = job.await.unwrap_or_else(|e| Err(e.to_string()));
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.handing_off.remove(&id);
+                match result {
+                    Ok(h) => {
+                        let from = match h.source.as_str() {
+                            "transcript" => "the conversation so far",
+                            "terminal" => "what the terminal showed (Muxin can't read this agent's transcript)",
+                            _ => "where the code stands (Muxin found no conversation)",
+                        };
+                        this.navigate(Route::Session(h.session.id.clone()), window, cx);
+                        let warn = h.warnings.first().map(|w| format!(" {w}")).unwrap_or_default();
+                        this.notify_user(format!("{name} took over, with a note of {from}: {}{warn}", crate::fleet::sessions::handoff::NOTE), !h.warnings.is_empty(), cx);
+                    }
+                    Err(e) => this.notify_user(e, true, cx),
+                }
+                cx.notify();
+            });
+        });
+        self.track(task);
+    }
+
+    pub(super) fn run_session_action(&mut self, id: &str, action: &'static str, cx: &mut Context<Self>) {
         let (engine, id) = (self.engine.clone(), id.to_string());
         let label = crate::fleet::sessions::actions::action(action)
             .map(|a| a.label)
@@ -2802,7 +2889,7 @@ pub(super) fn git_line(
                 .gap(px(4.))
                 .px(px(6.))
                 .h(px(18.))
-                .rounded(px(4.))
+                .rounded(crate::ui::kit::corner(4.))
                 .bg(color.opacity(0.12))
                 .cursor_pointer()
                 .hover(|st| st.bg(color.opacity(0.22)))

@@ -521,7 +521,7 @@ impl Root {
                     .gap(px(5.))
                     .h(px(24.))
                     .px(px(8.))
-                    .rounded(px(6.))
+                    .rounded(crate::ui::kit::corner(6.))
                     .border_1()
                     .border_color(if selected {
                         theme.accent
@@ -579,7 +579,7 @@ impl Root {
                 .max_h(px(280.))
                 .overflow_y_scroll()
                 .p(px(10.))
-                .rounded(px(8.))
+                .rounded(crate::ui::kit::corner(8.))
                 .bg(theme.canvas)
                 .border_1()
                 .border_color(theme.border_variant)

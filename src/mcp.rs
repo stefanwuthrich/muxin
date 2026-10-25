@@ -56,6 +56,14 @@ the machine so they survive disconnects. The user watches and types into them in
 session_read returns its screen as text; session_send types into it; session_stop ends it. \
 Sessions belong to the user: only start, type into or stop one when they asked you to.
 
+Boxes: a task handed to an agent CLI that works on it by itself, in a container of its own on one \
+of the user's machines (Docker), on a new branch of a fresh checkout, with its permission prompts \
+off since the container is its sandbox. box_create makes one (repo, prompt, agent); box_list \
+shows them (running, paused, git); box_send asks one more, starting it again when it's paused \
+(a box pauses by itself when its agent has been quiet for a while); session_read and \
+session_question work on a running box's session_id; box_destroy deletes one with its unpushed \
+work. Only make or destroy boxes when the user asked.
+
 GitHub: github_inbox (review requests, assigned issues, the user's PRs), github_repos (favorites first), github_repo \
 (open issues and PRs, Actions runs, and where it's checked out on the machines), github_item (an \
 issue or PR in full, by URL or owner/name#123). local_checkouts lists git checkouts on the machines; \
@@ -392,6 +400,11 @@ async fn dispatch(
         "schedule_log" => ok(api::schedule_log(engine, args(a)?).await?),
         "vm_create" => ok(api::vm_create(engine, args(a)?, Surface::Mcp, |_| {}).await?),
         "vm_destroy" => ok(api::vm_destroy(engine, args(a)?, Surface::Mcp, |_| {}).await?),
+        "box_list" => ok(api::box_list(engine, args(a)?).await?),
+        "box_create" => ok(api::box_create(engine, args(a)?, Surface::Mcp, |_| {}).await?),
+        "box_send" => ok(api::box_send(engine, args(a)?).await?),
+        "box_pause" => ok(api::box_pause(engine, args(a)?).await?),
+        "box_destroy" => ok(api::box_destroy(engine, args(a)?).await?),
         "get_operation" => ok(api::operation(engine, args(a)?)?),
         "cancel_operation" => ok(api::cancel_operation(engine, args(a)?)?),
         "list_files" => ok(api::list_files(engine, args(a)?).await?),
@@ -432,6 +445,7 @@ async fn dispatch(
         "session_stop" => ok(api::session_stop(engine, args(a)?).await?),
         "session_restart" => ok(api::session_restart(engine, args(a)?).await?),
         "session_rename" => ok(api::session_rename(engine, args(a)?).await?),
+        "session_handoff" => ok(api::session_handoff(engine, args(a)?).await?),
         "github_inbox" => ok(api::github_inbox(engine).await?),
         "github_repos" => ok(json!({ "repos": api::github_repos(engine).await? })),
         "github_favorite" => ok(api::github_favorite(engine, args(a)?)?),
@@ -724,6 +738,52 @@ pub fn tools() -> Vec<Value> {
             "annotations": annotations("Destroy VM", false, true, true, true),
         }),
         json!({
+            "name": "box_list",
+            "description": "The user's boxes: tasks an agent CLI works on in a container of its own on one of their machines. Each has its id (box-ab12cd), machine, repo, branch, agent, state (running, starting or paused), busy (working right now), attention (waiting for an answer), session_id while it runs (for session_read and session_question), its task, and git (what it changed, its pull request). Read-only.",
+            "inputSchema": schema(json!({ "machine_id": { "type": "string", "description": "Only this machine's boxes." } }), &[]),
+            "annotations": annotations("List boxes", true, false, true, false),
+        }),
+        json!({
+            "name": "box_create",
+            "description": "Hand a task to an agent in a new box: Muxin clones the repo onto a new branch in a container of its own on one of the user's machines (one with Docker; the first box there builds Muxin's image, a few minutes), runs the repo's .agents/setup, and starts the agent CLI there on the prompt with its permission prompts off (the container is its sandbox). It can push and open pull requests with the user's GitHub login. The box pauses by itself when its agent has been quiet for a while; box_send picks it up again. Waits until the agent has started (wait: false returns an operation_id to poll). Only when the user asked for it.",
+            "inputSchema": schema(json!({
+                "repo": { "type": "string", "description": "owner/name on GitHub, a git URL, or a checkout's folder on machine_id (see local_checkouts): the box starts from that checkout with its uncommitted changes." },
+                "prompt": { "type": "string", "description": "The task: what the agent is asked to do (an issue's URL and text works well)." },
+                "agent": { "type": "string", "enum": ["claude", "codex", "amp", "opencode", "gemini", "pi"], "description": "Which agent CLI. Default claude. It's signed in as it is on that machine (its ~/.claude, ~/.codex, ... are shared with the box); if it isn't signed in there, the user signs it in once from the box's terminal." },
+                "machine_id": { "type": "string", "description": "Where it runs. Default: the online machine with Docker and the most free memory." },
+                "name": { "type": "string", "description": "Its name. Default: the task's first words." },
+                "branch": { "type": "string", "description": "The branch it works on. Default box/<name>." },
+                "ref": { "type": "string", "description": "What it starts from: a branch, tag, commit, or pull/<n>/head for a pull request's code. Default: the default branch." },
+                "cpus": { "type": "integer", "minimum": 1 },
+                "memory_gb": { "type": "integer", "minimum": 1 },
+                "idle_minutes": { "type": "integer", "minimum": 0, "description": "Pause after this many minutes without output from its agent. Default 15; 0 never pauses." },
+                "wait": { "type": "boolean", "description": "Wait until its agent has started. Default true (up to timeout_secs, default 900)." },
+                "timeout_secs": { "type": "integer", "minimum": 1 }
+            }), &["repo", "prompt"]),
+            "annotations": annotations("Create box", false, false, false, true),
+        }),
+        json!({
+            "name": "box_send",
+            "description": "Ask a box's agent something more: typed into it when it's running, else the box starts again and its agent continues its conversation with this as the next message. Without text it just starts the box again. Returns the box.",
+            "inputSchema": schema(json!({
+                "box_id": { "type": "string", "description": "A box id from box_list, e.g. box-ab12cd." },
+                "text": { "type": "string", "description": "What to ask its agent." }
+            }), &["box_id"]),
+            "annotations": annotations("Ask a box", false, false, false, true),
+        }),
+        json!({
+            "name": "box_pause",
+            "description": "Pause a box now: its agent ends and its container stops (dev servers in it too); its files, branch and the agent's conversation stay. box_send starts it again.",
+            "inputSchema": schema(json!({ "box_id": { "type": "string" } }), &["box_id"]),
+            "annotations": annotations("Pause box", false, false, true, false),
+        }),
+        json!({
+            "name": "box_destroy",
+            "description": "Delete a box: its container and its checkout, with any work in it that wasn't pushed. Its branch on GitHub stays. Check its git (box_list) and confirm with the user first unless they asked for it.",
+            "inputSchema": schema(json!({ "box_id": { "type": "string" } }), &["box_id"]),
+            "annotations": annotations("Destroy box", false, true, true, false),
+        }),
+        json!({
             "name": "cancel_run",
             "description": "Cancel the GitHub Actions workflow run that a queued or running job belongs to (job_id from list_jobs). GitHub cancels whole runs, so every unfinished job in it stops. Confirm with the user first.",
             "inputSchema": schema(json!({
@@ -997,6 +1057,17 @@ pub fn tools() -> Vec<Value> {
                 "title": { "type": "string", "description": "The new title, e.g. \"API server\"." }
             }), &["session_id", "title"]),
             "annotations": annotations("Rename session", false, false, true, false),
+        }),
+        json!({
+            "name": "session_handoff",
+            "description": "Hand a session's work to another agent (Claude Code to Codex, say), or a box's to another agent in the box: Muxin writes .muxin/handoff.md in its folder (where the git work stands, the agent's to-do list, and the conversation so far from the agent's own transcript: Claude Code, Codex, Gemini CLI and Pi; else what its terminal showed), starts the new agent there asked to read it first, and ends the old session unless keep. With machine_id the work moves to that machine first (git checkouts only; the folder it left stays as it was). Returns the new session, the note's path and what it was made from (`source`). Only when the user asked.",
+            "inputSchema": schema(json!({
+                "session_id": { "type": "string", "description": "A session id, or a box id (box-7k2m9q)." },
+                "agent": { "type": "string", "description": "The agent to hand it to: claude, codex, opencode, gemini, amp or pi." },
+                "keep": { "type": "boolean", "description": "Keep the old session running too. Default false." },
+                "machine_id": { "type": "string", "description": "Move the work to this machine and continue there: its commits that aren't on origin, uncommitted changes and new files go into a workspace there (a worktree of a checkout of the repository, else a clone). Default: the session's own machine. Not for boxes." }
+            }), &["session_id", "agent"]),
+            "annotations": annotations("Hand off a session", false, true, false, false),
         }),
         json!({
             "name": "github_inbox",
@@ -1324,7 +1395,7 @@ mod tests {
     #[test]
     fn tool_schemas_are_well_formed() {
         let tools = tools();
-        assert_eq!(tools.len(), 89);
+        assert_eq!(tools.len(), 95);
         let mut names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
         names.sort();
         names.dedup();

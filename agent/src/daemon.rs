@@ -8,6 +8,7 @@ use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -15,7 +16,7 @@ use std::time::{Duration, Instant};
 use alacritty_terminal::event::{Event, EventListener};
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::term::{Config, Term};
-use alacritty_terminal::vte::ansi::Processor;
+use alacritty_terminal::vte::ansi::{Processor, Rgb};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde_json::{Value, json};
 
@@ -28,12 +29,20 @@ const MAX_EVENTS: usize = 200;
 const SCROLLBACK: usize = 10_000;
 /// A stalled client is dropped rather than holding up the session.
 const CLIENT_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+/// Input waiting for the program (chunks as they came): typing faster than it
+/// reads waits here, with the session free (see `feed`).
+const INPUT_QUEUE: usize = 256;
+
+/// A color query's answer, once its color is known (see `answers`).
+type ColorReply = Arc<dyn Fn(Rgb) -> String + Sync + Send + 'static>;
 
 #[derive(Clone, Default)]
 struct Listener {
     bells: Arc<AtomicUsize>,
-    /// The terminal's answers to queries (cursor position, colors, ...).
+    /// The terminal's answers to queries (cursor position, device attributes, ...).
     replies: Arc<Mutex<Vec<String>>>,
+    /// Color queries (OSC 10, 11, 4): which color, and how to write the answer.
+    colors: Arc<Mutex<Vec<(usize, ColorReply)>>>,
 }
 
 impl EventListener for Listener {
@@ -43,6 +52,7 @@ impl EventListener for Listener {
                 self.bells.fetch_add(1, Ordering::Relaxed);
             }
             Event::PtyWrite(s) => self.replies.lock().unwrap().push(s),
+            Event::ColorRequest(index, format) => self.colors.lock().unwrap().push((index, format)),
             _ => {}
         }
     }
@@ -80,7 +90,10 @@ struct Inner {
     term: Term<Listener>,
     parser: Processor,
     listener: Listener,
-    writer: Option<Box<dyn Write + Send>>,
+    /// The end of the last output, for a query split across two reads.
+    tail: Vec<u8>,
+    /// Input for the program, written to its terminal by `feed`.
+    writer: Option<SyncSender<Vec<u8>>>,
     master: Option<Box<dyn MasterPty + Send>>,
     child: Option<Box<dyn Child + Send + Sync>>,
     clients: Vec<Client>,
@@ -323,6 +336,7 @@ fn start(state: &Arc<State>, req: &Value) -> Result<Value, String> {
                 listener.clone(),
             ),
             parser: Processor::new(),
+            tail: Vec::new(),
             listener,
             writer: None,
             master: None,
@@ -382,14 +396,24 @@ fn launch(state: &Arc<State>, s: &Arc<Session>) -> anyhow::Result<()> {
     cmd.env("COLORTERM", "truecolor");
     cmd.env("MUXEN_SESSION", &s.name);
     cmd.env_remove("TMUX");
+    // Started from inside an agent (Muxin's CLI run by Claude Code, say), the
+    // server has that agent's session in its environment: a session here isn't
+    // its child (Claude Code wouldn't save its transcript).
+    for (name, _) in std::env::vars_os() {
+        if inherited_agent_var(&name.to_string_lossy()) {
+            cmd.env_remove(name);
+        }
+    }
     let child = pair.slave.spawn_command(cmd)?;
     drop(pair.slave);
     let reader = pair.master.try_clone_reader()?;
     let writer = pair.master.take_writer()?;
+    let (input, queued) = sync_channel(INPUT_QUEUE);
+    thread::spawn(move || feed(writer, queued));
     let generation = {
         let mut i = s.inner.lock().unwrap();
         i.generation += 1;
-        i.writer = Some(writer);
+        i.writer = Some(input);
         i.master = Some(pair.master);
         i.child = Some(child);
         i.exit = None;
@@ -445,13 +469,14 @@ fn pump(state: &State, s: &Session, mut reader: Box<dyn Read + Send>, generation
         // Attached terminals answer queries themselves; without one that
         // can (watchers' answers are ignored), answer here so programs
         // waiting on a reply don't hang.
-        let replies = std::mem::take(&mut *i.listener.replies.lock().unwrap());
-        if i.clients.iter().all(|c| c.watch_only) {
-            if let Some(w) = i.writer.as_mut() {
-                for r in replies {
-                    let _ = w.write_all(r.as_bytes());
-                }
-            }
+        let replies = answers(&i.term, &i.listener, &i.tail, bytes);
+        i.tail = bytes[bytes.len().saturating_sub(4)..].to_vec();
+        // Never waiting here: this thread reads the program's output.
+        if !replies.is_empty()
+            && i.clients.iter().all(|c| c.watch_only)
+            && let Some(w) = i.writer.as_ref()
+        {
+            let _ = w.try_send(replies.into_bytes());
         }
         i.broadcast(proto::DATA, bytes);
         let rang = i.listener.bells.load(Ordering::Relaxed) != bells;
@@ -494,6 +519,29 @@ fn pump(state: &State, s: &Session, mut reader: Box<dyn Read + Send>, generation
     i.broadcast(proto::DATA, note.as_bytes());
     drop(i);
     state.event("exited", &s.name, code.to_string());
+}
+
+/// Writes a session's input to its program's terminal, in order, on a thread
+/// of its own. A program that isn't reading its input then holds up only this
+/// and whoever is typing, never the session: its output is still read (so it
+/// can get on), and listing, reading and the other clients carry on. Ends when
+/// the program does (the session drops its sender, or the write fails).
+fn feed(mut terminal: Box<dyn Write + Send>, input: Receiver<Vec<u8>>) {
+    for bytes in input {
+        if terminal.write_all(&bytes).is_err() {
+            break;
+        }
+    }
+}
+
+impl Session {
+    /// Hands input to the program (see `feed`); waits only while its queue is
+    /// full, with the session unlocked.
+    fn input(&self, bytes: &[u8]) -> Result<(), String> {
+        let gone = || format!("{} has exited", self.name);
+        let writer = self.inner.lock().unwrap().writer.clone().ok_or_else(gone)?;
+        writer.send(bytes.to_vec()).map_err(|_| gone())
+    }
 }
 
 fn wait_briefly(child: &mut Box<dyn Child + Send + Sync>) -> i32 {
@@ -557,14 +605,7 @@ fn send(state: &State, req: &Value) -> Result<Value, String> {
         .ok_or_else(|| format!("no session called {name}"))?;
     let text = str_of(req, "text");
     let enter = req["enter"].as_bool().unwrap_or(true);
-    {
-        let mut i = s.inner.lock().unwrap();
-        let w = i
-            .writer
-            .as_mut()
-            .ok_or_else(|| format!("{name} has exited"))?;
-        w.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
-    }
+    s.input(text.as_bytes())?;
     if enter {
         // Enter on its own, a moment later: typed together, agents' input
         // boxes (Claude Code's) take it as part of a paste, a new line
@@ -572,12 +613,7 @@ fn send(state: &State, req: &Value) -> Result<Value, String> {
         if !text.is_empty() {
             std::thread::sleep(std::time::Duration::from_millis(150));
         }
-        let mut i = s.inner.lock().unwrap();
-        let w = i
-            .writer
-            .as_mut()
-            .ok_or_else(|| format!("{name} has exited"))?;
-        w.write_all(b"\r").map_err(|e| e.to_string())?;
+        s.input(b"\r")?;
     }
     Ok(json!({}))
 }
@@ -634,10 +670,7 @@ fn attach(state: &State, mut stream: Stream, req: &Value) {
         match proto::read_frame(&mut stream) {
             Ok(_) if watch_only => {}
             Ok((proto::DATA, bytes)) => {
-                let mut i = s.inner.lock().unwrap();
-                if let Some(w) = i.writer.as_mut() {
-                    let _ = w.write_all(&bytes);
-                }
+                let _ = s.input(&bytes);
             }
             Ok((proto::RESIZE, p)) if p.len() == 4 => {
                 let cols = u16::from_be_bytes([p[0], p[1]]);
@@ -651,9 +684,171 @@ fn attach(state: &State, mut stream: Stream, req: &Value) {
     s.inner.lock().unwrap().clients.retain(|c| c.id != id);
 }
 
+/// What the terminal says back to what the program just printed, in one
+/// piece: the colors it asked for (OSC 10, 11, 4: the program's own if it set
+/// them, else a dark terminal's), its name and version (XTVERSION, which the
+/// terminal's parser leaves unanswered), then the parser's own answers (cursor
+/// position, keyboard mode, device attributes). Device attributes come last:
+/// programs (Gemini CLI, Neovim) ask for them last and take their answer as
+/// "that's everything".
+fn answers(term: &Term<Listener>, listener: &Listener, tail: &[u8], bytes: &[u8]) -> String {
+    let mut out = String::new();
+    for (index, format) in std::mem::take(&mut *listener.colors.lock().unwrap()) {
+        out.push_str(&format(term.colors()[index].unwrap_or_else(|| default_color(index))));
+    }
+    if asks_version(tail, bytes) {
+        out.push_str(&format!("\x1bP>|Muxin {}\x1b\\", env!("CARGO_PKG_VERSION")));
+    }
+    for r in std::mem::take(&mut *listener.replies.lock().unwrap()) {
+        out.push_str(&r);
+    }
+    out
+}
+
+/// XTVERSION (`CSI > q` or `CSI > 0 q`), in this output or across its start.
+fn asks_version(tail: &[u8], bytes: &[u8]) -> bool {
+    let seen: Vec<u8> = tail.iter().chain(bytes.iter().take(5)).copied().collect();
+    [&b"\x1b[>q"[..], &b"\x1b[>0q"[..]].iter().any(|q| bytes.windows(q.len()).any(|w| w == *q) || seen.windows(q.len()).any(|w| w == *q))
+}
+
+/// A dark terminal's colors, for a program that asks before setting any:
+/// xterm's 256 (the 16 named, the 6×6×6 cube, the grays), then the
+/// foreground, background and cursor (256, 257, 258; dim and bright ones after).
+fn default_color(index: usize) -> Rgb {
+    const NAMED: [(u8, u8, u8); 16] = [
+        (0, 0, 0), (205, 0, 0), (0, 205, 0), (205, 205, 0), (0, 0, 238), (205, 0, 205), (0, 205, 205), (229, 229, 229),
+        (127, 127, 127), (255, 0, 0), (0, 255, 0), (255, 255, 0), (92, 92, 255), (255, 0, 255), (0, 255, 255), (255, 255, 255),
+    ];
+    let (r, g, b) = match index {
+        0..=15 => NAMED[index],
+        16..=231 => {
+            let level = |n: usize| if n == 0 { 0 } else { (55 + n * 40) as u8 };
+            let n = index - 16;
+            (level(n / 36), level(n / 6 % 6), level(n % 6))
+        }
+        232..=255 => {
+            let v = (8 + (index - 232) * 10) as u8;
+            (v, v, v)
+        }
+        257 => (0x15, 0x16, 0x1a),
+        _ => (0xec, 0xec, 0xf1),
+    };
+    Rgb { r, g, b }
+}
+
+/// An agent's own marks of the session it runs in (Claude Code's, Codex's
+/// sandbox), not the user's settings for it (CLAUDE_CONFIG_DIR, API keys).
+fn inherited_agent_var(name: &str) -> bool {
+    matches!(name, "CLAUDECODE" | "CLAUDE_PID" | "CLAUDE_EFFORT")
+        || ["CLAUDE_CODE_", "CLAUDE_AGENT_SDK_", "CODEX_SANDBOX"].iter().any(|p| name.starts_with(p))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_state() -> Arc<State> {
+        Arc::new(State {
+            sessions: Mutex::new(Vec::new()),
+            events: Mutex::new(VecDeque::new()),
+            connections: AtomicUsize::new(0),
+            next_client: AtomicU64::new(1),
+            last_activity: Mutex::new(Instant::now()),
+        })
+    }
+
+    /// Asks `f` on another thread; whether it answered within `wait`.
+    fn answers_within(wait: Duration, f: impl FnOnce() + Send + 'static) -> bool {
+        let (done, answered) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            f();
+            let _ = done.send(());
+        });
+        answered.recv_timeout(wait).is_ok()
+    }
+
+    /// A program that never reads its input, flooded with typing (a huge paste,
+    /// say): the typing waits, but the session's lock is never held for it,
+    /// so listing and reading it (and the other clients) carry on.
+    #[cfg(unix)]
+    #[test]
+    fn typing_into_a_program_that_doesnt_read_never_locks_the_session() {
+        let state = test_state();
+        // Raw mode, like an agent's TUI: on Linux input then piles up instead
+        // of being dropped (a Mac's terminal drops what it can't hold, so the
+        // typing never waits there).
+        let req = json!({ "name": "flood", "cwd": std::env::temp_dir().display().to_string(), "run": "stty raw -echo; echo ready; sleep 30" });
+        start(&state, &req).expect("the session starts");
+        let s = state.find("flood").unwrap();
+        let ready = Instant::now();
+        while !screen::text(&s.inner.lock().unwrap().term, 5).contains("ready") {
+            assert!(ready.elapsed() < Duration::from_secs(20), "the session didn't start");
+            thread::sleep(Duration::from_millis(50));
+        }
+        let typist = s.clone();
+        thread::spawn(move || {
+            let chunk = vec![b'x'; 4096];
+            // Far more than a terminal's input buffer and the queue hold.
+            for _ in 0..4096 {
+                if typist.input(&chunk).is_err() {
+                    break;
+                }
+            }
+        });
+        thread::sleep(Duration::from_millis(500));
+        let st = state.clone();
+        assert!(answers_within(Duration::from_secs(3), move || drop(list(&st))), "listing sessions hangs");
+        let st = state.clone();
+        assert!(answers_within(Duration::from_secs(3), move || drop(read(&st, &json!({ "name": "flood", "lines": 5 })))), "reading the session hangs");
+        let st = state.clone();
+        assert!(answers_within(Duration::from_secs(3), move || drop(stop(&st, &json!({ "name": "flood" })))), "stopping the session hangs");
+    }
+
+    /// What the terminal answers to `printed`, as a session with no window would.
+    fn answer(printed: &[u8]) -> String {
+        let listener = Listener::default();
+        let mut term = Term::new(Config::default(), &Dims { cols: 80, rows: 24 }, listener.clone());
+        let mut parser: Processor = Processor::new();
+        parser.advance(&mut term, printed);
+        answers(&term, &listener, &[], printed)
+    }
+
+    #[test]
+    fn gemini_clis_questions_are_all_answered_device_attributes_last() {
+        // What Gemini CLI asks at start: keyboard mode, background color, name, device attributes.
+        let got = answer(b"\x1b[?u\x1b]11;?\x1b\\\x1b[>q\x1b[c");
+        assert!(got.starts_with("\x1b]11;rgb:1515/1616/1a1a"), "{got:?}");
+        assert!(got.contains("\x1bP>|Muxin "), "{got:?}");
+        // The kitty keyboard protocol is off in sessions, so that one has no answer, as in a terminal without it.
+        assert!(!got.contains("u\x1b"), "{got:?}");
+        assert!(got.ends_with("\x1b[?6c"), "{got:?}");
+    }
+
+    #[test]
+    fn a_color_the_program_set_is_the_one_answered() {
+        let got = answer(b"\x1b]11;#ffffff\x1b\\\x1b]11;?\x07");
+        assert!(got.starts_with("\x1b]11;rgb:ffff/ffff/ffff"), "{got:?}");
+        let fg = answer(b"\x1b]10;?\x07");
+        assert!(fg.starts_with("\x1b]10;rgb:ecec/ecec/f1f1"), "{fg:?}");
+    }
+
+    #[test]
+    fn a_version_query_split_across_reads_is_still_seen() {
+        assert!(asks_version(b"xx\x1b[", b">qmore"));
+        assert!(asks_version(b"", b"a\x1b[>0qb"));
+        assert!(!asks_version(b"", b"\x1b[>c"));
+        assert_eq!(answer(b"plain text\r\n"), "");
+    }
+
+    #[test]
+    fn an_outer_agents_session_doesnt_reach_sessions() {
+        for v in ["CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ID", "CLAUDE_AGENT_SDK_VERSION", "CLAUDE_PID", "CODEX_SANDBOX_NETWORK_DISABLED"] {
+            assert!(inherited_agent_var(v), "{v}");
+        }
+        for v in ["CLAUDE_CONFIG_DIR", "ANTHROPIC_API_KEY", "CODEX_HOME", "PATH"] {
+            assert!(!inherited_agent_var(v), "{v}");
+        }
+    }
 
     /// A session's command with only these of the locale variables.
     fn with_locale(vars: &[(&str, &str)]) -> CommandBuilder {

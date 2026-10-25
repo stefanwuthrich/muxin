@@ -5,11 +5,9 @@
 use gpui::{App, KeyBinding, Keystroke};
 
 use super::root::{
-    AddMachine, CheckNow, CommandPalette, FocusFilter, GoBack, GoForward, GoToMachine1,
-    GoToMachine2, GoToMachine3, GoToMachine4, GoToMachine5, GoToMachine6, GoToMachine7,
-    GoToMachine8, GoToMachine9, NewSession, NextPane, OpenSettings, PreviousPane, QuickOpen,
-    ShowGithub, ShowJobs, ShowOverview, ShowRun, ShowSchedules, ShowUsage, ShowWorkspaces,
-    SplitDown, SplitRight, SyncGitHub, ToggleActivity, ToggleSidebar,
+    AddMachine, CheckNow, CommandPalette, FocusFilter, GoBack, GoForward, GoToMachine1, GoToMachine2, GoToMachine3, GoToMachine4, GoToMachine5, GoToMachine6,
+    GoToMachine7, GoToMachine8, GoToMachine9, NewSession, NextPane, OpenSettings, PreviousPane, ShowGithub, ShowJobs, ShowRun, ShowSchedules, ShowUsage, ShowOverview, ShowWorkspaces, ShowBoxes,
+    SplitDown, SplitRight, SyncGitHub, QuickOpen, ToggleActivity, ToggleSidebar,
 };
 use super::theme::Appearance;
 
@@ -64,21 +62,12 @@ pub const ALL: &[Shortcut] = &[
         ShowOverview
     ),
     shortcut!("jobs", "Jobs", page("ctrl-2", "alt-2"), ShowJobs),
-    shortcut!(
-        "workspaces",
-        "Workspaces",
-        page("ctrl-3", "alt-3"),
-        ShowWorkspaces
-    ),
+    shortcut!("boxes", "Boxes", page("ctrl-3", "alt-3"), ShowBoxes),
     shortcut!("github", "GitHub", page("ctrl-4", "alt-4"), ShowGithub),
     shortcut!("usage", "Usage", page("ctrl-5", "alt-5"), ShowUsage),
     shortcut!("run", "Run on machines", page("ctrl-6", "alt-6"), ShowRun),
-    shortcut!(
-        "schedules",
-        "Schedules",
-        page("ctrl-7", "alt-7"),
-        ShowSchedules
-    ),
+    shortcut!("schedules", "Schedules", page("ctrl-7", "alt-7"), ShowSchedules),
+    shortcut!("workspaces", "Agents' workspaces", "", ShowWorkspaces),
     shortcut!("activity", "Activity", "secondary-j", ToggleActivity),
     shortcut!("settings", "Settings", "secondary-,", OpenSettings),
     shortcut!("check", "Refresh all machines", "secondary-r", CheckNow),
@@ -259,6 +248,7 @@ pub fn ctrl_keys(cx: &App) -> Vec<String> {
 pub fn apply(cx: &mut App) {
     cx.clear_key_bindings();
     super::input::bind_keys(cx);
+    super::box_dialog::bind_keys(cx);
     super::terminal::bind_keys(cx);
     super::desktop::bind_keys(cx);
     super::root::bind_keys(cx);

@@ -798,11 +798,86 @@ pub fn sessions(r: &crate::api::SessionsOut) -> String {
     out
 }
 
+pub fn boxes(r: &crate::api::BoxesOut) -> String {
+    let mut out = String::new();
+    if r.boxes.is_empty() {
+        out.push_str("No boxes. Hand a task to an agent with `muxin box new <owner/repo> \"<what to do>\"`.\n");
+    } else {
+        let rows: Vec<Vec<String>> = r
+            .boxes
+            .iter()
+            .map(|b| {
+                let state = match (b.state.as_str(), b.busy, b.attention.as_deref()) {
+                    ("running", _, Some("waiting")) => "waiting".to_string(),
+                    ("running", true, _) => "working".into(),
+                    ("running", false, _) => "idle".into(),
+                    (other, _, _) => other.to_string(),
+                };
+                let git = b.git.as_ref().map(|g| g.short()).unwrap_or_else(|| b.branch.clone());
+                vec![b.id.clone(), b.name.clone(), b.agent_name.clone(), state, b.machine_id.clone(), b.repo.clone(), git, b.created_at.map(ago).unwrap_or_else(|| "—".into())]
+            })
+            .collect();
+        out.push_str(&table(&["BOX", "NAME", "AGENT", "STATE", "MACHINE", "REPO", "GIT", "MADE"], &rows));
+    }
+    for e in &r.errors {
+        out.push_str(&format!("{}: {}\n", e.machine_id, e.error.clone().unwrap_or_default()));
+    }
+    out
+}
+
+pub fn box_one(b: &crate::fleet::boxes::BoxInfo) -> String {
+    let state = match (b.state.as_str(), b.busy) {
+        ("running", true) => "working",
+        (s, _) => s,
+    };
+    format!("{} ({}) on {}: {state}, branch {}\n", b.id, b.name, b.machine_id, b.branch)
+}
+
+pub fn box_created(r: &crate::api::BoxCreatedOut) -> String {
+    let o = &r.operation;
+    let mut out = match o.status.as_str() {
+        "succeeded" => format!("✓ {} is working on it\n", r.box_id),
+        "running" => format!("… {} is still being made (operation {})\n", r.box_id, o.id),
+        _ => format!("✖ {} failed: {}\n", o.title, o.error.clone().unwrap_or_default()),
+    };
+    if let Some(n) = &r.next {
+        out.push_str(&format!("{n}\n"));
+    }
+    out
+}
+
 pub fn session_started(s: &crate::fleet::sessions::SessionInfo) -> String {
     format!(
         "Started {} ({}) in {}.\nWatch it in the Muxin app, or attach here: {}\n",
         s.id, s.agent_name, s.cwd, s.attach_command
     )
+}
+
+pub fn handed_off(h: &crate::fleet::sessions::handoff::HandedOff) -> String {
+    let from = match h.source.as_str() {
+        "transcript" => "the conversation so far",
+        "terminal" => "what its terminal showed (no transcript Muxin can read)",
+        _ => "the git state only (no conversation found)",
+    };
+    let mut out = format!("Handed off to {} ({}) in {}.\nThe note, from {from}: {}\n", s_id(h), h.session.agent_name, h.session.cwd, h.note);
+    for w in &h.warnings {
+        out.push_str(&format!("! {w}\n"));
+    }
+    if let Some(ws) = &h.workspace {
+        out.push_str(&format!("The work moved to workspace {ws} there; the folder it left is as it was.\n"));
+    }
+    if let Some(k) = &h.kept {
+        out.push_str(&format!("{k} is still running.\n"));
+    }
+    out.push_str(&format!("Watch it in the Muxin app, or attach here: {}\n", h.session.attach_command));
+    out
+}
+
+fn s_id(h: &crate::fleet::sessions::handoff::HandedOff) -> String {
+    match &h.box_id {
+        Some(b) => format!("{} in {b}", h.session.id),
+        None => h.session.id.clone(),
+    }
 }
 
 fn item_rows(items: &[crate::github::hub::Item]) -> Vec<Vec<String>> {

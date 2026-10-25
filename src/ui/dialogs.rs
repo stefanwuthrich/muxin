@@ -29,6 +29,8 @@ pub enum DialogEvent {
     NewVm,
     /// A schedule was saved: show the schedules again.
     ScheduleSaved,
+    /// A box is being made (its operation): show the boxes.
+    BoxStarted(u64),
     OpenCloudSettings,
     /// The root view runs it, so it can open the workspace when it's ready.
     CreateWorkspace(CreateWorkspace, WorkspaceIsolation),
@@ -48,6 +50,8 @@ pub enum DialogEvent {
     JoinedShare(super::share::JoinedHandle),
     /// Open the Join dialog instead (with a link pasted here).
     JoinShare(Option<String>),
+    /// Hand a session's work to an agent, on another machine when `machine` says so.
+    Handoff { session: String, agent: String, machine: Option<String>, keep: bool },
 }
 
 pub(super) fn frame(
@@ -61,11 +65,11 @@ pub(super) fn frame(
         .flex_col()
         .gap(px(14.))
         .p(px(18.))
-        .rounded(px(10.))
+        .rounded(crate::ui::kit::corner(10.))
         .bg(theme.elevated)
         .border_1()
         .border_color(theme.border)
-        .shadow_lg()
+        .when(!crate::ui::kit::square(), |d| d.shadow_lg())
         .text_color(theme.text)
         .child(
             div()
@@ -112,7 +116,7 @@ pub(super) fn error_line(theme: &Theme, error: &Option<String>) -> Option<impl I
             .items_start()
             .gap(px(8.))
             .p(px(10.))
-            .rounded(px(6.))
+            .rounded(crate::ui::kit::corner(6.))
             .bg(theme.error.opacity(0.1))
             .text_size(px(12.5))
             .text_color(theme.text)
@@ -351,7 +355,7 @@ impl Render for AddMachineDialog {
                 .gap(px(10.))
                 .px(px(12.))
                 .py(px(9.))
-                .rounded(px(9.))
+                .rounded(crate::ui::kit::corner(9.))
                 .border_1()
                 .border_color(if link.is_some() { theme.accent } else { theme.border_variant })
                 .bg(theme.surface)
@@ -383,7 +387,7 @@ fn suggestion(
         .gap(px(5.))
         .h(px(24.))
         .px(px(8.))
-        .rounded(px(5.))
+        .rounded(crate::ui::kit::corner(5.))
         .border_1()
         .border_color(theme.border_variant)
         .bg(theme.element)
@@ -569,7 +573,7 @@ impl Render for InstallDialog {
                 .items_center()
                 .gap(px(10.))
                 .p(px(10.))
-                .rounded(px(6.))
+                .rounded(crate::ui::kit::corner(6.))
                 .bg(theme.warning.opacity(0.1))
                 .text_size(px(12.5))
                 .child(icon("triangle-alert", 14., theme.warning))
@@ -591,7 +595,7 @@ impl Render for InstallDialog {
                         .gap(px(6.))
                         .h(px(26.))
                         .px(px(10.))
-                        .rounded(px(6.))
+                        .rounded(crate::ui::kit::corner(6.))
                         .border_1()
                         .cursor_pointer()
                         .border_color(if selected {
@@ -767,7 +771,7 @@ impl InstallDialog {
                 .items_start()
                 .gap(px(8.))
                 .p(px(9.))
-                .rounded(px(8.))
+                .rounded(crate::ui::kit::corner(8.))
                 .border_1()
                 .cursor_pointer()
                 .border_color(if selected {
@@ -1186,7 +1190,7 @@ impl Render for AddDisplayDialog {
                     .items_center()
                     .gap(px(2.))
                     .py(px(8.))
-                    .rounded(px(7.))
+                    .rounded(crate::ui::kit::corner(7.))
                     .border_1()
                     .border_color(if on {
                         theme.accent
@@ -1599,7 +1603,7 @@ impl NewWorkspaceDialog {
                 .items_start()
                 .gap(px(10.))
                 .p(px(10.))
-                .rounded(px(8.))
+                .rounded(crate::ui::kit::corner(8.))
                 .border_1()
                 .cursor_pointer()
                 .border_color(if selected {
@@ -1662,40 +1666,30 @@ impl NewWorkspaceDialog {
             .child(div().flex().gap(px(8.)).child(host).child(docker))
             .when(self.docker, |d| {
                 d.child(self.image.clone())
-                    .child(div().flex().flex_wrap().gap(px(6.)).children(
-                        IMAGE_PRESETS.iter().enumerate().map(|(i, img)| {
-                            let value = img.to_string();
-                            div()
-                                .id(("img-preset", i))
-                                .h(px(22.))
-                                .px(px(8.))
-                                .flex()
-                                .items_center()
-                                .rounded(px(5.))
-                                .border_1()
-                                .border_color(theme.border_variant)
-                                .bg(theme.element)
-                                .cursor_pointer()
-                                .hover(|st| st.bg(theme.element_hover))
-                                .font_family(mono_font())
-                                .text_size(px(11.5))
-                                .text_color(theme.text_muted)
-                                .child(*img)
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.image.update(cx, |i, cx| i.set_text(value.clone(), cx))
-                                }))
-                        }),
-                    ))
-                    .child(checkbox(
-                        theme,
-                        "ws-docker-socket",
-                        socket,
-                        "Share the machine's Docker socket (docker-in-docker)",
-                        cx.listener(|this, value: &bool, _, cx| {
-                            this.docker_socket = *value;
-                            cx.notify()
-                        }),
-                    ))
+                    .child(div().flex().flex_wrap().gap(px(6.)).children(IMAGE_PRESETS.iter().enumerate().map(|(i, img)| {
+                        let value = img.to_string();
+                        div()
+                            .id(("img-preset", i))
+                            .h(px(22.))
+                            .px(px(8.))
+                            .flex()
+                            .items_center()
+                            .rounded(crate::ui::kit::corner(5.))
+                            .border_1()
+                            .border_color(theme.border_variant)
+                            .bg(theme.element)
+                            .cursor_pointer()
+                            .hover(|st| st.bg(theme.element_hover))
+                            .font_family(mono_font())
+                            .text_size(px(11.5))
+                            .text_color(theme.text_muted)
+                            .child(*img)
+                            .on_click(cx.listener(move |this, _, _, cx| this.image.update(cx, |i, cx| i.set_text(value.clone(), cx))))
+                    })))
+                    .child(checkbox(theme, "ws-docker-socket", socket, "Share the machine's Docker socket (docker-in-docker)", cx.listener(|this, value: &bool, _, cx| {
+                        this.docker_socket = *value;
+                        cx.notify()
+                    })))
             })
             .into_any_element()
     }
@@ -1761,7 +1755,7 @@ impl Render for NewWorkspaceDialog {
                                 .gap(px(6.))
                                 .h(px(26.))
                                 .px(px(10.))
-                                .rounded(px(6.))
+                                .rounded(crate::ui::kit::corner(6.))
                                 .border_1()
                                 .cursor_pointer()
                                 .border_color(if selected {
@@ -2356,7 +2350,7 @@ impl NewSessionDialog {
                     .gap(px(5.))
                     .h(px(24.))
                     .px(px(8.))
-                    .rounded(px(5.))
+                    .rounded(crate::ui::kit::corner(5.))
                     .bg(theme.element)
                     .border_1()
                     .border_color(theme.border_variant)
@@ -2432,7 +2426,7 @@ impl NewSessionDialog {
                 .flex_col()
                 .gap(px(6.))
                 .p(px(8.))
-                .rounded(px(7.))
+                .rounded(crate::ui::kit::corner(7.))
                 .border_1()
                 .border_color(theme.border_variant)
                 .child(header)
@@ -2469,7 +2463,7 @@ impl NewSessionDialog {
                 .items_center()
                 .gap(px(10.))
                 .p(px(10.))
-                .rounded(px(8.))
+                .rounded(crate::ui::kit::corner(8.))
                 .border_1()
                 .cursor_pointer()
                 .border_color(if selected {
@@ -2591,7 +2585,7 @@ impl NewSessionDialog {
                 .items_center()
                 .gap(px(10.))
                 .p(px(10.))
-                .rounded(px(6.))
+                .rounded(crate::ui::kit::corner(6.))
                 .bg(theme.warning.opacity(0.10))
                 .text_size(px(12.5))
                 .child(icon("info", 14., theme.warning))
@@ -2696,7 +2690,7 @@ impl Render for NewSessionDialog {
                 .gap(px(6.))
                 .h(px(26.))
                 .px(px(10.))
-                .rounded(px(6.))
+                .rounded(crate::ui::kit::corner(6.))
                 .border_1()
                 .cursor_pointer()
                 .border_color(if selected {
@@ -2767,7 +2761,7 @@ impl Render for NewSessionDialog {
                     .gap(px(6.))
                     .h(px(26.))
                     .px(px(10.))
-                    .rounded(px(6.))
+                    .rounded(crate::ui::kit::corner(6.))
                     .border_1()
                     .border_dashed()
                     .cursor_pointer()
@@ -2835,7 +2829,7 @@ impl Render for NewSessionDialog {
                     .px(px(8.))
                     .flex()
                     .items_center()
-                    .rounded(px(5.))
+                    .rounded(crate::ui::kit::corner(5.))
                     .border_1()
                     .cursor_pointer()
                     .text_size(px(12.))
@@ -2884,7 +2878,7 @@ impl Render for NewSessionDialog {
                 .flex_col()
                 .gap(px(8.))
                 .p(px(10.))
-                .rounded(px(8.))
+                .rounded(crate::ui::kit::corner(8.))
                 .border_1()
                 .border_color(theme.border_variant)
                 .bg(theme.element.opacity(0.5))
@@ -2925,7 +2919,7 @@ impl Render for NewSessionDialog {
                     .items_center()
                     .gap(px(10.))
                     .p(px(10.))
-                    .rounded(px(8.))
+                    .rounded(crate::ui::kit::corner(8.))
                     .border_1()
                     .cursor_pointer()
                     .border_color(if selected {
@@ -2963,7 +2957,7 @@ impl Render for NewSessionDialog {
                         this.agent_picked = true;
                         cx.notify()
                     }))
-            };
+        };
         let mut rows = Vec::new();
         for (r, chunk) in AGENTS.chunks(3).enumerate() {
             let cards: Vec<AnyElement> = chunk
@@ -3033,7 +3027,7 @@ impl Render for NewSessionDialog {
                             11.,
                             theme.text_placeholder,
                         ))
-                        .rounded(px(5.))
+                        .rounded(crate::ui::kit::corner(5.))
                         .border_1()
                         .border_color(theme.border_variant)
                         .bg(theme.element)
@@ -3057,7 +3051,7 @@ impl Render for NewSessionDialog {
                 .items_start()
                 .gap(px(10.))
                 .p(px(10.))
-                .rounded(px(6.))
+                .rounded(crate::ui::kit::corner(6.))
                 .bg(theme.warning.opacity(0.10))
                 .text_size(px(12.5))
                 .text_color(theme.text)
@@ -3090,107 +3084,41 @@ impl Render for NewSessionDialog {
             .flex_col()
             .gap(px(14.))
             .child(field(&theme, "Machine", picker, None))
-            .map(|d| match &self.prefill.command {
-                // A prepared command (a Docker workspace's shell) instead of an agent.
-                Some((_, what)) => d.child(field(
-                    &theme,
-                    "Runs",
-                    div()
-                        .text_size(px(12.5))
-                        .text_color(theme.text_muted)
-                        .child(what.clone()),
-                    None,
-                )),
-                None => d.child(field(
-                    &theme,
-                    "Agent",
-                    div().flex().flex_col().gap(px(8.)).children(rows),
-                    None,
-                )),
-            })
-            .when(self.prefill.workspace.is_some() || source.is_some(), |d| {
-                d.child(field(
-                    &theme,
-                    "Where",
-                    self.where_choice(&theme, place, source.as_ref(), cx),
-                    None,
-                ))
-            })
-            .map(|d| match place {
-                Place::Worktree | Place::Clone => d.child(self.workspace_fields(
-                    &theme,
-                    place,
-                    source.as_ref(),
-                    machine.as_ref(),
-                    cx,
-                )),
-                Place::Folder if self.new_vm.is_some() => d,
-                Place::Folder => d.child(field(
-                    &theme,
-                    "Folder",
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(8.))
-                        .child(self.cwd.clone())
-                        .child(folder_chips)
-                        .children(self.folder_browser(&theme, cx)),
-                    None,
-                )),
-            })
-            .when(self.agent != "shell", |d| {
-                let prepared = self.prefill.message.clone().map(|m| {
-                    // An excerpt (the agent gets all of it). No scroll box of its own:
-                    // one inside the dialog's makes the wheel stick.
-                    let lines: Vec<&str> = m.lines().filter(|l| !l.trim().is_empty()).collect();
-                    let mut shown: String = lines
-                        .iter()
-                        .take(5)
-                        .copied()
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                        .chars()
-                        .take(480)
-                        .collect();
-                    if lines.len() > 5 || shown.chars().count() >= 480 {
-                        shown.push_str(" …");
-                    }
-                    div()
-                        .p(px(10.))
-                        .rounded(px(6.))
-                        .bg(theme.element)
-                        .border_1()
-                        .border_color(theme.border_variant)
-                        .flex()
-                        .flex_col()
-                        .gap(px(6.))
-                        .children(self.prefill.source.clone().map(|s| {
-                            div()
-                                .text_size(px(11.))
-                                .text_color(theme.text_placeholder)
-                                .child(format!("From {s}"))
-                        }))
-                        .child(
-                            div()
-                                .w_full()
-                                .text_size(px(12.))
-                                .text_color(theme.text_muted)
-                                .child(shown),
-                        )
-                });
-                d.child(field(
-                    &theme,
-                    "First message",
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(8.))
-                        .children(prepared)
-                        .child(self.prompt.clone()),
-                    None,
-                ))
-            })
-            .children(in_app_note);
+        .map(|d| match &self.prefill.command {
+            // A prepared command (a Docker workspace's shell) instead of an agent.
+            Some((_, what)) => d.child(field(&theme, "Runs", div().text_size(px(12.5)).text_color(theme.text_muted).child(what.clone()), None)),
+            None => d.child(field(&theme, "Agent", div().flex().flex_col().gap(px(8.)).children(rows), None)),
+        })
+        .when(self.prefill.workspace.is_some() || source.is_some(), |d| d.child(field(&theme, "Where", self.where_choice(&theme, place, source.as_ref(), cx), None)))
+        .map(|d| match place {
+            Place::Worktree | Place::Clone => d.child(self.workspace_fields(&theme, place, source.as_ref(), machine.as_ref(), cx)),
+            Place::Folder if self.new_vm.is_some() => d,
+            Place::Folder => d.child(field(&theme, "Folder", div().flex().flex_col().gap(px(8.)).child(self.cwd.clone()).child(folder_chips).children(self.folder_browser(&theme, cx)), None)),
+        })
+        .when(self.agent != "shell", |d| {
+            let prepared = self.prefill.message.clone().map(|m| {
+                // An excerpt (the agent gets all of it). No scroll box of its own:
+                // one inside the dialog's makes the wheel stick.
+                let lines: Vec<&str> = m.lines().filter(|l| !l.trim().is_empty()).collect();
+                let mut shown: String = lines.iter().take(5).copied().collect::<Vec<_>>().join("\n").chars().take(480).collect();
+                if lines.len() > 5 || shown.chars().count() >= 480 {
+                    shown.push_str(" …");
+                }
+                div()
+                    .p(px(10.))
+                    .rounded(crate::ui::kit::corner(6.))
+                    .bg(theme.element)
+                    .border_1()
+                    .border_color(theme.border_variant)
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.))
+                    .children(self.prefill.source.clone().map(|s| div().text_size(px(11.)).text_color(theme.text_placeholder).child(format!("From {s}"))))
+                    .child(div().w_full().text_size(px(12.)).text_color(theme.text_muted).child(shown))
+            });
+            d.child(field(&theme, "First message", div().flex().flex_col().gap(px(8.)).children(prepared).child(self.prompt.clone()), None))
+        })
+        .children(in_app_note);
         // A scroll area around one column (as a column itself it squeezes its children).
         let body = div()
             .id("ns-body")

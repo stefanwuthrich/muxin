@@ -516,7 +516,7 @@ impl Root {
             .flex_col()
             .gap(px(12.))
             .p(px(16.))
-            .rounded(px(14.))
+            .rounded(crate::ui::kit::corner(14.))
             .border_1()
             .border_color(theme.border_variant)
             .bg(theme.surface)
@@ -673,7 +673,7 @@ impl Root {
                         d.child(
                             div()
                                 .w_full()
-                                .rounded(px(2.))
+                                .rounded(crate::ui::kit::corner(2.))
                                 .h(relative(frac.max(0.04)))
                                 .bg(if last {
                                     theme.accent
@@ -682,9 +682,7 @@ impl Root {
                                 }),
                         )
                     })
-                    .when(sample.is_none(), |d| {
-                        d.child(div().w_full().h(px(2.)).rounded(px(1.)).bg(theme.track))
-                    })
+                    .when(sample.is_none(), |d| d.child(div().w_full().h(px(2.)).rounded(crate::ui::kit::corner(1.)).bg(theme.track)))
                     .into_any_element()
             })
             .collect();
@@ -963,7 +961,7 @@ pub(super) fn callout(
         .pl(px(12.))
         .pr(px(12.))
         .py(px(10.))
-        .rounded(px(10.))
+        .rounded(crate::ui::kit::corner(10.))
         .border_1()
         .border_color(theme.border_variant)
         .bg(theme.surface)
@@ -971,7 +969,7 @@ pub(super) fn callout(
             div()
                 .flex_none()
                 .size(px(28.))
-                .rounded(px(7.))
+                .rounded(crate::ui::kit::corner(7.))
                 .bg(color.opacity(0.16))
                 .flex()
                 .items_center()

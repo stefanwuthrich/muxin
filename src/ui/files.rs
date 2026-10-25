@@ -288,7 +288,7 @@ impl CopyDialog {
                     .gap(px(6.))
                     .h(px(24.))
                     .px(px(9.))
-                    .rounded(px(6.))
+                    .rounded(crate::ui::kit::corner(6.))
                     .border_1()
                     .cursor_pointer()
                     .text_size(px(12.))
@@ -318,29 +318,8 @@ impl CopyDialog {
             })
             .collect();
         let body: AnyElement = match &pane.listing {
-            Load::Loading => div()
-                .p(px(14.))
-                .flex()
-                .items_center()
-                .gap(px(8.))
-                .text_size(px(12.5))
-                .text_color(theme.text_muted)
-                .child(kit::spinner(
-                    SharedString::from(format!("cp-{tag}-spin")),
-                    12.,
-                    theme.text_muted,
-                ))
-                .child("Opening…")
-                .into_any_element(),
-            Load::Failed(e) => div()
-                .p(px(14.))
-                .flex()
-                .gap(px(8.))
-                .text_size(px(12.5))
-                .text_color(theme.text_muted)
-                .child(icon("circle-alert", 14., theme.warning))
-                .child(div().flex_1().min_w(px(0.)).child(e.clone()))
-                .into_any_element(),
+            Load::Loading => div().p(px(14.)).flex().items_center().gap(px(8.)).text_size(px(12.5)).text_color(theme.text_muted).child(kit::spinner(SharedString::from(format!("cp-{tag}-spin")), 12., theme.text_muted)).child("Opening…").into_any_element(),
+            Load::Failed(e) => div().p(px(14.)).flex().gap(px(8.)).text_size(px(12.5)).text_color(theme.text_muted).child(icon("circle-alert", 14., theme.warning)).child(div().flex_1().min_w(px(0.)).child(e.clone())).into_any_element(),
             Load::Ready(l) => {
                 let shown: Vec<&crate::fleet::files::FileEntry> = l
                     .entries
@@ -396,7 +375,7 @@ impl CopyDialog {
                     .h(px(300.))
                     .overflow_y_scroll()
                     .track_scroll(&pane.scroll)
-                    .rounded(px(8.))
+                    .rounded(crate::ui::kit::corner(8.))
                     .border_1()
                     .border_color(theme.border_variant)
                     .bg(theme.canvas)
@@ -444,7 +423,7 @@ impl CopyDialog {
                         .flex_none()
                         .items_center()
                         .justify_center()
-                        .rounded(px(4.))
+                        .rounded(crate::ui::kit::corner(4.))
                         .border_1()
                         .border_color(if picked { theme.accent } else { theme.border })
                         .bg(if picked { theme.accent } else { theme.canvas })
@@ -574,11 +553,11 @@ impl Render for CopyDialog {
             .flex_col()
             .gap(px(14.))
             .p(px(18.))
-            .rounded(px(10.))
+            .rounded(crate::ui::kit::corner(10.))
             .bg(theme.elevated)
             .border_1()
             .border_color(theme.border)
-            .shadow_lg()
+            .when(!crate::ui::kit::square(), |d| d.shadow_lg())
             .text_color(theme.text)
             .on_key_down(cx.listener(|_, e: &gpui::KeyDownEvent, _, cx| {
                 if e.keystroke.key == "escape" {

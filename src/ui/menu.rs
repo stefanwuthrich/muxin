@@ -20,6 +20,8 @@ pub enum MenuTarget {
     Session(String),
     /// The things to ask a session's agent (commit, open a pull request, ...).
     SessionActions(String),
+    /// The agents a session's work can be handed to.
+    Handoff(String),
     /// A GitHub repository, "owner/name".
     Repo(String),
     /// An issue or pull request.
@@ -96,7 +98,7 @@ enum Action {
     Favorite(String, bool),
     OpenUrl(String),
     CopyUrl(String),
-    ItemToAgent(String, u64, bool),
+    ItemToAgent(String, u64, super::github::Handoff),
     UseAccount(String, Option<String>),
     WorkspaceSession(String),
     DeleteWorkspace(String),
@@ -105,6 +107,10 @@ enum Action {
     RenameSession(String),
     /// One of the session actions (sessions::actions), for a session.
     SessionAction(String, &'static str),
+    /// A session's work, to this agent.
+    Handoff(String, &'static str),
+    /// A session's work, to another machine (the Move dialog).
+    MoveTo(String, String),
     /// Settings, where the actions' prompts are.
     EditPrompts,
     AddDisplay(String),
@@ -569,6 +575,39 @@ impl Root {
                 };
                 session_actions(x)
             }
+            MenuTarget::Handoff(id) => {
+                let Some(x) = s.sessions.iter().find(|x| &x.id == id) else { return Vec::new() };
+                // A box's image has every agent a box runs; a machine, the ones found on it.
+                let in_box = x.box_id.as_deref() == Some(x.name.as_str());
+                let installed = |a: &str| match in_box {
+                    true => crate::fleet::boxes::BOX_AGENTS.contains(&a),
+                    false => s.machines.iter().find(|m| m.id == x.machine_id).is_some_and(|m| m.agents.iter().any(|i| i == a)),
+                };
+                let mut items = vec![Item::Note(if in_box { "Another agent takes over in the box, with a note of the work so far".into() } else { "Another agent takes over here, with a note of the work so far. This session ends".into() })];
+                for a in AGENTS.iter().filter(|a| !a.command.is_empty() && a.id != x.agent && installed(a.id)) {
+                    items.push(Item::Action { label: format!("Hand off to {}", a.name), glyph: Glyph::Agent(a.id), action: Action::Handoff(id.clone(), a.id), danger: false });
+                }
+                // The same agent, fresh: for a conversation that's grown too long.
+                if let Some(a) = AGENTS.iter().find(|a| a.id == x.agent && !a.command.is_empty()) {
+                    items.push(Item::Separator);
+                    items.push(Item::Action { label: format!("A fresh {} session", a.name), glyph: Glyph::Agent(a.id), action: Action::Handoff(id.clone(), a.id), danger: false });
+                }
+                // The work to another machine (not a box's: it stays in its box).
+                let others: Vec<&crate::fleet::model::Machine> =
+                    s.machines.iter().filter(|m| m.id != x.machine_id && !m.platform.starts_with("windows") && !m.host.is_empty()).collect();
+                if !in_box && !others.is_empty() {
+                    items.push(Item::Separator);
+                    items.push(Item::Note("On another machine, with its work".into()));
+                    for m in others {
+                        let label = format!("Move to {}…", m.name);
+                        items.push(match m.is_down() {
+                            true => Item::Off { label, glyph: Glyph::Icon("server") },
+                            false => Item::Action { label, glyph: Glyph::Icon(if m.local { "laptop" } else { "server" }), action: Action::MoveTo(id.clone(), m.id.clone()), danger: false },
+                        });
+                    }
+                }
+                items
+            }
             MenuTarget::Session(id) => {
                 let Some(x) = s.sessions.iter().find(|x| &x.id == id) else {
                     return Vec::new();
@@ -599,11 +638,10 @@ impl Root {
                     items.push(act("Restart", "rotate-ccw", Action::Restart(id.clone())));
                 }
                 items.push(Item::Separator);
-                items.push(Item::Action {
-                    label: "End session…".into(),
-                    glyph: Glyph::Icon("power"),
-                    action: Action::End(id.clone()),
-                    danger: true,
+                // A box's agent: ending it pauses the box (see confirm_end_session).
+                items.push(match &x.box_id {
+                    Some(b) if *b == x.name => act("Pause box", "pause", Action::End(id.clone())),
+                    _ => Item::Action { label: "End session…".into(), glyph: Glyph::Icon("power"), action: Action::End(id.clone()), danger: true },
                 });
                 items
             }
@@ -799,24 +837,20 @@ impl Root {
                     ),
                 ]
             }
-            MenuTarget::Item {
-                repo,
-                number,
-                pull,
-                url,
-            } => {
-                let verb = if *pull { "Review" } else { "Fix" };
-                vec![
-                    act(
-                        &format!("{verb} with agent…"),
-                        "bot",
-                        Action::ItemToAgent(repo.clone(), *number, false),
-                    ),
-                    act(
-                        &format!("{verb} in a new workspace…"),
-                        "layers",
-                        Action::ItemToAgent(repo.clone(), *number, true),
-                    ),
+            MenuTarget::Item { repo, number, pull, url } => {
+                use super::github::Handoff;
+                let mut items = if *pull {
+                    vec![
+                        act("Review with agent…", "bot", Action::ItemToAgent(repo.clone(), *number, Handoff::Session)),
+                        act("Review in a new workspace…", "layers", Action::ItemToAgent(repo.clone(), *number, Handoff::Workspace)),
+                    ]
+                } else {
+                    vec![
+                        act("Work on it with an agent…", "bot", Action::ItemToAgent(repo.clone(), *number, Handoff::Session)),
+                        act("Hand off in a box…", "box", Action::ItemToAgent(repo.clone(), *number, Handoff::Box)),
+                    ]
+                };
+                items.extend([
                     Item::Separator,
                     act(
                         "Open on GitHub",
@@ -824,7 +858,8 @@ impl Root {
                         Action::OpenUrl(url.clone()),
                     ),
                     act("Copy link", "copy", Action::CopyUrl(url.clone())),
-                ]
+                ]);
+                items
             }
             MenuTarget::Workspace(id) => {
                 let Some(w) = s.workspaces.iter().find(|w| &w.id == id) else {
@@ -987,9 +1022,9 @@ impl Root {
                 self.show_rename(super::dialogs::RenameTarget::Session(id), window, cx)
             }
             Action::SessionAction(id, action) => self.run_session_action(&id, action, cx),
-            Action::EditPrompts => {
-                self.open_settings_tab(super::settings::SettingsTab::Prompts, window, cx)
-            }
+            Action::Handoff(id, agent) => self.handoff_session(&id, agent, None, false, window, cx),
+            Action::MoveTo(id, machine) => self.show_move_dialog(&id, machine, window, cx),
+            Action::EditPrompts => self.open_settings_tab(super::settings::SettingsTab::Prompts, window, cx),
             Action::CloudPower(id, on) => self.cloud_power(&id, on, cx),
             Action::MachinePower(id, on) => self.machine_power(&id, on, cx),
             Action::NewVm(id) => self.show_vm_dialog(Some(id), window, cx),
@@ -1053,9 +1088,7 @@ impl Root {
                 }
                 window.dispatch_action(Box::new(super::root::SignInGitHub), cx)
             }
-            Action::ItemToAgent(repo, number, workspace) => {
-                self.gh_item_to_agent(repo, number, workspace, window, cx)
-            }
+            Action::ItemToAgent(repo, number, how) => self.gh_item_to_agent(repo, number, how, window, cx),
             Action::OpenUrl(url) => cx.open_url(&url),
             Action::WorkspaceSession(id) => {
                 if let Some(w) = self
@@ -1181,7 +1214,7 @@ impl Root {
                         .h(px(28.))
                         .mx(px(4.))
                         .px(px(8.))
-                        .rounded(px(6.))
+                        .rounded(crate::ui::kit::corner(6.))
                         .cursor_pointer()
                         .hover(|st| st.bg(theme.element_hover))
                         .text_size(px(13.))
@@ -1201,11 +1234,11 @@ impl Root {
             .occlude()
             .w(px(width))
             .py(px(4.))
-            .rounded(px(9.))
+            .rounded(crate::ui::kit::corner(9.))
             .bg(theme.elevated)
             .border_1()
             .border_color(theme.border)
-            .shadow_lg()
+            .when(!crate::ui::kit::square(), |d| d.shadow_lg())
             .font_weight(FontWeight::NORMAL)
             .children(rows);
         Some(

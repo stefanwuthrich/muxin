@@ -694,18 +694,9 @@ impl Root {
             item("Copy files between machines…", "folder", None, Run::Do(Command::CopyFiles)),
             item("Go to Overview", "gauge", Some("overview"), Run::Go(Route::Overview)),
             item("Go to Jobs", "workflow", Some("jobs"), Run::Go(Route::Jobs)),
-            item(
-                "Go to Workspaces",
-                "layers",
-                Some("workspaces"),
-                Run::Go(Route::Workspaces),
-            ),
-            item(
-                "Go to GitHub",
-                "agent-github",
-                Some("github"),
-                Run::Go(Route::Github),
-            ),
+            item("Go to Workspaces", "layers", Some("workspaces"), Run::Go(Route::Workspaces)),
+            item("Go to Boxes", "box", Some("boxes"), Run::Go(Route::Boxes)),
+            item("Go to GitHub", "agent-github", Some("github"), Run::Go(Route::Github)),
             item("Go to Usage", "gauge", Some("usage"), Run::Go(Route::Usage)),
             item(
                 "Run a command on machines…",
@@ -848,7 +839,7 @@ impl Root {
                     }
                     Glyph::Swatch(bg, accent) => div()
                         .size(px(22.))
-                        .rounded(px(6.))
+                        .rounded(crate::ui::kit::corner(6.))
                         .border_1()
                         .border_color(theme.border)
                         .bg(gpui::rgb(bg))
@@ -881,7 +872,7 @@ impl Root {
                     .mx(px(ROW_INSET))
                     .px(px(ROW_PAD))
                     .when(item.indent, |d| d.pl(px(ROW_PAD + INDENT)))
-                    .rounded(px(8.))
+                    .rounded(crate::ui::kit::corner(8.))
                     .cursor_pointer()
                     .when(i == selected, |d| d.bg(theme.element_selected))
                     .when(i != selected, |d| d.hover(|st| st.bg(theme.ghost_hover)))
@@ -954,11 +945,11 @@ impl Root {
             .w(px(WIDTH))
             .flex()
             .flex_col()
-            .rounded(px(12.))
+            .rounded(crate::ui::kit::corner(12.))
             .bg(theme.elevated)
             .border_1()
             .border_color(theme.border)
-            .shadow_lg()
+            .when(!crate::ui::kit::square(), |d| d.shadow_lg())
             .font_weight(FontWeight::NORMAL)
             .child(
                 div()

@@ -37,6 +37,7 @@ actions!(
         ShowOverview,
         ShowJobs,
         ShowWorkspaces,
+        ShowBoxes,
         ShowGithub,
         ShowUsage,
         ShowRun,
@@ -166,6 +167,7 @@ pub fn menus() -> Vec<Menu> {
                 MenuItem::separator(),
                 MenuItem::action("Overview", ShowOverview),
                 MenuItem::action("Jobs", ShowJobs),
+                MenuItem::action("Boxes", ShowBoxes),
                 MenuItem::action("Workspaces", ShowWorkspaces),
                 MenuItem::action("GitHub", ShowGithub),
                 MenuItem::action("Usage", ShowUsage),
@@ -228,6 +230,8 @@ pub enum Route {
     Jobs,
     Workspaces,
     Workspace(String),
+    /// Tasks agents work on in containers of their own.
+    Boxes,
     /// What needs you on GitHub.
     Github,
     GithubRepo(String),
@@ -284,6 +288,8 @@ pub enum Modal {
     Cloud(Entity<super::cloud_dialog::CloudDialog>),
     Vm(Entity<super::vm_dialog::VmDialog>),
     Schedule(Entity<super::schedule_dialog::ScheduleDialog>),
+    NewBox(Entity<super::box_dialog::BoxDialog>),
+    Move(Entity<super::move_dialog::MoveDialog>),
     Rename(Entity<RenameDialog>),
     AddDisplay(Entity<AddDisplayDialog>),
     MonitorPassword(Entity<MonitorPasswordDialog>),
@@ -327,6 +333,8 @@ pub struct Root {
     forward: Vec<Route>,
     pub(super) filter: Entity<TextInput>,
     pub(super) collapsed: HashSet<String>,
+    /// Machines whose runners the sidebar lists one by one (their line clicked).
+    pub(super) runners_open: HashSet<String>,
     /// The Schedules page: every machine's schedules, the one open, and its runs.
     pub(super) schedules: super::github::Load<Vec<crate::fleet::schedules::MachineSchedules>>,
     pub(super) schedules_loading: bool,
@@ -428,6 +436,11 @@ pub struct Root {
     last_notice: Option<u64>,
     window_active: bool,
     pub(super) ws_ui: WorkspaceUi,
+    pub(super) box_ui: super::boxes::BoxUi,
+    /// Sessions being handed to another agent.
+    pub(super) handing_off: std::collections::HashSet<String>,
+    /// The demo's badge by the name (`badge:off` hides it, for screenshots).
+    demo_badge: bool,
     /// This computer's clipboard as last seen (see watch_clipboard).
     clipboard_seen: ClipboardSeen,
     /// Sessions this app shares, and the guests already announced.
@@ -594,6 +607,7 @@ impl Root {
             forward: Vec::new(),
             filter,
             collapsed: HashSet::new(),
+            runners_open: HashSet::new(),
             schedules: super::github::Load::Loading,
             schedules_loading: false,
             schedule_open: None,
@@ -663,6 +677,9 @@ impl Root {
             palette: None,
             window_active: false,
             ws_ui: WorkspaceUi::default(),
+            box_ui: super::boxes::BoxUi::default(),
+            handing_off: Default::default(),
+            demo_badge: true,
             clipboard_seen: ClipboardSeen { count: super::pasteboard_state().map(|s| s.0).unwrap_or(0), ..Default::default() },
             shares: Vec::new(),
             knocks_seen: HashSet::new(),
@@ -739,24 +756,28 @@ impl Root {
         for s in self.snapshot.sessions.iter().filter(|s| !snapshot.sessions.iter().any(|n| n.id == s.id)) {
             self.machine_git.remove(&s.machine_id);
         }
-        // Looking at a session that just closed: back to its machine.
+        // Looking at a session that just closed: back to its machine (a box's: the boxes).
         if let Route::Session(id) = self.route.clone() {
             let gone = !snapshot.sessions.iter().any(|s| s.id == id)
                 && self.snapshot.sessions.iter().any(|s| s.id == id);
             if gone {
                 // In a split: the pane next to it.
-                let next = self.panes.iter().find(|p| p.contains(&id)).and_then(|p| {
-                    p.ids()
-                        .into_iter()
-                        .find(|x| *x != id && snapshot.sessions.iter().any(|s| s.id == *x))
-                        .map(str::to_string)
-                });
-                match next {
-                    Some(next) => self.route = Route::Session(next),
-                    None => self.show(
-                        Route::Machine(id.split('/').next().unwrap_or_default().to_string()),
-                        cx,
-                    ),
+                let next = self.panes.iter().find(|p| p.contains(&id)).and_then(|p| p.ids().into_iter().find(|x| *x != id && snapshot.sessions.iter().any(|s| s.id == *x)).map(str::to_string));
+                let of_box = self.snapshot.sessions.iter().find(|s| s.id == id).and_then(|s| s.box_id.clone());
+                match (next, of_box) {
+                    (Some(next), _) => self.route = Route::Session(next),
+                    (None, Some(b)) => match snapshot.boxes.iter().find(|x| x.id == b) {
+                        // A shell in a box that's still running: back to its agent.
+                        Some(b) if b.state != "paused" && b.session_id.as_ref().is_some_and(|s| *s != id) => self.route = Route::Session(b.session_id.clone().unwrap_or_default()),
+                        // It paused (quiet, or its agent quit).
+                        Some(b) if b.state == "paused" => {
+                            let name = b.name.clone();
+                            self.show(Route::Boxes, cx);
+                            self.notify_user(format!("{name} paused. Resume it to pick up where it left off."), false, cx);
+                        }
+                        _ => self.show(Route::Boxes, cx),
+                    },
+                    (None, None) => self.show(Route::Machine(id.split('/').next().unwrap_or_default().to_string()), cx),
                 }
                 self.refocus = true;
             }
@@ -1016,6 +1037,8 @@ impl Root {
                 }
             }
             "workspaces" => self.navigate(Route::Workspaces, window, cx),
+            "boxes" => self.navigate(Route::Boxes, window, cx),
+            "new-box" => self.show_box_dialog(Default::default(), window, cx),
             "workspace" => self.navigate(Route::Workspace(arg.into()), window, cx),
             "new-workspace" => {
                 self.show_new_workspace(None, window, cx);
@@ -1047,16 +1070,16 @@ impl Root {
                     cx,
                 ),
             },
-            // An issue or pull request handed to an agent: "fix:owner/name#12", or in a new workspace "fix-ws:...".
-            "fix" | "fix-ws" => {
+            // An issue or pull request handed to an agent: "fix:owner/name#12", in a new
+            // workspace "fix-ws:...", or an issue in a box "fix-box:...".
+            "fix" | "fix-ws" | "fix-box" => {
                 if let Some((repo, n)) = arg.split_once('#') {
-                    self.gh_item_to_agent(
-                        repo.to_string(),
-                        n.parse().unwrap_or(0),
-                        kind == "fix-ws",
-                        window,
-                        cx,
-                    );
+                    let how = match kind {
+                        "fix-ws" => super::github::Handoff::Workspace,
+                        "fix-box" => super::github::Handoff::Box,
+                        _ => super::github::Handoff::Session,
+                    };
+                    self.gh_item_to_agent(repo.to_string(), n.parse().unwrap_or(0), how, window, cx);
                 }
             }
             "sidebar" if arg == "hidden" => {
@@ -1144,16 +1167,17 @@ impl Root {
                 cx,
             ),
             // A session's Actions menu, under its header's button (for screenshots).
-            "session-actions" => self.open_menu(
-                super::menu::MenuTarget::SessionActions(arg.into()),
-                gpui::point(px(1080.), px(120.)),
-                cx,
-            ),
-            "runner-menu" => self.open_menu(
-                super::menu::MenuTarget::Runner(arg.into()),
-                gpui::point(px(200.), px(560.)),
-                cx,
-            ),
+            "session-actions" => self.open_menu(super::menu::MenuTarget::SessionActions(arg.into()), gpui::point(px(1080.), px(120.)), cx),
+            // Without the demo's badge (for screenshots).
+            "badge" if arg == "off" => self.demo_badge = false,
+            // A session's Hand off menu, under its button; "move:<session>@<machine>" the Move dialog (for screenshots).
+            "handoff" => self.open_menu(super::menu::MenuTarget::Handoff(arg.into()), gpui::point(px(1190.), px(120.)), cx),
+            "move" => {
+                if let Some((session, machine)) = arg.split_once('@') {
+                    self.show_move_dialog(session, machine.to_string(), window, cx);
+                }
+            }
+            "runner-menu" => self.open_menu(super::menu::MenuTarget::Runner(arg.into()), gpui::point(px(200.), px(560.)), cx),
             "favorite" => self.set_favorite_machine(arg, true, cx),
             // The palette with this text typed: "palette:" (places), "palette:>set" (commands).
             "palette" => self.open_palette_with(arg, window, cx),
@@ -2397,6 +2421,8 @@ impl Root {
             Modal::Cloud(d) => d.read(cx).first_focus(cx),
             Modal::Vm(d) => d.read(cx).first_focus(cx),
             Modal::Schedule(d) => d.read(cx).first_focus(cx),
+            Modal::NewBox(d) => d.read(cx).first_focus(cx),
+            Modal::Move(d) => d.read(cx).first_focus(cx),
             Modal::Rename(d) => d.read(cx).first_focus(cx),
             Modal::AddDisplay(d) => d.read(cx).first_focus(cx),
             Modal::MonitorPassword(d) => d.read(cx).first_focus(cx),
@@ -2435,6 +2461,15 @@ impl Root {
             DialogEvent::ScheduleSaved => {
                 self.notify_user("Scheduled".to_string(), false, cx);
                 self.navigate(Route::Schedules, window, cx);
+            }
+            DialogEvent::BoxStarted(op) => {
+                self.show_operation(*op, cx);
+                self.navigate(Route::Boxes, window, cx);
+            }
+            DialogEvent::Handoff { session, agent, machine, keep } => {
+                if let Some(a) = crate::fleet::sessions::agent(agent) {
+                    self.handoff_session(session, a.id, machine.clone(), *keep, window, cx);
+                }
             }
             DialogEvent::CreateWorkspace(req, iso) => self.create_workspace(req.clone(), iso.clone(), window, cx),
             DialogEvent::StartInWorkspace(req, session) => self.start_in_workspace(req.clone(), session.clone(), window, cx),
@@ -2791,12 +2826,8 @@ impl Root {
             let sessions: Vec<&crate::fleet::sessions::SessionInfo> = s
                 .sessions
                 .iter()
-                .filter(|x| {
-                    x.machine_id == m.id
-                        && (machine_match
-                            || x.title.to_lowercase().contains(&q)
-                            || x.agent_name.to_lowercase().contains(&q))
-                })
+                // A box's agent shows under Boxes.
+                .filter(|x| x.machine_id == m.id && x.box_id.is_none() && (machine_match || x.title.to_lowercase().contains(&q) || x.agent_name.to_lowercase().contains(&q)))
                 .collect();
             if !machine_match && visible.is_empty() && sessions.is_empty() {
                 continue;
@@ -2812,59 +2843,21 @@ impl Root {
                 .flatten();
             let has_desktop = pinned_desktops.contains(&m.id);
             let has_forwards = forwards.iter().any(|f| f.machine_id == m.id);
-            let indent = TREE_INDENT * pos.depth as f32;
+            // A machine on another one is a row like the rest under it; its line starts under its icon.
+            let indent = if pos.depth > 0 { child_indent(pos.depth - 1) } else { 0. };
             self.sidebar_indent.set(indent);
-            let row = self
-                .machine_row(
-                    &theme,
-                    m,
-                    open,
-                    pos.has_kids
-                        || !sessions.is_empty()
-                        || has_desktop
-                        || has_forwards
-                        || self.logs.contains_key(&m.id)
-                        || self.service_pages.contains_key(&m.id),
-                    alert,
-                    selected_machine.as_deref() == Some(&m.id),
-                    hint,
-                    pos.depth > 0,
-                    cx,
-                )
-                .into_any_element();
-            let mut row = tree_row(
-                &theme,
-                row,
-                indent,
-                &pos.rails,
-                (pos.depth > 0).then(|| (pos.depth - 1, pos.last)),
-                NESTED_ROW_H,
-            );
-            // Machines run on it, shown below: its line starts under its tile.
-            if pos.has_kids && open {
-                let (h, tile) = if pos.depth > 0 {
-                    (NESTED_ROW_H, 26.)
-                } else {
-                    (44., 30.)
-                };
-                let from = (h + tile) / 2.;
-                row = div()
-                    .relative()
-                    .child(row)
-                    .child(
-                        div()
-                            .absolute()
-                            .left(px(tree_x(pos.depth)))
-                            .top(px(from))
-                            .bottom_0()
-                            .w(px(1.))
-                            .bg(tree_color(&theme)),
-                    )
-                    .into_any_element();
-            }
-            rows.push(row);
+            let has_rows = pos.has_kids || !sessions.is_empty() || has_desktop || has_forwards || self.logs.contains_key(&m.id) || self.service_pages.contains_key(&m.id);
+            let machine_row = if pos.depth > 0 {
+                self.nested_machine_row(&theme, m, open, has_rows || !runners.is_empty(), alert, selected_machine.as_deref() == Some(&m.id), hint, cx).into_any_element()
+            } else {
+                self.machine_row(&theme, m, open, has_rows, alert, selected_machine.as_deref() == Some(&m.id), hint, cx).into_any_element()
+            };
+            let machine_row = tree_row(&theme, machine_row, indent, &pos.rails, (pos.depth > 0).then(|| (pos.depth - 1, pos.last)), CHILD_H);
+            let at = rows.len();
+            rows.push(machine_row);
             // Its own rows: the lines of what's above go on past them.
             let first_child_row = rows.len();
+            self.sidebar_indent.set(child_indent(pos.depth));
             if open {
                 // Agent sessions first: they're what you come back to.
                 for x in sessions {
@@ -2953,25 +2946,31 @@ impl Root {
                         );
                     }
                 } else if !runners.is_empty() {
-                    let here = selected_runner
-                        .as_deref()
-                        .is_some_and(|r| r.starts_with(&format!("{}/", m.id)));
-                    rows.push(self.runners_row(&theme, m, here, cx).into_any_element());
+                    let listed = self.runners_open.contains(&m.id) && runners.len() > 1;
+                    let here = !listed && selected_runner.as_deref().is_some_and(|r| r.starts_with(&format!("{}/", m.id)));
+                    rows.push(self.runners_row(&theme, m, &runners, here, cx).into_any_element());
+                    if listed {
+                        for r in &runners {
+                            rows.push(self.runner_row(&theme, &s, r, selected_runner.as_deref() == Some(&r.id), cx).into_any_element());
+                        }
+                    }
                 }
             }
-            if pos.depth > 0 || (pos.has_kids && open) {
-                let mut rails = pos.rails.clone();
-                if pos.depth > 0 && !pos.last {
-                    rails.push(pos.depth - 1);
-                }
-                if pos.has_kids && open {
-                    rails.push(pos.depth);
-                }
-                let own: Vec<AnyElement> = rows.drain(first_child_row..).collect();
-                rows.extend(
-                    own.into_iter()
-                        .map(|r| tree_row(&theme, r, indent, &rails, None, 0.)),
-                );
+            // Each of its rows branches off its line, which goes on to the machines on it.
+            let own: Vec<AnyElement> = rows.drain(first_child_row..).collect();
+            let kids_below = pos.has_kids && open && q.is_empty();
+            let mut rails = pos.rails.clone();
+            if pos.depth > 0 && !pos.last {
+                rails.push(pos.depth - 1);
+            }
+            let n_own = own.len();
+            rows.extend(own.into_iter().enumerate().map(|(i, r)| tree_row(&theme, r, child_indent(pos.depth), &rails, Some((pos.depth, i + 1 == n_own && !kids_below)), CHILD_H)));
+            // The machine's line, from under its icon, when something hangs off it.
+            if n_own > 0 || kids_below {
+                let (h, icon) = if pos.depth > 0 { (CHILD_H, 16.) } else { (44., 30.) };
+                let from = (h + icon) / 2. + 2.;
+                let row = std::mem::replace(&mut rows[at], div().into_any_element());
+                rows[at] = div().relative().child(row).child(div().absolute().left(px(tree_x(pos.depth))).top(px(from)).bottom_0().w(px(1.)).bg(tree_color(&theme))).into_any_element();
             }
             self.sidebar_indent.set(0.);
         }
@@ -2984,10 +2983,8 @@ impl Root {
         if !unassigned.is_empty() {
             rows.push(self.section_header("On GitHub only", Some(unassigned.len()), None, cx).into_any_element());
             for r in unassigned {
-                rows.push(
-                    self.runner_row(&theme, &s, r, selected_runner.as_deref() == Some(&r.id), cx)
-                        .into_any_element(),
-                );
+                let row = self.runner_row(&theme, &s, r, selected_runner.as_deref() == Some(&r.id), cx).into_any_element();
+                rows.push(div().pl(px(22. - CHILD_PAD)).child(row).into_any_element());
             }
         }
         if s.machines.is_empty() {
@@ -3032,76 +3029,13 @@ impl Root {
                     .gap(px(2.))
                     .px(px(10.))
                     .pt(px(6.))
-                    .child(self.nav_item(
-                        "nav-overview",
-                        "gauge",
-                        kit::tiles::OVERVIEW,
-                        "Overview",
-                        None,
-                        Route::Overview,
-                        "overview",
-                        cx,
-                    ))
-                    .child(self.nav_item(
-                        "nav-jobs",
-                        "workflow",
-                        kit::tiles::JOBS,
-                        "Jobs",
-                        Some(s.counts.queued + s.counts.running),
-                        Route::Jobs,
-                        "jobs",
-                        cx,
-                    ))
-                    .child(self.nav_item(
-                        "nav-workspaces",
-                        "terminal",
-                        kit::tiles::WORKSPACES,
-                        "Workspaces",
-                        Some(s.workspaces.len()),
-                        Route::Workspaces,
-                        "workspaces",
-                        cx,
-                    ))
-                    .child(self.nav_item(
-                        "nav-github",
-                        "agent-github",
-                        super::github::TILE,
-                        "GitHub",
-                        self.gh.waiting(),
-                        Route::Github,
-                        "github",
-                        cx,
-                    ))
-                    .child(self.nav_item(
-                        "nav-usage",
-                        "gauge",
-                        kit::tiles::USAGE,
-                        "Usage",
-                        None,
-                        Route::Usage,
-                        "usage",
-                        cx,
-                    ))
-                    .child(self.nav_item(
-                        "nav-run",
-                        "zap",
-                        kit::tiles::RUN,
-                        "Run",
-                        None,
-                        Route::Run,
-                        "run",
-                        cx,
-                    ))
-                    .child(self.nav_item(
-                        "nav-schedules",
-                        "clock",
-                        super::schedules::TILE,
-                        "Schedules",
-                        None,
-                        Route::Schedules,
-                        "schedules",
-                        cx,
-                    ))
+                    .child(self.nav_item("nav-overview", "gauge", kit::tiles::OVERVIEW, "Overview", None, Route::Overview, "overview", cx))
+                    .child(self.nav_item("nav-jobs", "workflow", kit::tiles::JOBS, "Jobs", Some(s.counts.queued + s.counts.running), Route::Jobs, "jobs", cx))
+                    .child(self.nav_item("nav-boxes", "box", super::boxes::TILE, "Boxes", Some(s.boxes.iter().filter(|b| b.state != "paused").count()), Route::Boxes, "boxes", cx))
+                    .child(self.nav_item("nav-github", "agent-github", super::github::TILE, "GitHub", self.gh.waiting(), Route::Github, "github", cx))
+                    .child(self.nav_item("nav-usage", "gauge", kit::tiles::USAGE, "Usage", None, Route::Usage, "usage", cx))
+                    .child(self.nav_item("nav-run", "zap", kit::tiles::RUN, "Run", None, Route::Run, "run", cx))
+                    .child(self.nav_item("nav-schedules", "clock", super::schedules::TILE, "Schedules", None, Route::Schedules, "schedules", cx))
                     .child(self.activity_nav(&theme, running_ops, cx)),
             )
             .child(
@@ -3130,7 +3064,7 @@ impl Root {
 
     fn brand(&self, theme: &Theme, s: &Snapshot, cx: &mut Context<Self>) -> impl IntoElement {
         // GPUI 0.2 only ellipsizes text whose width is known before layout.
-        let text_w = self.sidebar_width - 74. - if s.demo { 48. } else { 0. };
+        let text_w = self.sidebar_width - 74. - if s.demo && self.demo_badge { 48. } else { 0. };
         div()
             .id("brand")
             .flex()
@@ -3153,10 +3087,7 @@ impl Root {
                         .child("Muxin"),
                 ),
             )
-            .when(s.demo, |d| {
-                d.child(div().flex_1())
-                    .child(kit::pill("demo", theme.warning))
-            })
+            .when(s.demo && self.demo_badge, |d| d.child(div().flex_1()).child(kit::pill("demo", theme.warning)))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3179,11 +3110,10 @@ impl Root {
             .then(|| super::shortcuts::label_for(cx, shortcut))
             .filter(|k| !k.is_empty());
         let count = count.filter(|_| keys.is_none());
-        // A workspace page keeps "Workspaces" highlighted.
+        // Agents' workspaces are listed on the Boxes page, so their pages keep "Boxes" highlighted.
         let active = self.route == route
-            || (route == Route::Workspaces && matches!(self.route, Route::Workspace(_)))
-            || (route == Route::Github
-                && matches!(self.route, Route::GithubRepo(_) | Route::GithubItem(..)));
+            || (route == Route::Boxes && matches!(self.route, Route::Workspaces | Route::Workspace(_)))
+            || (route == Route::Github && matches!(self.route, Route::GithubRepo(_) | Route::GithubItem(..)));
         div()
             .id(id)
             .flex()
@@ -3191,7 +3121,7 @@ impl Root {
             .gap(px(10.))
             .h(px(30.))
             .px(px(10.))
-            .rounded(px(8.))
+            .rounded(crate::ui::kit::corner(8.))
             .cursor_pointer()
             .text_size(px(13.))
             .text_color(if active { theme.text } else { theme.text_muted })
@@ -3233,7 +3163,7 @@ impl Root {
             .gap(px(10.))
             .h(px(30.))
             .px(px(10.))
-            .rounded(px(8.))
+            .rounded(crate::ui::kit::corner(8.))
             .cursor_pointer()
             .text_size(px(13.))
             .text_color(if open { theme.text } else { theme.text_muted })
@@ -3270,9 +3200,11 @@ impl Root {
             .text_size(px(11.5))
             .font_weight(FontWeight::MEDIUM)
             .text_color(theme.text_placeholder)
+            // A TUI look: "── Machines 4 ─────── +".
+            .when(kit::square(), |d| d.child("──"))
             .child(title)
             .children(count.map(|n| div().font_family(mono_font()).child(n.to_string())))
-            .child(div().flex_1())
+            .child(div().flex_1().when(kit::square(), |d| d.h(px(1.)).mx(px(4.)).bg(theme.border)))
             .children(add.map(|add| match add {
                 SectionAdd::Machine => Button::icon_only("sidebar-add-machine", "plus")
                     .tooltip(tip("Add machine", &super::shortcuts::label_for(cx, "add-machine")))
@@ -3284,6 +3216,145 @@ impl Root {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// A machine that runs on another one (a VM, a container), under it: a row
+    /// like the others there, with its status on its icon and what it is (or
+    /// why it's down) on the right. Its own rows hang off it like any machine's.
+    #[allow(clippy::too_many_arguments)]
+    fn nested_machine_row(
+        &self,
+        theme: &Theme,
+        m: &Machine,
+        open: bool,
+        has_children: bool,
+        alert: Option<(String, Option<i32>)>,
+        selected: bool,
+        hint: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let (id, toggle_id) = (m.id.clone(), m.id.clone());
+        let (from, to) = format::machine_tile(m);
+        let down = m.status != "online";
+        let meta = if down {
+            format::machine_subtitle_in(m, true).0
+        } else {
+            match m.parent.as_ref().map(|p| p.relation.as_str()) {
+                Some("vm") => "VM".to_string(),
+                Some("container") => "Container".to_string(),
+                _ => String::new(),
+            }
+        };
+        let favorite = Self::is_favorite(cx, &m.id);
+        div()
+            .id(SharedString::from(format!("side-m-{}", m.id)))
+            .group("nested-row")
+            .when(!m.host.is_empty(), |d| {
+                let (mid, accent) = (m.id.clone(), theme.accent);
+                d.drag_over::<gpui::ExternalPaths>(move |st, _, _, _| st.bg(accent.opacity(0.18)))
+                    .on_drop(cx.listener(move |this, paths: &gpui::ExternalPaths, window, cx| {
+                        this.copy_dropped(&mid, paths.paths(), window, cx)
+                    }))
+            })
+            .relative()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .h(px(CHILD_H))
+            .mx(px(10.))
+            .pl(px(CHILD_PAD))
+            .pr(px(8.))
+            .rounded(crate::ui::kit::corner(7.))
+            .cursor_pointer()
+            .when(selected, |d| d.bg(theme.element_selected))
+            .when(!selected, |d| d.hover(|st| st.bg(theme.ghost_hover)))
+            .child(
+                div()
+                    .relative()
+                    .flex_none()
+                    .child(kit::tile(format::machine_icon(m), from, to, 16.))
+                    .child(
+                        div()
+                            .absolute()
+                            .right(px(-3.))
+                            .bottom(px(-3.))
+                            .size(px(9.))
+                            .rounded_full()
+                            .bg(theme.sidebar)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(if m.checking {
+                                spinner(
+                                    SharedString::from(format!("side-spin-{}", m.id)),
+                                    8.,
+                                    theme.text_muted,
+                                )
+                                .into_any_element()
+                            } else {
+                                kit::dot(theme.machine_status(m), 6.).into_any_element()
+                            }),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_size(px(12.5))
+                    .text_color(theme.text)
+                    .child(m.name.clone()),
+            )
+            .children(alert.map(|(kind, code)| super::sessions::attention_dot(theme, &kind, code)))
+            .when(favorite, |d| d.child(icon("star-filled", 11., theme.warning)))
+            .children(hint.clone().map(|k| kit::kbd(theme, k)))
+            .when(hint.is_none() && !meta.is_empty(), |d| {
+                d.child(
+                    div()
+                        .flex_none()
+                        .text_size(px(11.))
+                        .text_color(theme.text_placeholder)
+                        .when(has_children, |d| d.group_hover("nested-row", |st| st.invisible()))
+                        .child(meta),
+                )
+            })
+            .when(has_children && hint.is_none(), |d| {
+                d.child(
+                    div()
+                        .id(SharedString::from(format!("side-t-{}", m.id)))
+                        .absolute()
+                        .right(px(8.))
+                        .invisible()
+                        .group_hover("nested-row", |st| st.visible())
+                        .child(icon(
+                            if open {
+                                "chevron-down"
+                            } else {
+                                "chevron-right"
+                            },
+                            12.,
+                            theme.text_muted,
+                        ))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            if !this.collapsed.remove(&toggle_id) {
+                                this.collapsed.insert(toggle_id.clone());
+                            }
+                            cx.notify()
+                        })),
+                )
+            })
+            .on_mouse_down(MouseButton::Right, {
+                let mid = m.id.clone();
+                super::menu::on_right_click(
+                    move || super::menu::MenuTarget::Machine(mid.clone()),
+                    cx,
+                )
+            })
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.navigate(Route::Machine(id.clone()), window, cx)
+            }))
+    }
+
     fn machine_row(
         &self,
         theme: &Theme,
@@ -3293,7 +3364,6 @@ impl Root {
         alert: Option<(String, Option<i32>)>,
         selected: bool,
         hint: Option<String>,
-        nested: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let id = m.id.clone();
@@ -3301,8 +3371,8 @@ impl Root {
         // The shortcut takes the place of the toggle.
         let has_children = hint.is_none() && (has_sessions || !m.runner_ids.is_empty());
         let (tile_from, tile_to) = format::machine_tile(m);
-        let (subtitle, tone) = format::machine_subtitle_in(m, nested);
-        let tile = if nested { 26. } else { 30. };
+        let (subtitle, tone) = format::machine_subtitle_in(m, false);
+        let tile = 30.;
         // The text column gets an explicit width: GPUI 0.2 only ellipsizes text
         // whose width is known before layout. Row chrome: margins, padding, tile, gaps.
         let favorite = Self::is_favorite(cx, &m.id);
@@ -3331,10 +3401,10 @@ impl Root {
             .flex()
             .items_center()
             .gap(px(10.))
-            .h(px(if nested { NESTED_ROW_H } else { 44. }))
+            .h(px(44.))
             .mx(px(10.))
             .px(px(8.))
-            .rounded(px(9.))
+            .rounded(crate::ui::kit::corner(9.))
             .cursor_pointer()
             .when(selected, |d| d.bg(theme.element_selected))
             .when(!selected, |d| d.hover(|st| st.bg(theme.ghost_hover)))
@@ -3454,15 +3524,19 @@ impl Root {
             }))
     }
 
-    /// A machine's runners as one line ("3 runners · 2 busy"); opens the machine.
+    /// A machine's runners as one line ("3 runners · 2 busy"). A click opens
+    /// the runner when there's one, else lists them below it (or folds them).
     fn runners_row(
         &self,
         theme: &Theme,
         m: &Machine,
+        runners: &[&Runner],
         selected: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let id = m.id.clone();
+        let only = (runners.len() == 1).then(|| runners[0].id.clone());
+        let open = runners.len() > 1 && self.runners_open.contains(&m.id);
         let sum = &m.summary;
         let label = if sum.total == 1 {
             "1 runner".to_string()
@@ -3484,33 +3558,24 @@ impl Root {
             .gap(px(8.))
             .h(px(26.))
             .mx(px(10.))
-            .pl(px(22.))
+            .pl(px(CHILD_PAD))
             .pr(px(8.))
-            .rounded(px(7.))
+            .rounded(crate::ui::kit::corner(7.))
             .cursor_pointer()
             .when(selected, |d| d.bg(theme.element_selected))
             .when(!selected, |d| d.hover(|st| st.bg(theme.ghost_hover)))
             .child(kit::tile("workflow", from, to, 16.))
-            .child(
-                div()
-                    .flex_1()
-                    .text_size(px(12.5))
-                    .text_color(if selected {
-                        theme.text
-                    } else {
-                        theme.text_muted
-                    })
-                    .child(label),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .text_size(px(11.))
-                    .text_color(color)
-                    .child(state),
-            )
-            .on_click(cx.listener(move |this, _, window, cx| {
-                this.navigate(Route::Machine(id.clone()), window, cx)
+            .child(div().flex_1().text_size(px(12.5)).text_color(if selected { theme.text } else { theme.text_muted }).child(label))
+            .child(div().flex_none().text_size(px(11.)).text_color(color).child(state))
+            .when(only.is_none(), |d| d.child(icon(if open { "chevron-down" } else { "chevron-right" }, 12., theme.text_placeholder)))
+            .on_click(cx.listener(move |this, _, window, cx| match &only {
+                Some(r) => this.navigate(Route::Runner(r.clone()), window, cx),
+                None => {
+                    if !this.runners_open.remove(&id) {
+                        this.runners_open.insert(id.clone());
+                    }
+                    cx.notify()
+                }
             }))
     }
 
@@ -3544,9 +3609,9 @@ impl Root {
             .gap(px(8.))
             .h(px(26.))
             .mx(px(10.))
-            .pl(px(22.))
+            .pl(px(CHILD_PAD))
             .pr(px(8.))
-            .rounded(px(7.))
+            .rounded(crate::ui::kit::corner(7.))
             .cursor_pointer()
             .when(selected, |d| d.bg(theme.element_selected))
             .when(!selected, |d| d.hover(|st| st.bg(theme.ghost_hover)))
@@ -3825,100 +3890,62 @@ impl Root {
         };
         // Outer and inner padding, border, dot and gap.
         let text_w = self.sidebar_width - 60.;
-        div()
-            .flex_none()
-            .p(px(10.))
-            .border_t_1()
-            .border_color(theme.border_variant)
-            .child(
-                div()
-                    .id("connection")
-                    .flex()
-                    .items_start()
-                    .gap(px(10.))
-                    .px(px(10.))
-                    .py(px(9.))
-                    .rounded(px(10.))
-                    .border_1()
-                    .border_color(theme.border_variant)
-                    .bg(theme.surface)
-                    .cursor_pointer()
-                    .hover(|st| st.border_color(theme.border))
-                    .child(div().pt(px(4.)).child(kit::dot(color, 8.)))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .flex_1()
-                            .min_w(px(0.))
-                            .gap(px(2.))
-                            .child(
-                                div()
-                                    .w(px(text_w))
-                                    .truncate()
-                                    .text_size(px(12.5))
-                                    .text_color(theme.text)
-                                    .child(title),
-                            )
-                            .child(
-                                div()
-                                    .w(px(text_w))
-                                    .truncate()
-                                    .text_size(px(11.))
-                                    .text_color(theme.text_placeholder)
-                                    .child(detail),
-                            )
-                            .children(progress.map(|p| {
-                                div()
-                                    .w(px(text_w))
-                                    .pt(px(3.))
-                                    .child(super::activity::progress_bar(theme, &p))
-                            })),
-                    )
-                    .on_click(cx.listener(move |this, _, window, cx| match &click {
-                        Click::Op(id) => this.show_operation(*id, cx),
-                        Click::Session(id) => this.navigate(Route::Session(id.clone()), window, cx),
-                        Click::Settings => this.navigate(Route::Settings, window, cx),
-                        Click::Check => this.engine.trigger_check(None),
-                    })),
-            )
+        div().flex_none().p(px(10.)).border_t_1().border_color(theme.border_variant).child(
+            div()
+                .id("connection")
+                .flex()
+                .items_start()
+                .gap(px(10.))
+                .px(px(10.))
+                .py(px(9.))
+                .rounded(crate::ui::kit::corner(10.))
+                .border_1()
+                .border_color(theme.border_variant)
+                .bg(theme.surface)
+                .cursor_pointer()
+                .hover(|st| st.border_color(theme.border))
+                .child(div().pt(px(4.)).child(kit::dot(color, 8.)))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .gap(px(2.))
+                        .child(div().w(px(text_w)).truncate().text_size(px(12.5)).text_color(theme.text).child(title))
+                        .child(div().w(px(text_w)).truncate().text_size(px(11.)).text_color(theme.text_placeholder).child(detail))
+                        .children(progress.map(|p| div().w(px(text_w)).pt(px(3.)).child(super::activity::progress_bar(theme, &p)))),
+                )
+                .on_click(cx.listener(move |this, _, window, cx| match &click {
+                    Click::Op(id) => this.show_operation(*id, cx),
+                    Click::Session(id) => this.navigate(Route::Session(id.clone()), window, cx),
+                    Click::Settings => this.navigate(Route::Settings, window, cx),
+                    Click::Check => this.engine.trigger_check(None),
+                })),
+        )
     }
 
     /// Settings and About, with the version, at the bottom of the sidebar.
     fn sidebar_footer(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        let footer_button =
-            |id: &'static str,
-             icon_name: &'static str,
-             label: &'static str,
-             route: Route,
-             cx: &mut Context<Self>| {
-                let active = self.route == route;
-                div()
-                    .id(id)
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .h(px(26.))
-                    .px(px(8.))
-                    .rounded(px(7.))
-                    .cursor_pointer()
-                    .text_size(px(12.5))
-                    .text_color(if active { theme.text } else { theme.text_muted })
-                    .when(active, |d| d.bg(theme.element_selected))
-                    .when(!active, |d| {
-                        d.hover(|st| st.bg(theme.ghost_hover).text_color(theme.text))
-                    })
-                    .child(kit::color_icon(
-                        theme,
-                        icon_name,
-                        13.,
-                        theme.text_placeholder,
-                    ))
-                    .child(label)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.navigate(route.clone(), window, cx)
-                    }))
-            };
+        let footer_button = |id: &'static str, icon_name: &'static str, label: &'static str, route: Route, cx: &mut Context<Self>| {
+            let active = self.route == route;
+            div()
+                .id(id)
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .h(px(26.))
+                .px(px(8.))
+                .rounded(crate::ui::kit::corner(7.))
+                .cursor_pointer()
+                .text_size(px(12.5))
+                .text_color(if active { theme.text } else { theme.text_muted })
+                .when(active, |d| d.bg(theme.element_selected))
+                .when(!active, |d| d.hover(|st| st.bg(theme.ghost_hover).text_color(theme.text)))
+                .child(kit::color_icon(theme, icon_name, 13., if active { theme.text } else { theme.text_placeholder }))
+                .child(label)
+                .on_click(cx.listener(move |this, _, window, cx| this.navigate(route.clone(), window, cx)))
+        };
         let footer = div()
             .flex()
             .items_center()
@@ -3948,7 +3975,7 @@ impl Root {
                     .gap(px(5.))
                     .px(px(6.))
                     .py(px(3.))
-                    .rounded(px(5.))
+                    .rounded(crate::ui::kit::corner(5.))
                     .cursor_pointer()
                     .text_size(px(11.5))
                     .text_color(theme.text_accent)
@@ -4112,11 +4139,11 @@ impl Root {
                         .gap(px(10.))
                         .px(px(14.))
                         .py(px(11.))
-                        .rounded(px(10.))
+                        .rounded(crate::ui::kit::corner(10.))
                         .bg(theme.elevated)
                         .border_1()
                         .border_color(theme.border)
-                        .shadow_lg()
+                        .when(!crate::ui::kit::square(), |d| d.shadow_lg())
                         .text_size(px(12.5))
                         .text_color(theme.text)
                         .child(
@@ -4303,9 +4330,9 @@ impl Root {
             .gap(px(8.))
             .h(px(26.))
             .mx(px(10.))
-            .pl(px(22.))
+            .pl(px(CHILD_PAD))
             .pr(px(8.))
-            .rounded(px(7.))
+            .rounded(crate::ui::kit::corner(7.))
             .cursor_pointer()
             .when(selected, |d| d.bg(theme.element_selected))
             .when(!selected, |d| d.hover(|st| st.bg(theme.ghost_hover)))
@@ -4382,9 +4409,9 @@ impl Root {
             .gap(px(8.))
             .h(px(26.))
             .mx(px(10.))
-            .pl(px(22.))
+            .pl(px(CHILD_PAD))
             .pr(px(8.))
-            .rounded(px(7.))
+            .rounded(crate::ui::kit::corner(7.))
             .cursor_pointer()
             .when(selected, |d| d.bg(theme.element_selected))
             .when(!selected, |d| d.hover(|st| st.bg(theme.ghost_hover)))
@@ -4505,9 +4532,9 @@ impl Root {
             .gap(px(8.))
             .h(px(26.))
             .mx(px(10.))
-            .pl(px(22.))
+            .pl(px(CHILD_PAD))
             .pr(px(8.))
-            .rounded(px(7.))
+            .rounded(crate::ui::kit::corner(7.))
             .cursor_pointer()
             .when(selected, |el| el.bg(theme.element_selected))
             .when(!selected, |el| el.hover(|st| st.bg(theme.ghost_hover)))
@@ -4645,6 +4672,7 @@ impl Root {
             Route::Overview => self.render_overview(window, cx).into_any_element(),
             Route::Jobs => self.render_jobs(cx).into_any_element(),
             Route::Workspaces => self.render_workspaces(cx).into_any_element(),
+            Route::Boxes => self.render_boxes(cx).into_any_element(),
             Route::Workspace(id) => self.render_workspace(&id, cx),
             Route::Activity => self.render_activity(cx).into_any_element(),
             Route::Usage => self.render_usage(cx),
@@ -4734,6 +4762,8 @@ impl Render for Root {
             Modal::Cloud(d) => d.clone().into_any_element(),
             Modal::Vm(d) => d.clone().into_any_element(),
             Modal::Schedule(d) => d.clone().into_any_element(),
+            Modal::NewBox(d) => d.clone().into_any_element(),
+            Modal::Move(d) => d.clone().into_any_element(),
             Modal::Rename(d) => d.clone().into_any_element(),
             Modal::AddDisplay(d) => d.clone().into_any_element(),
             Modal::MonitorPassword(d) => d.clone().into_any_element(),
@@ -4754,6 +4784,7 @@ impl Render for Root {
             .on_action(cx.listener(Self::show_overview))
             .on_action(cx.listener(Self::show_jobs))
             .on_action(cx.listener(|this, _: &ShowWorkspaces, window, cx| this.navigate(Route::Workspaces, window, cx)))
+            .on_action(cx.listener(|this, _: &ShowBoxes, window, cx| this.navigate(Route::Boxes, window, cx)))
             .on_action(cx.listener(|this, _: &ShowGithub, window, cx| this.navigate(Route::Github, window, cx)))
             .on_action(cx.listener(|this, _: &ShowUsage, window, cx| this.navigate(Route::Usage, window, cx)))
             .on_action(cx.listener(|this, _: &ShowRun, window, cx| this.navigate(Route::Run, window, cx)))
@@ -4839,21 +4870,10 @@ impl Render for Root {
                         .flex()
                         .justify_center()
                         .pt(px(modal_top))
+                        // Blocks the page; a click beside the dialog doesn't close it
+                        // (and lose what was typed): Cancel, Escape or finishing it do.
                         .occlude()
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.modal = None;
-                            window.focus(&this.focus);
-                            cx.notify()
-                        }))
-                        .child(
-                            div()
-                                .id("modal")
-                                .max_h(px(modal_max_height))
-                                .overflow_y_scroll()
-                                .rounded(px(10.))
-                                .on_click(|_, _, cx| cx.stop_propagation())
-                                .child(modal),
-                        ),
+                        .child(div().id("modal").max_h(px(modal_max_height)).overflow_y_scroll().rounded(crate::ui::kit::corner(10.)).child(modal)),
                 )
             })
             // Over everything, dialogs too: the edges to resize the window from.
@@ -4900,65 +4920,28 @@ fn route_title(s: &Snapshot, route: &Route) -> (Option<&'static str>, String) {
     match route {
         Route::Overview => (None, "Overview".into()),
         Route::Jobs => (None, "Jobs".into()),
-        Route::Workspaces => (None, "Workspaces".into()),
+        Route::Workspaces => (Some("Boxes"), "Agents' workspaces".into()),
+        Route::Boxes => (None, "Boxes".into()),
         Route::Activity => (None, "Activity".into()),
         Route::Usage => (None, "Usage".into()),
         Route::Run => (None, "Run".into()),
         Route::Schedules => (None, "Schedules".into()),
-        Route::Workspace(id) => (
-            Some("Workspaces"),
-            s.workspaces
-                .iter()
-                .find(|w| &w.id == id)
-                .map(|w| w.name.clone())
-                .unwrap_or_else(|| id.clone()),
-        ),
+        Route::Workspace(id) => (Some("Agents' workspaces"), s.workspaces.iter().find(|w| &w.id == id).map(|w| w.name.clone()).unwrap_or_else(|| id.clone())),
         Route::Settings => (None, "Settings".into()),
         Route::About => (None, "About".into()),
         Route::Shared(_) => (Some("Shared with you"), "Session".into()),
         Route::Github => (None, "GitHub".into()),
         Route::GithubRepo(name) => (Some("GitHub"), name.clone()),
         Route::GithubItem(repo, n) => (Some("GitHub"), format!("{repo} #{n}")),
-        Route::Machine(id) => (
-            Some("Machines"),
-            s.machines
-                .iter()
-                .find(|m| &m.id == id)
-                .map(|m| m.name.clone())
-                .unwrap_or_else(|| id.clone()),
-        ),
-        Route::Session(id) => (
-            Some("Sessions"),
-            s.sessions
-                .iter()
-                .find(|x| &x.id == id)
-                .map(|x| x.title.clone())
-                .unwrap_or_else(|| id.clone()),
-        ),
-        Route::Desktop(id) => (
-            Some("Desktop"),
-            s.machines
-                .iter()
-                .find(|m| &m.id == id)
-                .map(|m| m.name.clone())
-                .unwrap_or_else(|| id.clone()),
-        ),
-        Route::Logs(id) => (
-            Some("Logs"),
-            s.machines
-                .iter()
-                .find(|m| &m.id == id)
-                .map(|m| m.name.clone())
-                .unwrap_or_else(|| id.clone()),
-        ),
-        Route::Services(id) => (
-            Some("Services"),
-            s.machines
-                .iter()
-                .find(|m| &m.id == id)
-                .map(|m| m.name.clone())
-                .unwrap_or_else(|| id.clone()),
-        ),
+        Route::Machine(id) => (Some("Machines"), s.machines.iter().find(|m| &m.id == id).map(|m| m.name.clone()).unwrap_or_else(|| id.clone())),
+        Route::Session(id) => {
+            let x = s.sessions.iter().find(|x| &x.id == id);
+            let section = if x.is_some_and(|x| x.box_id.is_some()) { "Boxes" } else { "Sessions" };
+            (Some(section), x.map(|x| x.title.clone()).unwrap_or_else(|| id.clone()))
+        }
+        Route::Desktop(id) => (Some("Desktop"), s.machines.iter().find(|m| &m.id == id).map(|m| m.name.clone()).unwrap_or_else(|| id.clone())),
+        Route::Logs(id) => (Some("Logs"), s.machines.iter().find(|m| &m.id == id).map(|m| m.name.clone()).unwrap_or_else(|| id.clone())),
+        Route::Services(id) => (Some("Services"), s.machines.iter().find(|m| &m.id == id).map(|m| m.name.clone()).unwrap_or_else(|| id.clone())),
         Route::Runner(id) => {
             let r = s.runners.iter().find(|r| &r.id == id);
             let machine = r
@@ -4994,19 +4977,33 @@ fn tip(text: &str, keys: &str) -> String {
     }
 }
 
-/// How far each level of the sidebar's tree is indented, and how tall a
-/// machine row under another one is.
-const TREE_INDENT: f32 = 18.;
-const NESTED_ROW_H: f32 = 40.;
+/// The sidebar's tree: each machine's line runs down from the middle of its
+/// icon, and every row under it (its sessions, desktop, runners, the machines
+/// on it) branches off that line. A top-level machine's icon is centred at
+/// `RAIL_0` (margin 10 + padding 8 + half its 30px tile); the rows under it
+/// start `BRANCH` past its line, so their icons (16px, after `CHILD_PAD`)
+/// centre one `LEVEL` further right, where their own lines run.
+const RAIL_0: f32 = 33.;
+const LEVEL: f32 = 26.;
+const BRANCH: f32 = 12.;
+/// The left padding of a row under a machine, and its height.
+pub(super) const CHILD_PAD: f32 = 6.;
+const CHILD_H: f32 = 26.;
 
 /// The tree's lines: quieter than text, plainer than a border.
 fn tree_color(theme: &Theme) -> gpui::Hsla {
     theme.text_placeholder.opacity(0.45)
 }
 
-/// Where the tree's line for a level runs: under the left of that level's tiles.
+/// Where the line of a machine at `level` runs: down the middle of its icon.
 fn tree_x(level: usize) -> f32 {
-    23. + TREE_INDENT * level as f32
+    RAIL_0 + LEVEL * level as f32
+}
+
+/// How far the rows under a machine at `level` are moved right (their own
+/// margin is 10), so they start just past its line's branches.
+fn child_indent(level: usize) -> f32 {
+    tree_x(level) + BRANCH - 10.
 }
 
 /// Where a machine sits in the sidebar's tree.
@@ -5058,16 +5055,9 @@ fn sidebar_tree(s: &Snapshot, order: &[&Machine]) -> HashMap<String, TreePos> {
 }
 
 /// A sidebar row in the tree: indented, with the lines of the machines
-/// above passing by on its left, and (for a machine under another) the
-/// elbow from its host's line into it.
-fn tree_row(
-    theme: &Theme,
-    row: AnyElement,
-    indent: f32,
-    rails: &[usize],
-    elbow: Option<(usize, bool)>,
-    height: f32,
-) -> AnyElement {
+/// above passing by on its left, and the branch from its machine's line
+/// into it (`elbow`: that line's level, and whether it's the last row there).
+fn tree_row(theme: &Theme, row: AnyElement, indent: f32, rails: &[usize], elbow: Option<(usize, bool)>, height: f32) -> AnyElement {
     if indent == 0. && rails.is_empty() && elbow.is_none() {
         return row;
     }
@@ -5094,11 +5084,11 @@ fn tree_row(
                 .absolute()
                 .top_0()
                 .left(px(x(level)))
-                .w(px(TREE_INDENT - 6.))
+                .w(px(BRANCH - 2.))
                 .h(px(mid))
                 .border_l_1()
                 .border_b_1()
-                .rounded_bl(px(6.))
+                .rounded_bl(crate::ui::kit::corner(5.))
                 .border_color(color)
                 // Not the last: the line goes on down past it.
                 .when(!last, |d| {

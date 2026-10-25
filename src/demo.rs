@@ -1257,6 +1257,7 @@ impl World {
             attach_command: format!("ssh -t {machine_id} ~/.muxen/bin/muxen-agent attach {name}"),
             persistent: true,
             git: None,
+            box_id: None,
         };
         let (agents, sessions): (Vec<&str>, Vec<SessionInfo>) = match machine_id {
             "forge" => (
@@ -1299,20 +1300,40 @@ impl World {
             ),
             "beacon" => (
                 vec!["claude", "opencode"],
-                vec![session(
-                    "opencode-c40d",
-                    "opencode",
-                    "OpenCode",
-                    "OpenCode · api",
-                    "/home/ci/api",
-                    true,
-                    5,
-                    0,
-                )],
+                vec![
+                    session("opencode-c40d", "opencode", "OpenCode", "OpenCode · api", "/home/ci/api", true, 5, 0),
+                    SessionInfo { box_id: Some("box-7k2m9q".into()), ..session("box-7k2m9q", "claude", "Claude Code", "Add rate limit headers", "/home/ci/muxen/boxes/box-7k2m9q/repo", true, 9, 0) },
+                ],
             ),
             "pebble" | "dev-1" | "sandbox" => (vec!["claude", "codex"], Vec::new()),
             "win-test" => (vec!["claude"], Vec::new()),
             _ => (Vec::new(), Vec::new()),
+        };
+        // Two boxes on the Linux box: one working, one paused with its pull request open.
+        let boxes = match machine_id {
+            "beacon" => {
+                let made = |id: &str, name: &str, branch: &str, agent: &str, agent_name: &str, state: &str, mins: i64, task: &str| crate::fleet::boxes::BoxInfo {
+                    id: id.into(),
+                    machine_id: machine_id.into(),
+                    name: name.into(),
+                    repo: "acme/api".into(),
+                    branch: branch.into(),
+                    agent: agent.into(),
+                    agent_name: agent_name.into(),
+                    state: state.into(),
+                    task: task.into(),
+                    path: format!("/home/ci/muxen/boxes/{id}/repo"),
+                    idle_minutes: crate::fleet::boxes::IDLE_MINUTES,
+                    created_at: Some(now - chrono::Duration::minutes(mins)),
+                    state_at: Some(now - chrono::Duration::minutes(if state == "paused" { mins - 40 } else { mins })),
+                    ..Default::default()
+                };
+                vec![
+                    made("box-7k2m9q", "Add rate limit headers", "box/add-rate-limit-headers", "claude", "Claude Code", "running", 9, "Add X-RateLimit headers to every public API response, with tests, and open a pull request."),
+                    made("box-3hf8wd", "Fix flaky webhook retry test", "box/fix-flaky-webhook-retry-test", "codex", "Codex", "paused", 95, "The webhook retry test fails about one run in ten on CI. Find out why and fix it."),
+                ]
+            }
+            _ => Vec::new(),
         };
         MachineSessions {
             checked_at: Some(now),
@@ -1326,6 +1347,7 @@ impl World {
                 path: None,
             }),
             sessions,
+            boxes,
             events: Vec::new(),
             error: None,
         }
@@ -1473,6 +1495,14 @@ impl World {
                             None,
                         )
                     },
+                    ("beacon", "/home/ci/muxen/boxes/box-7k2m9q/repo") => status("box/add-rate-limit-headers", "acme/api", (3, 58, 4, 1, 2), false, None),
+                    ("beacon", "/home/ci/muxen/boxes/box-3hf8wd/repo") => status(
+                        "box/fix-flaky-webhook-retry-test",
+                        "acme/api",
+                        (2, 31, 9, 2, 0),
+                        false,
+                        Some(pull(321, "Fix the flaky webhook retry test", "acme/api", Checks { total: 4, passed: 4, ..Default::default() })),
+                    ),
                     ("beacon", "/home/ci/api") => status(
                         "rate-limits",
                         "acme/api",
@@ -1527,6 +1557,7 @@ impl World {
             ),
             persistent: true,
             git: None,
+            box_id: None,
         }
     }
 

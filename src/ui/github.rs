@@ -9,6 +9,7 @@ use gpui::{
     Window, div, prelude::*, px,
 };
 
+use super::box_dialog::BoxPrefill;
 use super::dialogs::{Prefill, WorkspacePlan};
 use super::format;
 use super::input::{InputEvent, TextInput};
@@ -94,6 +95,17 @@ fn label(theme: &Theme, l: &crate::github::hub::Label) -> AnyElement {
         .child(kit::dot(label_color(&l.color), 7.))
         .child(l.name.clone())
         .into_any_element()
+}
+
+/// Who works on an issue or pull request handed to an agent, and where.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Handoff {
+    /// A session with an agent, in a checkout (or a new workspace when there's none).
+    Session,
+    /// A session in a new workspace with a fresh clone.
+    Workspace,
+    /// A box: an agent that works on it by itself (issues).
+    Box,
 }
 
 impl Root {
@@ -295,26 +307,16 @@ impl Root {
     }
 
     /// Hands an issue (fix it) or a pull request (review it) to an agent: in a
-    /// checkout of its repository, or in a new workspace with a fresh clone
-    /// (chosen up front with `workspace`, or when there's no checkout).
-    fn gh_to_agent(
-        &mut self,
-        d: &Detail,
-        workspace: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    /// session in a checkout of its repository, or in a new workspace with a
+    /// fresh clone (chosen up front, or when there's no checkout); or an issue
+    /// to an agent in a box, that works on it by itself.
+    fn gh_to_agent(&mut self, d: &Detail, how: Handoff, window: &mut Window, cx: &mut Context<Self>) {
         let it = &d.item;
-        let local: Vec<&Checkout> = self
-            .snapshot
-            .checkouts
-            .iter()
-            .filter(|c| {
-                c.repo
-                    .as_deref()
-                    .is_some_and(|r| r.eq_ignore_ascii_case(&it.repo))
-            })
-            .collect();
+        if how == Handoff::Box {
+            return self.gh_to_box(d, window, cx);
+        }
+        let workspace = how == Handoff::Workspace;
+        let local: Vec<&Checkout> = self.snapshot.checkouts.iter().filter(|c| c.repo.as_deref().is_some_and(|r| r.eq_ignore_ascii_case(&it.repo))).collect();
         // The machine whose GitHub login is in use (else this computer) first,
         // then a clean checkout, then any.
         let account_machine = self.engine.settings().github.account_machine;
@@ -381,18 +383,17 @@ impl Root {
         self.show_new_session_prefilled(machine, cwd, prefill, window, cx);
     }
 
+    /// New box, filled in for an issue: its repository, a task that says to fix
+    /// it (the issue's description goes along), and a branch named for it.
+    fn gh_to_box(&mut self, d: &Detail, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_box_dialog(box_prefill(d), window, cx);
+    }
+
     /// `gh_to_agent` for an issue or pull request in a list: loads it first if needed.
-    pub(super) fn gh_item_to_agent(
-        &mut self,
-        repo: String,
-        number: u64,
-        workspace: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(super) fn gh_item_to_agent(&mut self, repo: String, number: u64, how: Handoff, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(Load::Ready(d)) = self.gh.items.get(&(repo.clone(), number)) {
             let d = d.clone();
-            return self.gh_to_agent(&d, workspace, window, cx);
+            return self.gh_to_agent(&d, how, window, cx);
         }
         let (engine, reference) = (self.engine.clone(), format!("{repo}#{number}"));
         let job = engine.runtime().spawn({
@@ -406,7 +407,7 @@ impl Root {
             let _ = this.update_in(cx, |this, window, cx| match result {
                 Ok(d) => {
                     this.gh.items.insert((repo, number), Load::Ready(d.clone()));
-                    this.gh_to_agent(&d, workspace, window, cx)
+                    this.gh_to_agent(&d, how, window, cx)
                 }
                 Err(e) => this.notify_user(e.message, true, cx),
             });
@@ -688,7 +689,7 @@ impl Root {
                             .pl(px(8.))
                             .pr(px(10.))
                             .py(px(4.))
-                            .rounded(px(8.))
+                            .rounded(crate::ui::kit::corner(8.))
                             .cursor_pointer()
                             .hover(|st| st.bg(theme.ghost_hover))
                             .child(kit::tile("agent-github", TILE.0, TILE.1, 28.))
@@ -749,7 +750,7 @@ impl Root {
                     .h(px(30.))
                     .mx(px(10.))
                     .px(px(8.))
-                    .rounded(px(7.))
+                    .rounded(crate::ui::kit::corner(7.))
                     .cursor_pointer()
                     .text_size(px(13.))
                     .text_color(if inbox_active {
@@ -777,38 +778,29 @@ impl Root {
 
     /// "One list | By owner".
     fn gh_view_toggle(&self, theme: &Theme, grouped: bool, cx: &mut Context<Self>) -> AnyElement {
-        let option =
-            |id: &'static str, glyph: &'static str, tip: &'static str, on: bool, value: bool| {
-                div()
-                    .id(id)
-                    .size(px(22.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(5.))
-                    .cursor_pointer()
-                    .when(on, |d| d.bg(theme.element_selected))
-                    .when(!on, |d| d.hover(|st| st.bg(theme.ghost_hover)))
-                    .child(icon(
-                        glyph,
-                        12.,
-                        if on {
-                            theme.text
-                        } else {
-                            theme.text_placeholder
-                        },
-                    ))
-                    .tooltip(move |window, cx| kit::Tooltip::view(tip.into(), window, cx))
-                    .on_click(cx.listener(move |_, _, _, cx| {
-                        remember(cx, |a| a.github_group_by_owner = value);
-                        cx.notify()
-                    }))
-            };
+        let option = |id: &'static str, glyph: &'static str, tip: &'static str, on: bool, value: bool| {
+            div()
+                .id(id)
+                .size(px(22.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(crate::ui::kit::corner(5.))
+                .cursor_pointer()
+                .when(on, |d| d.bg(theme.element_selected))
+                .when(!on, |d| d.hover(|st| st.bg(theme.ghost_hover)))
+                .child(icon(glyph, 12., if on { theme.text } else { theme.text_placeholder }))
+                .tooltip(move |window, cx| kit::Tooltip::view(tip.into(), window, cx))
+                .on_click(cx.listener(move |_, _, _, cx| {
+                    remember(cx, |a| a.github_group_by_owner = value);
+                    cx.notify()
+                }))
+        };
         div()
             .flex()
             .gap(px(2.))
             .p(px(2.))
-            .rounded(px(7.))
+            .rounded(crate::ui::kit::corner(7.))
             .bg(theme.element)
             .child(option("gh-view-list", "list", "One list", !grouped, false))
             .child(option(
@@ -842,7 +834,7 @@ impl Root {
             .mt(px(4.))
             .mx(px(10.))
             .px(px(8.))
-            .rounded(px(7.))
+            .rounded(crate::ui::kit::corner(7.))
             .cursor_pointer()
             .overflow_hidden()
             .hover(|st| st.bg(theme.ghost_hover))
@@ -924,7 +916,7 @@ impl Root {
             .h(px(if owner_line { 40. } else { 30. }))
             .mx(px(10.))
             .px(px(8.))
-            .rounded(px(7.))
+            .rounded(crate::ui::kit::corner(7.))
             .cursor_pointer()
             .when(selected, |d| d.bg(theme.element_selected))
             .when(!selected, |d| d.hover(|st| st.bg(theme.ghost_hover)))
@@ -969,7 +961,7 @@ impl Root {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded(px(5.))
+                    .rounded(crate::ui::kit::corner(5.))
                     .hover(|st| st.bg(theme.ghost_hover))
                     .when(!favorite, |d| {
                         d.invisible().group_hover("gh-repo-row", |st| st.visible())
@@ -1299,16 +1291,11 @@ impl Root {
                 .px(px(12.))
                 .flex()
                 .items_center()
-                .rounded(px(7.))
+                .rounded(crate::ui::kit::corner(7.))
                 .cursor_pointer()
                 .text_size(px(12.5))
                 .text_color(if active { theme.text } else { theme.text_muted })
-                .when(active, |d| {
-                    d.bg(theme.surface)
-                        .border_1()
-                        .border_color(theme.border)
-                        .shadow_sm()
-                })
+                .when(active, |d| d.bg(theme.surface).border_1().border_color(theme.border).when(!crate::ui::kit::square(), |d| d.shadow_sm()))
                 .child(label)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.gh.tab = t;
@@ -1319,7 +1306,7 @@ impl Root {
             .flex()
             .gap(px(2.))
             .p(px(3.))
-            .rounded(px(9.))
+            .rounded(crate::ui::kit::corner(9.))
             .bg(theme.element)
             .border_1()
             .border_color(theme.border_variant)
@@ -1560,40 +1547,31 @@ impl Root {
         };
         let repo_name = it.repo.clone();
         let (url, url2) = (it.html_url.clone(), it.html_url.clone());
-        let detail = d.clone();
+        let (detail, detail2) = (d.clone(), d.clone());
         let actions = div()
             .flex()
             .flex_wrap()
             .gap(px(8.))
             .child(
-                Button::new(
-                    "gh-agent",
-                    if it.pull_request {
-                        "Review with agent"
-                    } else {
-                        "Fix with agent"
-                    },
+                Button::new("gh-agent", if it.pull_request { "Review with agent" } else { "Work on it with an agent" })
+                    .icon("bot")
+                    .style(ButtonStyle::Primary)
+                    .tooltip("A session with an agent in a checkout of the repository, to work on it together")
+                    .on_click(cx.listener(move |this, _, window, cx| this.gh_to_agent(&detail, Handoff::Session, window, cx))),
+            )
+            .when(!it.pull_request, |d| {
+                d.child(
+                    Button::new("gh-box", "Hand off in a box")
+                        .icon("box")
+                        .tooltip("An agent works on it by itself, in a container on one of your machines, and opens a pull request")
+                        .on_click(cx.listener(move |this, _, window, cx| this.gh_to_agent(&detail2, Handoff::Box, window, cx))),
                 )
-                .icon("bot")
-                .style(ButtonStyle::Primary)
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.gh_to_agent(&detail, false, window, cx)
-                })),
-            )
-            .child(
-                Button::new("gh-open", "Open on GitHub")
-                    .icon("external-link")
-                    .on_click(move |_, _, cx| cx.open_url(&url)),
-            )
-            .child(
-                Button::new("gh-copy", "Copy link")
-                    .icon("copy")
-                    .style(ButtonStyle::Ghost)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(url2.clone()));
-                        this.notify_user("Copied the link.", false, cx);
-                    })),
-            );
+            })
+            .child(Button::new("gh-open", "Open on GitHub").icon("external-link").on_click(move |_, _, cx| cx.open_url(&url)))
+            .child(Button::new("gh-copy", "Copy link").icon("copy").style(ButtonStyle::Ghost).on_click(cx.listener(move |this, _, _, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(url2.clone()));
+                this.notify_user("Copied the link.", false, cx);
+            })));
 
         let mut body = div()
             .flex()
@@ -1946,22 +1924,18 @@ fn markdown(theme: &Theme, text: &str, width: f32) -> AnyElement {
     for line in text.lines() {
         if line.trim_start().starts_with("```") {
             match code.take() {
-                Some(lines) => {
-                    blocks.push(
-                        div()
-                            .w(px(width))
-                            .p(px(10.))
-                            .rounded(px(6.))
-                            .bg(theme.element)
-                            .font_family(mono_font())
-                            .text_size(px(12.))
-                            .text_color(theme.text_muted)
-                            .children(lines.into_iter().map(|l| {
-                                div().child(if l.is_empty() { " ".to_string() } else { l })
-                            }))
-                            .into_any_element(),
-                    )
-                }
+                Some(lines) => blocks.push(
+                    div()
+                        .w(px(width))
+                        .p(px(10.))
+                        .rounded(crate::ui::kit::corner(6.))
+                        .bg(theme.element)
+                        .font_family(mono_font())
+                        .text_size(px(12.))
+                        .text_color(theme.text_muted)
+                        .children(lines.into_iter().map(|l| div().child(if l.is_empty() { " ".to_string() } else { l })))
+                        .into_any_element(),
+                ),
                 None => {
                     flush(&mut paragraph, &mut blocks);
                     code = Some(Vec::new());
@@ -2161,9 +2135,58 @@ fn inline(text: &str) -> String {
     out
 }
 
+/// New box for an issue: its repository, a task to fix it and open a pull
+/// request that closes it (its title and description go along to the agent,
+/// unseen), a branch named for it, and a name like "api #12".
+pub(super) fn box_prefill(d: &Detail) -> BoxPrefill {
+    let it = &d.item;
+    let body: String = d.body.trim().chars().take(3000).collect();
+    let mut details = format!("#{} {}", it.number, it.title);
+    if !body.is_empty() {
+        details.push_str(&format!("\n\n{body}"));
+    }
+    let short_repo = it.repo.rsplit('/').next().unwrap_or(&it.repo);
+    BoxPrefill {
+        repo: Some(it.repo.clone()),
+        task: Some(format!("Fix this GitHub issue and open a pull request that closes it: {}", it.html_url)),
+        details: Some(details),
+        name: Some(format!("{short_repo} #{}", it.number)),
+        branch: Some(issue_branch(it.number, &it.title)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_issue_fills_in_new_box() {
+        let item = Item {
+            repo: "adibhanna/muxin-handoff-test".into(),
+            number: 1,
+            title: "average() is off by one".into(),
+            pull_request: false,
+            draft: false,
+            state: "open".into(),
+            author: "adibhanna".into(),
+            assignees: Vec::new(),
+            labels: Vec::new(),
+            comments: 0,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            html_url: "https://github.com/adibhanna/muxin-handoff-test/issues/1".into(),
+        };
+        let d = Detail { item, body: "average([2, 4]) returns 4 instead of 3.\n".into(), comments: Vec::new(), pull: None };
+        let p = box_prefill(&d);
+        assert_eq!(p.repo.as_deref(), Some("adibhanna/muxin-handoff-test"));
+        assert_eq!(p.task.as_deref(), Some("Fix this GitHub issue and open a pull request that closes it: https://github.com/adibhanna/muxin-handoff-test/issues/1"));
+        assert_eq!(p.details.as_deref(), Some("#1 average() is off by one\n\naverage([2, 4]) returns 4 instead of 3."));
+        assert_eq!(p.name.as_deref(), Some("muxin-handoff-test #1"));
+        assert_eq!(p.branch.as_deref(), Some("issue-1-average-off-by-one"));
+        // What the box's agent is asked: the task, then the issue.
+        let prompt = super::super::box_dialog::prompt_for(p.task.clone().unwrap(), p.details.as_deref());
+        assert_eq!(prompt, format!("{}\n\n{}", p.task.unwrap(), p.details.unwrap()));
+    }
 
     #[test]
     fn shortens_titles_at_words() {

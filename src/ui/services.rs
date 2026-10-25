@@ -708,7 +708,7 @@ fn chip(
         .flex()
         .items_center()
         .gap(px(5.))
-        .rounded(px(5.))
+        .rounded(crate::ui::kit::corner(5.))
         .cursor_pointer()
         .text_size(px(12.))
         .text_color(if on {
@@ -809,43 +809,21 @@ impl Render for ServicesView {
                 (Tab::Images, "Images", data.images.len()),
             ]);
         }
-        tab_list.push((
-            Tab::Processes,
-            "Processes",
-            self.procs
-                .as_ref()
-                .and_then(|p| p.as_ref().ok())
-                .map(|p| p.total)
-                .unwrap_or(0),
-        ));
-        let tabs = div()
-            .flex_none()
-            .flex()
-            .gap(px(2.))
-            .p(px(2.))
-            .rounded(px(7.))
-            .bg(theme.element)
-            .children(tab_list.into_iter().map(|(tab, label, n)| {
-                chip(&theme, format!("svc-tab-{label}"), label, self.tab == tab)
-                    .when(n > 0, |d| {
-                        d.child(
-                            div()
-                                .text_size(px(10.5))
-                                .text_color(theme.text_placeholder)
-                                .child(n.to_string()),
-                        )
-                    })
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.tab = tab;
-                        this.confirming = None;
-                        this.project = None;
-                        this.project_logs = None;
-                        if tab == Tab::Processes {
-                            this.load_procs(cx);
-                        }
-                        cx.notify();
-                    }))
-            }));
+        tab_list.push((Tab::Processes, "Processes", self.procs.as_ref().and_then(|p| p.as_ref().ok()).map(|p| p.total).unwrap_or(0)));
+        let tabs = div().flex_none().flex().gap(px(2.)).p(px(2.)).rounded(crate::ui::kit::corner(7.)).bg(theme.element).children(tab_list.into_iter().map(|(tab, label, n)| {
+            chip(&theme, format!("svc-tab-{label}"), label, self.tab == tab)
+                .when(n > 0, |d| d.child(div().text_size(px(10.5)).text_color(theme.text_placeholder).child(n.to_string())))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.tab = tab;
+                    this.confirming = None;
+                    this.project = None;
+                    this.project_logs = None;
+                    if tab == Tab::Processes {
+                        this.load_procs(cx);
+                    }
+                    cx.notify();
+                }))
+        }));
         // What each tab adds to the toolbar.
         let extra: Vec<AnyElement> = match self.tab {
             Tab::Containers if data.docker => vec![
@@ -1091,7 +1069,7 @@ impl Render for ServicesView {
         let run_form = self.run.as_ref().filter(|_| self.tab == Tab::Containers).map(|f| {
             let field = |label: &'static str, input: &Entity<TextInput>, w: f32| div().flex().flex_col().gap(px(4.)).child(div().text_size(px(11.)).text_color(theme.text_placeholder).child(label)).child(div().w(px(w)).child(input.clone()));
             let restarts = div().flex().flex_col().gap(px(4.)).child(div().text_size(px(11.)).text_color(theme.text_placeholder).child("Restart")).child(
-                div().flex().gap(px(2.)).p(px(2.)).rounded(px(7.)).bg(theme.element).children([("no", "Never"), ("always", "Always"), ("unless-stopped", "Unless stopped"), ("on-failure", "On failure")].into_iter().map(|(value, label)| {
+                div().flex().gap(px(2.)).p(px(2.)).rounded(crate::ui::kit::corner(7.)).bg(theme.element).children([("no", "Never"), ("always", "Always"), ("unless-stopped", "Unless stopped"), ("on-failure", "On failure")].into_iter().map(|(value, label)| {
                     chip(&theme, format!("svc-restart-{value}"), label, f.restart == value).on_click(cx.listener(move |this, _, _, cx| {
                         if let Some(f) = &mut this.run {
                             f.restart = value;
@@ -1826,7 +1804,7 @@ impl ServicesView {
                             .h(px(20.))
                             .flex()
                             .items_center()
-                            .rounded(px(5.))
+                            .rounded(crate::ui::kit::corner(5.))
                             .cursor_pointer()
                             .text_size(px(11.))
                             .border_1()
@@ -2015,13 +1993,29 @@ impl ServicesView {
             .border_b_1()
             .border_color(theme.border_variant)
             .child(back)
-            .child(kit::dot(
-                if running {
-                    theme.success
-                } else {
-                    theme.text_placeholder
-                },
-                8.,
+            .child(kit::dot(if running { theme.success } else { theme.text_placeholder }, 8.))
+            .child(div().flex_none().text_size(px(14.)).font_weight(gpui::FontWeight::SEMIBOLD).text_color(theme.text).child(name.clone()))
+            .child(div().flex_none().text_size(px(12.)).text_color(theme.text_muted).child(project.status.clone()))
+            .child(div().flex_none().ml(px(6.)).flex().gap(px(2.)).p(px(2.)).rounded(crate::ui::kit::corner(7.)).bg(theme.element).children(
+                [(ProjectMode::Picture, "Picture", "workflow"), (ProjectMode::List, "List", "list"), (ProjectMode::Logs, "Logs", "scroll-text")].into_iter().map(|(mode, label, glyph)| {
+                    let on = self.project_mode == mode;
+                    div()
+                        .id(SharedString::from(format!("cmp-mode-{label}")))
+                        .px(px(9.))
+                        .h(px(24.))
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .rounded(crate::ui::kit::corner(5.))
+                        .cursor_pointer()
+                        .text_size(px(12.))
+                        .text_color(if on { theme.text } else { theme.text_placeholder })
+                        .when(on, |d| d.bg(theme.element_selected))
+                        .when(!on, |d| d.hover(|st| st.bg(theme.ghost_hover)))
+                        .child(icon(glyph, 12., if on { theme.text } else { theme.text_placeholder }))
+                        .child(label)
+                        .on_click(cx.listener(move |this, _, window, cx| this.set_mode(mode, None, window, cx)))
+                }),
             ))
             .child(
                 div()
@@ -2045,7 +2039,7 @@ impl ServicesView {
                     .flex()
                     .gap(px(2.))
                     .p(px(2.))
-                    .rounded(px(7.))
+                    .rounded(crate::ui::kit::corner(7.))
                     .bg(theme.element)
                     .children(
                         [
@@ -2063,7 +2057,7 @@ impl ServicesView {
                                 .flex()
                                 .items_center()
                                 .gap(px(6.))
-                                .rounded(px(5.))
+                                .rounded(crate::ui::kit::corner(5.))
                                 .cursor_pointer()
                                 .text_size(px(12.))
                                 .text_color(if on {
@@ -3280,7 +3274,7 @@ fn gpu_strip(gpus: &[Gpu], theme: &Theme) -> AnyElement {
                 .gap(px(10.))
                 .px(px(12.))
                 .py(px(8.))
-                .rounded(px(8.))
+                .rounded(crate::ui::kit::corner(8.))
                 .border_1()
                 .border_color(theme.border_variant)
                 .bg(theme.surface)

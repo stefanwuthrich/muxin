@@ -15,6 +15,7 @@
 Point it at the machines you own (a Mac Studio under the desk, a NUC, a Linux box, a few MacBooks, a Windows laptop) and Muxin becomes the hub for all of them:
 
 - **Agent sessions:** Claude Code, Codex, OpenCode, Gemini CLI, Amp, Pi or a shell on any machine, in a real terminal, still running after you close the app.
+- **Boxes:** hand a task to an agent that works on it by itself, in a container of its own on one of your machines. A box pauses when it's quiet and picks up where it left off when you ask it more.
 - **Desktops:** see a Linux machine's screen live and use it, beside an agent's terminal or in its own window.
 - **Files and clipboard:** copy files and folders between any two machines, and copy on this computer to paste on a machine (and back).
 - **GitHub:** your inbox, repositories, issues and pull requests, with one click to hand an issue to an agent on the machine you pick.
@@ -113,15 +114,15 @@ muxin status
 - **Fleet warnings and Wake:** a machine's page and the Overview say when it wants a reboot (Linux updates) or has failed services. A machine that's asleep or off has a **Wake** button (Wake on LAN, sent from this computer and from your machines on its network) once Muxin has seen its network card.
 - **Copy files:** a two-pane dialog to copy files and folders from one machine to another (see [Files and the clipboard](#files-and-the-clipboard)); or drop files from the Finder onto a machine in the sidebar.
 - **Activity (⌘J):** one timeline of everything happening on your machines: operations started in the app (with live output) and every command agents ran in workspaces, filterable by kind or failures.
-- **Workspaces:** see what agents are doing on your machines (every command, its exit code and output), review a workspace's git changes, copy a shell command to step in, or destroy it.
+- **Boxes (⌃3):** tasks you hand to an agent that works on them by itself, each in a container on one of your machines (see [Boxes](#boxes)). Below them, **Agents' workspaces**: folders that AI tools you use elsewhere work in through Muxin. Open one to see every command it ran, with its exit code and output, review its git changes, copy a shell command to step in, or destroy it.
 - **Jobs:** queued and running self-hosted jobs, and which queued jobs no online runner can take.
 - **Appearance:** follow the system, or pin light or dark, each with its own theme. Built-in themes:
-  - dark: Muxin Graphite, macOS Dark, Gruvbox Dark, Catppuccin Mocha / Macchiato / Frappé, Tokyo Night, Nord, Rosé Pine, Solarized Dark, Dracula, Everforest Dark, Kanagawa Wave, GitHub Dark;
-  - light: Muxin Paper, macOS Light, Gruvbox Light, Catppuccin Latte, Tokyo Night Day, Nord Light, Rosé Pine Dawn, Solarized Light, Everforest Light, Kanagawa Lotus, GitHub Light.
+  - dark: Muxin Graphite, macOS Dark, Gruvbox Dark, Catppuccin Mocha / Macchiato / Frappé, Tokyo Night, Nord, Rosé Pine, Solarized Dark, Dracula, Everforest Dark, Kanagawa Wave, GitHub Dark, Terminal, Terminal Midnight;
+  - light: Muxin Paper, macOS Light, Gruvbox Light, Catppuccin Latte, Tokyo Night Day, Nord Light, Rosé Pine Dawn, Solarized Light, Everforest Light, Kanagawa Lotus, GitHub Light, Terminal Paper.
 
-  The macOS themes also switch to the system fonts (SF Pro, and SF Mono when it's installed). The choice is saved in `config.toml` (`[ui]`).
+  The macOS themes also switch to the system fonts (SF Pro, and SF Mono when it's installed). The Terminal themes make Muxin look like a TUI in a terminal: one monospace font, square corners, `[ Buttons ]` and `── Headings ──`. The choice is saved in `config.toml` (`[ui]`).
 
-Keyboard: ⌘P goes to any machine, session or desktop by name, and ⇧⌘P (or ⌘P then `>`) runs any command, including **Theme: Choose…**, which previews each theme as you move through the list · ⌘1…⌘9 go to your machines · ⌃1…⌃6 overview, jobs, workspaces, GitHub, usage, run (Alt on Linux and Windows) · ⌘J activity · ⌘R check machines · ⇧⌘R sync GitHub · ⌘N add machine · ⌘T new session · ⌘F or `/` search your machines and sessions · ⌘B sidebar · ⌘[ / ⌘] back / forward · ⌘, settings. Hold ⌘ to see them in the app, and change them in Settings › Keyboard. On Linux and Windows, use Ctrl instead of ⌘.
+Keyboard: ⌘P goes to any machine, session or desktop by name, and ⇧⌘P (or ⌘P then `>`) runs any command, including **Theme: Choose…**, which previews each theme as you move through the list · ⌘1…⌘9 go to your machines · ⌃1…⌃7 overview, jobs, boxes, GitHub, usage, run, schedules (Alt on Linux and Windows) · ⌘J activity · ⌘R check machines · ⇧⌘R sync GitHub · ⌘N add machine · ⌘T new session · ⌘F or `/` search your machines and sessions · ⌘B sidebar · ⌘[ / ⌘] back / forward · ⌘, settings. Hold ⌘ to see them in the app, and change them in Settings › Keyboard. On Linux and Windows, use Ctrl instead of ⌘.
 
 ## Your settings: `config.toml`
 
@@ -305,7 +306,7 @@ The window, the CLI and MCP servers can all run at once. They share the files in
 
 ## Agent workspaces
 
-Think of [Amp's Orbs](https://ampcode.com/news/agents-in-orbs), but on your own hardware. An agent asks for a workspace and gets a persistent folder on one of your machines, optionally with a repo cloned at a branch or ref. It then works there like it would on a remote dev box:
+A place on your machines for an agent you're using elsewhere (Claude Code on your laptop, say). The agent asks for a workspace and gets a persistent folder on one of your machines, optionally with a repo cloned at a branch or ref. It then works there like it would on a remote dev box. Nothing works there on its own: to hand a task to an agent that works by itself, use a [box](#boxes).
 
 - **Run commands** with your login environment (Homebrew, nvm, asdf and the rest of your `PATH`). Long-running things such as dev servers go in the background, with their output in a log file inside the workspace.
 - **Read, write and list files.**
@@ -314,11 +315,11 @@ Think of [Amp's Orbs](https://ampcode.com/news/agents-in-orbs), but on your own 
 
 **Host or Docker.** By default commands run directly on the machine. With `isolation: "docker"` (CLI `--docker`), each workspace gets its own fresh container instead, from an image the agent picks (`node:22`, `python:3.13`, `rust:1`, …; default `buildpack-deps:bookworm`). The workspace folder is mounted at `/workspace`, the container runs as the ssh user so files aren't root-owned, and a container that disappears (reboot, `docker system prune`) is recreated on the next command with the files intact. `docker_socket` shares the machine's Docker for docker-in-docker; that's root-equivalent, so only use it when the task needs it. Docker workspaces need Docker on the machine and the ssh user in the `docker` group. They aren't available on Windows machines yet.
 
-**A worktree of a checkout.** When the repository is already checked out on the machine, a workspace can be a git worktree of that checkout instead of a clone (`worktree_of`, CLI `--worktree-of`): its own folder and branch, sharing the checkout's history, so it's ready in a moment and several agents can work on one repository side by side. New sessions offer it too (**Where › New worktree**), and so does handing an issue to an agent when there's a checkout of its repository. Deleting the workspace removes the worktree and keeps its branch; once the branch's pull request is merged, the Workspaces page offers to clean it up. (A worktree's git history lives in the checkout's `.git` folder, so an agent with a sandbox, such as Codex, asks before it commits there.)
+**A worktree of a checkout.** When the repository is already checked out on the machine, a workspace can be a git worktree of that checkout instead of a clone (`worktree_of`, CLI `--worktree-of`): its own folder and branch, sharing the checkout's history, so it's ready in a moment and several agents can work on one repository side by side. New sessions offer it too (**Where › New worktree**), and so does handing an issue to an agent when there's a checkout of its repository. Deleting the workspace removes the worktree and keeps its branch; once the branch's pull request is merged, the workspace's card offers to clean it up. (A worktree's git history lives in the checkout's `.git` folder, so an agent with a sandbox, such as Codex, asks before it commits there.)
 
 The machine can be named, or picked for you: the least-loaded online machine that allows workspaces, optionally matching a platform such as `linux` or `darwin-arm64`. Private GitHub repos are cloned with your `gh` login; the token is passed through the environment for that one command and never written to disk or logs.
 
-Every command an agent runs is recorded with its exit code, duration and the end of its output. You can see that history in the app's Workspaces page, or open a terminal in any workspace with `muxin workspace shell <id>`.
+Every command an agent runs is recorded with its exit code, duration and the end of its output. You can see that history in the app (**Boxes › Agents' workspaces**, or a machine's page), or open a terminal in any workspace with `muxin workspace shell <id>`.
 
 ```sh
 muxin ws create --platform linux --repo acme/api --ref main
@@ -348,7 +349,8 @@ The GitHub page is built for the loop of picking an issue, handing it to an agen
 - **For you:** pull requests waiting for your review, issues assigned to you, and your open pull requests.
 - **Repositories:** everything you own, collaborate on or reach through your orgs, with each one's open issues, pull requests and GitHub Actions runs. Star the ones you work on to keep them at the top, and show the list as one list or grouped by owner (you, then your organizations, then repositories other people shared with you).
 - **On your machines:** each machine's agent finds git checkouts in your code folders (`~/Developer`, `~/code`, `~/src`, … add yours in Settings › General › Code folders) and links them to their GitHub repository, with branch, commits ahead/behind and uncommitted changes. Fetch, Pull and Push from there.
-- **Fix with agent:** on any issue (or **Review with agent** on a pull request), one click opens a new session in that repository's checkout on the machine you pick (this computer first), with the issue's link, title and description as the agent's first message. Right-click an issue or pull request for **Fix in a new workspace…**: pick any machine and agent, and Muxin clones the repository there (an issue gets its own branch, like `issue-910-content-excalidraw`; a pull request checks out its branch, forks included), then starts the agent in it.
+- **Work on it with an agent:** on any issue (or **Review with agent** on a pull request), one click opens a new session in that repository's checkout on the machine you pick (this computer first), with the issue's link, title and description as the agent's first message. With no checkout there, Muxin clones the repository in a new workspace (an issue gets its own branch, like `issue-910-content-excalidraw`; a pull request checks out its branch, forks included), then starts the agent in it. Right-click a pull request for **Review in a new workspace…** to get a fresh clone anyway.
+- **Hand off in a box:** on an issue, opens **New box** filled in: the repository, a task to fix the issue and open a pull request that closes it (its title and description go along), and a branch named for it. An agent then works on it by itself, in a container on one of your machines (see [Boxes](#boxes)).
 
 Muxin uses the GitHub CLI's login (`gh auth login`) or `GITHUB_TOKEN`. Settings has a **Sign in with GitHub** button that runs the CLI's browser sign-in; each machine's page shows whether its own `gh` is signed in (agents there use it for issues and pull requests) and can sign it in too.
 
@@ -361,7 +363,7 @@ muxin git setup beelink --identity --credentials
 
 **Permissions.** Watching an organization's runners needs the `admin:org` permission on your GitHub login. Settings shows when it's missing, with a **Grant access** button that runs `gh auth refresh -s admin:org` in a terminal (it finishes in your browser), and lists your organizations so watching one is a click.
 
-**More than one account.** Click your name at the top of the GitHub page to switch. The menu lists every account the GitHub CLI here is signed in to, plus each machine's own `gh` login: with a work laptop signed in to your work account, pick "@you-at-work · Work MacBook" and Muxin sees that account's repositories, inbox and runners (the token is fetched over ssh when needed and kept in memory only). Fix with agent then prefers checkouts on that machine. Switching doesn't change which account `gh` uses in your terminal. "Add another account…" runs `gh auth login`.
+**More than one account.** Click your name at the top of the GitHub page to switch. The menu lists every account the GitHub CLI here is signed in to, plus each machine's own `gh` login: with a work laptop signed in to your work account, pick "@you-at-work · Work MacBook" and Muxin sees that account's repositories, inbox and runners (the token is fetched over ssh when needed and kept in memory only). Work on it with an agent then prefers checkouts on that machine. Switching doesn't change which account `gh` uses in your terminal. "Add another account…" runs `gh auth login`.
 
 ```sh
 muxin github inbox                         # what needs you
@@ -387,7 +389,9 @@ Start an AI agent on one of your machines and come back to it whenever you like,
 - **Your environment.** The agent starts in your login shell, in the folder you pick, so nvm/fnm/asdf and the CLI's own login work as they do in your terminal. Muxin finds which agent CLIs each machine has: `claude`, `codex`, `opencode`, `gemini`, `amp`.
 - **What it changed.** Each session shows its branch, the lines and files it changed since the default branch, its commits and uncommitted files, and the branch's pull request with its checks (click it to open it on GitHub). Muxin looks when a session stops working, and at least every minute while sessions run.
 - **Actions.** A session's **Actions** button (or its right-click menu) asks its agent to commit, commit and push, open or update the pull request, review the changes, fix the review comments, resolve conflicts or write a recap. Each one types a prompt into the agent; change any of them in **Settings › Prompts** (`[settings.prompts]` in `config.toml`), where `{branch}`, `{base}` and `{pull}` are filled in.
-- **Agents can drive agents.** `session_start`, `session_read` (the screen as text), `session_question` and `session_answer` (what it asks, and an answer), `session_send` (type into it), `session_action` and `session_stop` are MCP tools and CLI commands too.
+- **Hand off to another agent.** Started with Claude Code and want Codex to finish (or Claude Code ran out of usage)? **Hand off** on a session's page picks the agent. Muxin writes a note in the session's folder, `.muxin/handoff.md`. It has where the git work stands, the agent's to-do list, and the conversation so far: what you asked, what the agent said, and one line per tool call. Muxin reads that from the agent's own transcript (Claude Code, Codex, Gemini CLI and Pi keep one on the machine; for OpenCode and Amp the note has what the terminal showed instead). Then the new agent starts in the same folder, asked to read the note first, and the old session ends. The note stays out of git (`.muxin/` goes in the checkout's `info/exclude`). **A fresh … session** does the same with the same agent, for a conversation that's grown too long. A box changes agents the same way, in the box.
+- **Move it to another machine.** Started on your laptop and want it to keep going on a server? **Hand off › Move to Beelink…** picks the agent there. The branch's commits that aren't on GitHub yet, its uncommitted changes and its new files go along, copied through Muxin (the machines don't need to reach each other), into a workspace there: a worktree of a checkout of the same repository when the machine has one, else a fresh clone with your GitHub login (a repository without a remote goes whole). The work stays on its branch; a branch there that went its own way isn't touched. Then the agent starts on the note, and the session here ends. The folder here stays as it was. Git checkouts only, and not to Windows machines yet. A box stays on its machine: hand it to another agent there.
+- **Agents can drive agents.** `session_start`, `session_read` (the screen as text), `session_question` and `session_answer` (what it asks, and an answer), `session_send` (type into it), `session_action`, `session_handoff` and `session_stop` are MCP tools and CLI commands too.
 
 ```sh
 muxin session ls                                   # every session, and which agents each machine has
@@ -400,10 +404,40 @@ muxin session answer beelink/claude-3f9a 1         # pick one
 muxin session attach beelink/claude-3f9a           # open it in this terminal; detach with Ctrl-] then d
 muxin session restart beelink/claude-3f9a
 muxin session rename beelink/claude-3f9a "API server"   # "" goes back to the original title
+muxin session handoff beelink/claude-3f9a codex    # Codex takes over, with a note of the work so far (--keep keeps the old one)
+muxin session handoff box-7k2m9q gemini            # a box changes agents
+muxin session handoff this-mac/claude-3f9a codex --on beelink   # the work moves to beelink, and Codex picks it up there
 muxin session stop beelink/claude-3f9a
 ```
 
 Build the agent for every platform with `scripts/build-agents.sh` (needs `cargo-zigbuild` and Zig for the Linux builds); `scripts/bundle-macos.sh` runs it and ships the builds inside the app.
+
+## Boxes
+
+Hand a task to an agent and let it work on it by itself, on your own hardware. A box is one task: a fresh checkout of a repository on a new branch, in a Docker container of its own on one of your machines, with an agent CLI working in it.
+
+- **Start one.** **Boxes › New box**: the repository, the task, the agent (Claude Code, Codex, Amp, OpenCode, Gemini CLI or Pi) and where it runs (the online machine with Docker and the most free memory, or one you pick). Type to search your GitHub repositories and the checkouts on your machines.
+- **A local project.** Pick a checkout on one of your machines (or type its folder): the box goes on that machine and starts from it as it is now, its uncommitted changes and new files included, on a branch of its own. It pushes where the checkout does (an ssh remote goes over https in the box), and the checkout stays as it was; it's the box's `checkout` remote, to fetch its branch from. Muxin clones the repository, runs its `.agents/setup` if it has one, and starts the agent on the task. The first box on a machine builds Muxin's image there (Debian, Node.js, git, the GitHub CLI and the agent CLIs), which takes a few minutes; later boxes start in seconds.
+- **On its own.** The container is the agent's sandbox, so it runs with its permission prompts off (`--dangerously-skip-permissions` and the like). It works as you, with your GitHub login, so it can push its branch and open a pull request. It sees its own checkout and home and the machine's agent folders (below), not the machine's other files, and Docker isn't shared with it. Its network isn't closed off.
+- **Pauses by itself.** When its agent has printed nothing for 15 minutes (an open terminal nobody types in doesn't keep it going), or has quit, Muxin's agent on the machine stops the container. That works whether or not the app is open. Its files, branch and conversation stay. Ask it something more (or **Resume**) and it starts again: the agent continues its last conversation, after the repository's `.agents/resume` if it has one. Dev servers and shells it ran don't survive a pause.
+- **Watch it.** **Open** shows its agent's terminal, like any session. ⌘D (or the split buttons) opens a shell in the box beside it: same container, checkout and tools, so you can run the tests or another agent CLI there. Typing in it counts as using the box, and pausing the box ends it. The Boxes page shows each box working, waiting for you, idle or paused, with its branch, what it changed and its pull request with checks.
+- **Signed in as on the machine.** A box shares the machine's agent folders (`~/.claude`, `~/.codex`, `~/.gemini`, `~/.pi`, and Amp's and OpenCode's), so the agent is signed in, with your settings, skills and MCP servers, wherever it is on that machine. Keys like `ANTHROPIC_API_KEY` set in the machine's shell come along too. If it isn't signed in there, sign it in once from a box's terminal (`/login`); every box on that machine has it from then on. On a Mac, where Docker runs in a VM, two things differ: Claude Code keeps its login in the Keychain, which a container can't read, so boxes there need that one `/login`; and Codex's and OpenCode's folders hold databases that can't be shared across the VM, so each box gets a copy of their sign-in instead.
+- **Where it lives.** On the machine, a box is `~/muxen/boxes/<id>/`: its checkout (`repo/`, at the same path inside the box, so each box's agent continues its own conversation), the agent's home (`home/`, at `/home/box`) and its record. **Delete** removes the container and that folder, with any work that wasn't pushed. Its branch on GitHub stays.
+- **Machines.** Linux, and Macs with Docker Desktop, OrbStack or Colima. Windows machines can't run boxes yet.
+
+```sh
+muxin box new acme/api "Add rate limit headers to every response, with tests, and open a pull request"
+muxin box new acme/api "Fix the flaky webhook test" --agent codex --on beelink
+muxin box new ~/code/app "Finish this refactor" --on beelink     # a checkout there, with its uncommitted work
+muxin box ls                                  # every box: working, waiting, idle or paused, and its git
+muxin box send box-7k2m9q "Also update the API docs"   # starts it again if it's paused
+muxin box attach box-7k2m9q                   # its agent, in this terminal
+muxin box shell box-7k2m9q                    # a shell in the box, in this terminal
+muxin box pause box-7k2m9q
+muxin box rm box-7k2m9q
+```
+
+Agents use `box_create`, `box_list`, `box_send`, `box_pause` and `box_destroy`; `session_read` works on a running box's session.
 
 ## Sharing a session or a machine
 

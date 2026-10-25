@@ -188,7 +188,7 @@ impl Render for CloudDialog {
                 .px(px(9.))
                 .flex()
                 .items_center()
-                .rounded(px(6.))
+                .rounded(crate::ui::kit::corner(6.))
                 .border_1()
                 .cursor_pointer()
                 .text_size(px(12.5))
@@ -245,7 +245,7 @@ impl Render for CloudDialog {
                     .gap(px(10.))
                     .px(px(10.))
                     .h(px(30.))
-                    .rounded(px(6.))
+                    .rounded(crate::ui::kit::corner(6.))
                     .cursor_pointer()
                     .border_1()
                     .border_color(if selected {

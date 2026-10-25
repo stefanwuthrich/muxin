@@ -11,6 +11,7 @@
 pub mod actions;
 pub(crate) mod agent;
 pub mod git;
+pub mod handoff;
 pub mod question;
 
 use std::sync::Arc;
@@ -144,6 +145,9 @@ pub struct SessionInfo {
     /// What its work changed in its folder's git checkout (see git.rs).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub git: Option<git::GitStatus>,
+    /// The box whose agent this is (see fleet::boxes).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub box_id: Option<String>,
 }
 
 /// What the last discovery found on one machine.
@@ -159,6 +163,8 @@ pub struct MachineSessions {
     /// The GitHub CLI there, looked up with the agent CLIs.
     pub gh: Option<crate::fleet::model::GhCli>,
     pub sessions: Vec<SessionInfo>,
+    /// Its boxes (see fleet::boxes).
+    pub boxes: Vec<crate::fleet::boxes::BoxInfo>,
     /// Recent bells and exits the agent saw, oldest first.
     pub events: Vec<RawEvent>,
     pub error: Option<String>,
@@ -704,6 +710,7 @@ impl Engine {
             attach_command: String::new(),
             persistent: false,
             git: None,
+            box_id: None,
             name,
         };
         self.add_direct(DirectSession {
@@ -715,12 +722,10 @@ impl Engine {
     }
 
     /// Machines whose sessions should be re-read on the timer.
+    /// (And with a box that isn't paused: it pauses on its machine, with no
+    /// session left to say so.)
     pub(crate) fn machines_with_sessions(&self) -> Vec<String> {
-        self.all_sessions()
-            .into_iter()
-            .filter(|(_, m)| !m.sessions.is_empty())
-            .map(|(id, _)| id)
-            .collect()
+        self.all_sessions().into_iter().filter(|(_, m)| !m.sessions.is_empty() || m.boxes.iter().any(|b| b.state != "paused")).map(|(id, _)| id).collect()
     }
 }
 
@@ -976,6 +981,7 @@ pub(crate) fn parse_discovery(spec: &MachineSpec, reply: &Value) -> MachineSessi
             account: reply["gh"]["account"].as_str().map(str::to_string),
             path: reply["gh"]["path"].as_str().map(str::to_string),
         }),
+        boxes: crate::fleet::boxes::parse(&spec.id, reply),
         ..Default::default()
     };
     for s in reply["sessions"].as_array().into_iter().flatten() {
@@ -1015,6 +1021,7 @@ pub(crate) fn parse_discovery(spec: &MachineSpec, reply: &Value) -> MachineSessi
             attach_command: user_attach_command(spec, &name),
             persistent: true,
             git: None,
+            box_id: crate::fleet::boxes::box_of_session(&name, &found.boxes).map(|b| b.id.clone()),
             name,
         });
     }

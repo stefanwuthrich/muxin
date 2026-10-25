@@ -383,7 +383,7 @@ impl SettingsPage {
                     .h(px(26.))
                     .pl(px(8.))
                     .pr(px(2.))
-                    .rounded(px(5.))
+                    .rounded(crate::ui::kit::corner(5.))
                     .border_1()
                     .border_color(theme.border_variant)
                     .bg(theme.element)
@@ -435,7 +435,7 @@ impl SettingsPage {
                     )
                     .children(self.code_note.as_ref().map(|(ok, text)| note(theme, if *ok { "circle-check" } else { "circle-alert" }, if *ok { theme.success } else { theme.error }, text.clone())))
                     .child(div().w_full().min_w(px(0.)).text_size(px(11.5)).text_color(theme.text_placeholder).child(
-                        "Muxin's agent on each machine looks for git checkouts in these folders, a few levels deep. Fix with agent and Review with agent then work in a new worktree of a checkout found there, on its own branch, instead of a fresh clone.",
+                        "Muxin's agent on each machine looks for git checkouts in these folders, a few levels deep. Work on it with an agent and Review with agent then work in a new worktree of a checkout found there, on its own branch, instead of a fresh clone.",
                     )),
             )
     }
@@ -632,7 +632,7 @@ impl SettingsPage {
                 .items_center()
                 .gap(px(12.))
                 .p(px(12.))
-                .rounded(px(8.))
+                .rounded(crate::ui::kit::corner(8.))
                 .bg(theme.warning.opacity(0.10))
                 .child(icon("triangle-alert", 15., theme.warning))
                 .child(
@@ -663,7 +663,7 @@ impl SettingsPage {
                 .gap(px(5.))
                 .h(px(24.))
                 .px(px(8.))
-                .rounded(px(5.))
+                .rounded(crate::ui::kit::corner(5.))
                 .border_1()
                 .border_color(theme.border_variant)
                 .bg(theme.element)
@@ -886,7 +886,7 @@ impl SettingsPage {
                     .flex()
                     .items_center()
                     .gap(px(6.))
-                    .rounded(px(6.))
+                    .rounded(crate::ui::kit::corner(6.))
                     .border_1()
                     .cursor_pointer()
                     .border_color(if selected {
@@ -949,7 +949,7 @@ impl SettingsPage {
                 .px(px(9.))
                 .flex()
                 .items_center()
-                .rounded(px(6.))
+                .rounded(crate::ui::kit::corner(6.))
                 .cursor_pointer()
                 .text_size(px(12.))
                 .text_color(if selected {
@@ -1030,7 +1030,7 @@ impl SettingsPage {
         let preview = div()
             .mt(px(4.))
             .p(px(12.))
-            .rounded(px(8.))
+            .rounded(crate::ui::kit::corner(8.))
             .bg(theme.canvas)
             .border_1()
             .border_color(theme.border_variant)
@@ -1126,20 +1126,11 @@ impl SettingsPage {
                 .gap(px(6.))
                 .h(px(28.))
                 .px(px(12.))
-                .rounded(px(7.))
+                .rounded(crate::ui::kit::corner(7.))
                 .cursor_pointer()
                 .text_size(px(12.5))
-                .text_color(if selected {
-                    theme.text
-                } else {
-                    theme.text_muted
-                })
-                .when(selected, |d| {
-                    d.bg(theme.surface)
-                        .border_1()
-                        .border_color(theme.border)
-                        .shadow_sm()
-                })
+                .text_color(if selected { theme.text } else { theme.text_muted })
+                .when(selected, |d| d.bg(theme.surface).border_1().border_color(theme.border).when(!crate::ui::kit::square(), |d| d.shadow_sm()))
                 .when(!selected, |d| d.hover(|st| st.text_color(theme.text)))
                 .child(kit::color_icon(
                     theme,
@@ -1211,7 +1202,7 @@ impl SettingsPage {
                             .flex()
                             .gap(px(2.))
                             .p(px(3.))
-                            .rounded(px(9.))
+                            .rounded(crate::ui::kit::corner(9.))
                             .bg(theme.element)
                             .border_1()
                             .border_color(theme.border_variant)
@@ -1246,66 +1237,40 @@ impl SettingsPage {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let chosen = kit::IconStyle::from_id(&appearance.icon_style);
-        let sample = [
-            ("gauge", kit::tiles::OVERVIEW),
-            ("workflow", kit::tiles::JOBS),
-            ("terminal", kit::tiles::WORKSPACES),
-            ("laptop", kit::tiles::MACOS),
-        ];
-        let cards: Vec<AnyElement> =
-            kit::IconStyle::ALL
-                .into_iter()
-                .map(|style| {
-                    let look = kit::Look::new(style, theme);
-                    let selected = style == chosen;
-                    div()
-                        .id(SharedString::from(format!("icon-style-{}", style.id())))
-                        .w(px(118.))
-                        .flex()
-                        .flex_col()
-                        .gap(px(8.))
-                        .p(px(10.))
-                        .rounded(px(9.))
-                        .border_1()
-                        .cursor_pointer()
-                        .border_color(if selected {
-                            theme.accent
-                        } else {
-                            theme.border_variant
-                        })
-                        .bg(if selected {
-                            theme.accent.opacity(0.08)
-                        } else {
-                            theme.surface
-                        })
-                        .when(!selected, |d| d.hover(|st| st.border_color(theme.border)))
-                        .child(div().flex().gap(px(6.)).children(
-                            sample.iter().map(|(name, (from, to))| {
-                                kit::tile_in(look, name, *from, *to, 20.)
-                            }),
-                        ))
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(5.))
-                                .text_size(px(12.))
-                                .text_color(if selected {
-                                    theme.text
-                                } else {
-                                    theme.text_muted
-                                })
-                                .child(style.label())
-                                .when(selected, |d| d.child(icon("check", 12., theme.text_accent))),
-                        )
-                        .on_click(cx.listener(move |_, _, window, cx| {
-                            theme_mod::update_appearance(window, cx, |a, _| {
-                                a.icon_style = style.id().into()
-                            })
-                        }))
-                        .into_any_element()
-                })
-                .collect();
+        let sample = [("gauge", kit::tiles::OVERVIEW), ("workflow", kit::tiles::JOBS), ("terminal", kit::tiles::WORKSPACES), ("laptop", kit::tiles::MACOS)];
+        let cards: Vec<AnyElement> = kit::IconStyle::ALL
+            .into_iter()
+            .map(|style| {
+                let look = kit::Look::new(style, theme);
+                let selected = style == chosen;
+                div()
+                    .id(SharedString::from(format!("icon-style-{}", style.id())))
+                    .w(px(118.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .p(px(10.))
+                    .rounded(crate::ui::kit::corner(9.))
+                    .border_1()
+                    .cursor_pointer()
+                    .border_color(if selected { theme.accent } else { theme.border_variant })
+                    .bg(if selected { theme.accent.opacity(0.08) } else { theme.surface })
+                    .when(!selected, |d| d.hover(|st| st.border_color(theme.border)))
+                    .child(div().flex().gap(px(6.)).children(sample.iter().map(|(name, (from, to))| kit::tile_in(look, name, *from, *to, 20.))))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(5.))
+                            .text_size(px(12.))
+                            .text_color(if selected { theme.text } else { theme.text_muted })
+                            .child(style.label())
+                            .when(selected, |d| d.child(icon("check", 12., theme.text_accent))),
+                    )
+                    .on_click(cx.listener(move |_, _, window, cx| theme_mod::update_appearance(window, cx, |a, _| a.icon_style = style.id().into())))
+                    .into_any_element()
+            })
+            .collect();
         div().flex().flex_wrap().gap(px(10.)).children(cards)
     }
 
@@ -1513,60 +1478,32 @@ impl SettingsPage {
                     .py(px(12.))
                     .gap(px(8.))
                     // As wide as its choices (a row keeps it from stretching).
-                    .child(
-                        div().flex().child(
-                            div()
-                                .flex()
-                                .gap(px(2.))
-                                .p(px(2.))
-                                .rounded(px(7.))
-                                .bg(theme.element)
-                                .children(options.into_iter().map(|(id, name)| {
-                                    let on = chosen == id;
-                                    let engine = self.engine.clone();
-                                    div()
-                                        .id(SharedString::from(format!(
-                                            "editor-{}",
-                                            if id.is_empty() { "auto" } else { id.as_str() }
-                                        )))
-                                        .px(px(10.))
-                                        .h(px(24.))
-                                        .flex()
-                                        .items_center()
-                                        .rounded(px(5.))
-                                        .cursor_pointer()
-                                        .text_size(px(12.))
-                                        .text_color(if on {
-                                            theme.text
-                                        } else {
-                                            theme.text_placeholder
-                                        })
-                                        .when(on, |d| d.bg(theme.element_selected))
-                                        .when(!on, |d| d.hover(|st| st.bg(theme.ghost_hover)))
-                                        .gap(px(6.))
-                                        .children(
-                                            crate::fleet::editor::icon(&id).map(|png| {
-                                                gpui::img(png).size(px(14.)).flex_none()
-                                            }),
-                                        )
-                                        .child(name)
-                                        .on_click(move |_, _, cx| {
-                                            let mut s = engine.settings();
-                                            s.editor = id.clone();
-                                            let _ = engine.update_settings(s);
-                                            cx.refresh_windows();
-                                        })
-                                })),
-                        ),
-                    )
-                    .child(
+                    .child(div().flex().child(div().flex().gap(px(2.)).p(px(2.)).rounded(crate::ui::kit::corner(7.)).bg(theme.element).children(options.into_iter().map(|(id, name)| {
+                        let on = chosen == id;
+                        let engine = self.engine.clone();
                         div()
-                            .w_full()
-                            .min_w(px(0.))
-                            .text_size(px(11.5))
-                            .text_color(theme.text_placeholder)
-                            .child(detail),
-                    ),
+                            .id(SharedString::from(format!("editor-{}", if id.is_empty() { "auto" } else { id.as_str() })))
+                            .px(px(10.))
+                            .h(px(24.))
+                            .flex()
+                            .items_center()
+                            .rounded(crate::ui::kit::corner(5.))
+                            .cursor_pointer()
+                            .text_size(px(12.))
+                            .text_color(if on { theme.text } else { theme.text_placeholder })
+                            .when(on, |d| d.bg(theme.element_selected))
+                            .when(!on, |d| d.hover(|st| st.bg(theme.ghost_hover)))
+                            .gap(px(6.))
+                            .children(crate::fleet::editor::icon(&id).map(|png| gpui::img(png).size(px(14.)).flex_none()))
+                            .child(name)
+                            .on_click(move |_, _, cx| {
+                                let mut s = engine.settings();
+                                s.editor = id.clone();
+                                let _ = engine.update_settings(s);
+                                cx.refresh_windows();
+                            })
+                    }))))
+                    .child(div().w_full().min_w(px(0.)).text_size(px(11.5)).text_color(theme.text_placeholder).child(detail)),
             )
     }
 
@@ -1615,20 +1552,11 @@ impl Render for SettingsPage {
                     .gap(px(7.))
                     .h(px(30.))
                     .px(px(12.))
-                    .rounded(px(7.))
+                    .rounded(crate::ui::kit::corner(7.))
                     .cursor_pointer()
                     .text_size(px(13.))
-                    .text_color(if selected {
-                        theme.text
-                    } else {
-                        theme.text_muted
-                    })
-                    .when(selected, |d| {
-                        d.bg(theme.surface)
-                            .border_1()
-                            .border_color(theme.border)
-                            .shadow_sm()
-                    })
+                    .text_color(if selected { theme.text } else { theme.text_muted })
+                    .when(selected, |d| d.bg(theme.surface).border_1().border_color(theme.border).when(!crate::ui::kit::square(), |d| d.shadow_sm()))
                     .when(!selected, |d| d.hover(|st| st.text_color(theme.text)))
                     .child(icon(
                         tab.icon(),
@@ -1644,32 +1572,10 @@ impl Render for SettingsPage {
                     .into_any_element()
             })
             .collect();
-        let bar = div()
-            .flex_none()
-            .px(px(28.))
-            .pt(px(18.))
-            .pb(px(14.))
-            .border_b_1()
-            .border_color(theme.border_variant)
-            .child(
-                div()
-                    .flex()
-                    .w_full()
-                    .max_w(px(760.))
-                    .gap(px(2.))
-                    .p(px(3.))
-                    .rounded(px(9.))
-                    .bg(theme.element)
-                    .border_1()
-                    .border_color(theme.border_variant)
-                    .children(tabs),
-            );
-        let body = div()
-            .w_full()
-            .max_w(px(760.))
-            .flex()
-            .flex_col()
-            .gap(px(28.));
+        let bar = div().flex_none().px(px(28.)).pt(px(18.)).pb(px(14.)).border_b_1().border_color(theme.border_variant).child(
+            div().flex().w_full().max_w(px(760.)).gap(px(2.)).p(px(3.)).rounded(crate::ui::kit::corner(9.)).bg(theme.element).border_1().border_color(theme.border_variant).children(tabs),
+        );
+        let body = div().w_full().max_w(px(760.)).flex().flex_col().gap(px(28.));
         let body = match self.tab {
             SettingsTab::General => body
                 .child(self.shell_section(&theme, cx))
@@ -1740,7 +1646,7 @@ impl SettingsPage {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded(px(5.))
+                    .rounded(crate::ui::kit::corner(5.))
                     .border_1()
                     .border_color(if on {
                         theme.accent
@@ -1782,7 +1688,7 @@ impl SettingsPage {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded(px(5.))
+                    .rounded(crate::ui::kit::corner(5.))
                     .border_1()
                     .cursor_pointer()
                     .font_family(mono_font())
@@ -1827,7 +1733,7 @@ impl SettingsPage {
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(px(5.))
+                .rounded(crate::ui::kit::corner(5.))
                 .border_1()
                 .border_color(theme.border_variant)
                 .bg(theme.element)
@@ -2057,22 +1963,10 @@ fn hint_line(theme: &Theme, i: usize, hint: String) -> impl IntoElement {
         .items_center()
         .gap(px(6.))
         .pl(px(24.))
-        .child(
-            mono(hint)
-                .text_size(px(12.))
-                .px(px(6.))
-                .py(px(2.))
-                .rounded(px(4.))
-                .bg(theme.element)
-                .text_color(theme.text_muted),
-        )
-        .child(
-            Button::icon_only(("hint-copy", i), "copy")
-                .tooltip("Copy")
-                .on_click(move |_, _, cx| {
-                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(copy.clone()))
-                }),
-        )
+        .child(mono(hint).text_size(px(12.)).px(px(6.)).py(px(2.)).rounded(crate::ui::kit::corner(4.)).bg(theme.element).text_color(theme.text_muted))
+        .child(Button::icon_only(("hint-copy", i), "copy").tooltip("Copy").on_click(move |_, _, cx| {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(copy.clone()))
+        }))
         .when(grant, |d| {
             d.child(
                 Button::new(("hint-grant", i), "Grant access")
@@ -2101,7 +1995,7 @@ fn swatch(theme: &Theme, p: &Palette, chosen: bool, showing: bool) -> gpui::Stat
             div()
                 .h(px(78.))
                 .flex()
-                .rounded(px(10.))
+                .rounded(crate::ui::kit::corner(10.))
                 .overflow_hidden()
                 .border_2()
                 .border_color(if chosen {
@@ -2120,7 +2014,7 @@ fn swatch(theme: &Theme, p: &Palette, chosen: bool, showing: bool) -> gpui::Stat
                         .gap(px(5.))
                         .px(px(6.))
                         .pt(px(10.))
-                        .child(div().size(px(10.)).rounded(px(3.)).bg(t.accent))
+                        .child(div().size(px(10.)).rounded(crate::ui::kit::corner(3.)).bg(t.accent))
                         .child(bar(20., t.text_placeholder.opacity(0.7)))
                         .child(bar(16., t.text_placeholder.opacity(0.5)))
                         .child(bar(18., t.text_placeholder.opacity(0.5))),
@@ -2137,7 +2031,7 @@ fn swatch(theme: &Theme, p: &Palette, chosen: bool, showing: bool) -> gpui::Stat
                         .child(
                             div()
                                 .h(px(30.))
-                                .rounded(px(6.))
+                                .rounded(crate::ui::kit::corner(6.))
                                 .bg(t.surface)
                                 .border_1()
                                 .border_color(t.border_variant)
@@ -2147,21 +2041,7 @@ fn swatch(theme: &Theme, p: &Palette, chosen: bool, showing: bool) -> gpui::Stat
                                 .gap(px(4.))
                                 .px(px(7.))
                                 .child(bar(46., t.text.opacity(0.85)))
-                                .child(
-                                    div()
-                                        .flex()
-                                        .gap(px(3.))
-                                        .child(div().size(px(6.)).rounded(px(1.5)).bg(t.accent))
-                                        .child(div().size(px(6.)).rounded(px(1.5)).bg(t.success))
-                                        .child(div().size(px(6.)).rounded(px(1.5)).bg(t.success))
-                                        .child(
-                                            div()
-                                                .size(px(6.))
-                                                .rounded(px(1.5))
-                                                .border_1()
-                                                .border_color(t.text_placeholder),
-                                        ),
-                                ),
+                                .child(div().flex().gap(px(3.)).child(div().size(px(6.)).rounded(crate::ui::kit::corner(1.5)).bg(t.accent)).child(div().size(px(6.)).rounded(crate::ui::kit::corner(1.5)).bg(t.success)).child(div().size(px(6.)).rounded(crate::ui::kit::corner(1.5)).bg(t.success)).child(div().size(px(6.)).rounded(crate::ui::kit::corner(1.5)).border_1().border_color(t.text_placeholder))),
                         )
                         .child(
                             div()
@@ -2172,7 +2052,7 @@ fn swatch(theme: &Theme, p: &Palette, chosen: bool, showing: bool) -> gpui::Stat
                                 .child(div().size(px(6.)).rounded_full().bg(t.error))
                                 .child(div().size(px(6.)).rounded_full().bg(t.info))
                                 .child(div().flex_1())
-                                .child(div().w(px(24.)).h(px(9.)).rounded(px(3.)).bg(t.accent)),
+                                .child(div().w(px(24.)).h(px(9.)).rounded(crate::ui::kit::corner(3.)).bg(t.accent)),
                         ),
                 ),
         )

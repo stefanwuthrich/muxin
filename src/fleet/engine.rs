@@ -1418,16 +1418,21 @@ impl Engine {
                 // (or disconnected: nothing we can see).
                 let offline = m.is_down();
                 let git = st.git.get(&m.id);
-                snapshot
-                    .sessions
-                    .extend(found.sessions.iter().cloned().map(|mut s| {
-                        s.attention = st.attention.get(&s.id).cloned().or(s.attention);
-                        s.busy &= !offline;
-                        s.git = git
-                            .and_then(|g| g.iter().find(|(path, _)| *path == s.cwd))
-                            .map(|(_, status)| status.clone());
-                        s
-                    }));
+                snapshot.sessions.extend(found.sessions.iter().cloned().map(|mut s| {
+                    s.attention = st.attention.get(&s.id).cloned().or(s.attention);
+                    s.busy &= !offline;
+                    s.git = git.and_then(|g| g.iter().find(|(path, _)| *path == s.cwd)).map(|(_, status)| status.clone());
+                    s
+                }));
+                // A box shows its agent's session: working, waiting, its git.
+                snapshot.boxes.extend(found.boxes.iter().cloned().map(|mut b| {
+                    let session = found.sessions.iter().find(|s| s.name == b.id && s.status == "running");
+                    b.session_id = session.map(|s| s.id.clone());
+                    b.busy = session.is_some_and(|s| s.busy) && !offline;
+                    b.attention = session.and_then(|s| st.attention.get(&s.id).cloned());
+                    b.git = git.and_then(|g| g.iter().find(|(path, _)| *path == b.path)).map(|(_, status)| status.clone());
+                    b
+                }));
             }
         }
         // Sessions without the agent come after the machine's agent ones.
@@ -1440,6 +1445,7 @@ impl Engine {
                 .unwrap_or(snapshot.sessions.len());
             snapshot.sessions.insert(at, d.info.clone());
         }
+        snapshot.boxes.sort_by_key(|b| std::cmp::Reverse(b.created_at));
         snapshot.notifications = st.notices.iter().cloned().collect();
         let known: Vec<&String> = st.inventory.machines.iter().map(|m| &m.id).collect();
         snapshot.checkouts = st

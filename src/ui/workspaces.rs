@@ -33,6 +33,8 @@ impl Root {
             .collect();
         let allowed = s.machines.iter().filter(|m| m.workspaces_allowed).count();
 
+        // Wrapped text needs its width known before layout (GPUI 0.2): what the button leaves.
+        let intro_width = (self.content_width - 150.).clamp(240., 760.);
         page("workspaces-page", &self.page_scroll)
             .child(
                 div()
@@ -41,9 +43,9 @@ impl Root {
                     .justify_between()
                     .gap(px(20.))
                     .child(
-                        div().flex().flex_col().flex_1().min_w(px(0.)).max_w(px(760.)).gap(px(4.)).child(
+                        div().flex().flex_col().flex_none().w(px(intro_width)).gap(px(4.)).child(
                             div().text_size(px(12.5)).text_color(theme.text_muted).child(
-                                "A workspace is a folder on one of your machines, optionally a git checkout, that an agent uses as its work environment: it runs commands, edits files and syncs code there. Workspaces persist until destroyed.",
+                                "A place on your machines for an agent you're using elsewhere (Claude Code on your laptop, say) to work in: it runs commands, edits files and syncs code there through Muxin. Nothing works there on its own; to hand a task to an agent that does, start a box. Workspaces stay until deleted.",
                             ),
                         ).child(div().text_size(px(12.)).text_color(theme.text_placeholder).child(format!(
                             "{allowed} of {} machines accept workspaces. Agents create them with the workspace_create MCP tool or `muxin workspace create`.",
@@ -85,7 +87,7 @@ impl Root {
             .flex_col()
             .gap(px(12.))
             .p(px(16.))
-            .rounded(px(12.))
+            .rounded(crate::ui::kit::corner(12.))
             .border_1()
             .border_color(theme.border_variant)
             .bg(theme.surface)
@@ -149,7 +151,7 @@ impl Root {
                     .gap(px(10.))
                     .px(px(10.))
                     .py(px(7.))
-                    .rounded(px(8.))
+                    .rounded(crate::ui::kit::corner(8.))
                     .bg(theme.accent2.opacity(0.10))
                     .text_size(px(12.5))
                     .child(icon("git-merge", 14., theme.accent2))
@@ -166,7 +168,7 @@ impl Root {
                     .gap(px(10.))
                     .px(px(10.))
                     .py(px(7.))
-                    .rounded(px(8.))
+                    .rounded(crate::ui::kit::corner(8.))
                     .bg(theme.sidebar)
                     .font_family(mono_font())
                     .text_size(px(12.))
@@ -555,7 +557,7 @@ impl Root {
                         .mx(px(14.))
                         .mb(px(10.))
                         .p(px(10.))
-                        .rounded(px(8.))
+                        .rounded(crate::ui::kit::corner(8.))
                         .bg(theme.sidebar)
                         .font_family(mono_font())
                         .text_size(px(11.5))
@@ -575,74 +577,77 @@ impl Root {
     }
 
     /// The machine page's list of workspaces, plus the switch that allows them.
-    pub(super) fn machine_workspaces(
-        &self,
-        theme: &Theme,
-        s: &crate::fleet::model::Snapshot,
-        m: &crate::fleet::model::Machine,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let mine: Vec<&WorkspaceInfo> = s
-            .workspaces
-            .iter()
-            .filter(|w| w.machine_id == m.id)
-            .collect();
-        let rows: Vec<AnyElement> = mine
-            .iter()
-            .enumerate()
-            .map(|(i, w)| {
-                let id = w.id.clone();
+    /// Agents' workspaces on all machines, small, below the boxes: the other
+    /// way agents work on your machines (an agent you use elsewhere, there).
+    pub(super) fn boxes_page_workspaces(&self, theme: &Theme, s: &crate::fleet::model::Snapshot, cx: &mut Context<Self>) -> AnyElement {
+        let rows: Vec<AnyElement> = s.workspaces.iter().enumerate().map(|(i, w)| self.workspace_row(theme, i, w, true, cx)).collect();
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(10.))
+            .child(
                 div()
-                    .id(SharedString::from(format!("mws-{}", w.id)))
                     .flex()
                     .items_center()
-                    .gap(px(10.))
-                    .px(px(14.))
-                    .py(px(9.))
-                    .cursor_pointer()
-                    .hover(|st| st.bg(theme.ghost_hover))
-                    .when(i > 0, |d| d.border_t_1().border_color(theme.border_variant))
-                    .child(kit::tile(
-                        "terminal",
-                        kit::tiles::WORKSPACES.0,
-                        kit::tiles::WORKSPACES.1,
-                        18.,
-                    ))
-                    .child(div().text_size(px(13.)).child(w.name.clone()))
+                    .justify_between()
+                    .gap(px(12.))
                     .child(
                         div()
-                            .font_family(mono_font())
-                            .text_size(px(11.))
-                            .text_color(theme.text_placeholder)
-                            .child(w.id.clone()),
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.))
+                            .child(section_title(theme, "Agents' workspaces", Some(s.workspaces.len())))
+                            .child(div().text_size(px(12.)).text_color(theme.text_placeholder).child("Folders on your machines that AI tools you use elsewhere work in through Muxin.")),
                     )
-                    .child(div().flex_1())
-                    .children(w.owner.clone().map(|o| {
-                        div()
-                            .text_size(px(11.5))
-                            .text_color(theme.text_placeholder)
-                            .child(o)
-                    }))
                     .child(
-                        div()
-                            .text_size(px(11.5))
-                            .text_color(theme.text_placeholder)
-                            .child(format!("used {}", format::ago(Some(w.last_used_at)))),
-                    )
-                    .child(status_pill(theme, w))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.navigate(Route::Workspace(id.clone()), window, cx)
-                    }))
-                    .on_mouse_down(gpui::MouseButton::Right, {
-                        let wid = w.id.clone();
-                        super::menu::on_right_click(
-                            move || super::menu::MenuTarget::Workspace(wid.clone()),
-                            cx,
-                        )
-                    })
+                        Button::new("ws-all", "All workspaces")
+                            .icon("arrow-right")
+                            .style(ButtonStyle::Ghost)
+                            .on_click(cx.listener(|this, _, window, cx| this.navigate(Route::Workspaces, window, cx))),
+                    ),
+            )
+            .child(if rows.is_empty() {
+                card(theme)
+                    .child(div().px(px(14.)).py(px(10.)).text_size(px(12.5)).text_color(theme.text_placeholder).child("None yet. An agent makes one with the workspace_create MCP tool."))
                     .into_any_element()
+            } else {
+                card(theme).children(rows).into_any_element()
             })
-            .collect();
+            .into_any_element()
+    }
+
+    /// One workspace in a list: on a machine's page, or with its machine on the Boxes page.
+    fn workspace_row(&self, theme: &Theme, i: usize, w: &WorkspaceInfo, machine: bool, cx: &mut Context<Self>) -> AnyElement {
+        let id = w.id.clone();
+        let place = machine.then(|| workspace_subtitle(w));
+        div()
+            .id(SharedString::from(format!("mws-{}", w.id)))
+            .flex()
+            .items_center()
+            .gap(px(10.))
+            .px(px(14.))
+            .py(px(9.))
+            .cursor_pointer()
+            .hover(|st| st.bg(theme.ghost_hover))
+            .when(i > 0, |d| d.border_t_1().border_color(theme.border_variant))
+            .child(kit::tile("terminal", kit::tiles::WORKSPACES.0, kit::tiles::WORKSPACES.1, 18.))
+            .child(div().flex_none().text_size(px(13.)).child(w.name.clone()))
+            .child(div().flex_none().font_family(mono_font()).text_size(px(11.)).text_color(theme.text_placeholder).child(w.id.clone()))
+            .child(div().flex_1().min_w(px(0.)).truncate().text_size(px(11.5)).text_color(theme.text_placeholder).children(place))
+            .children(w.owner.clone().map(|o| div().flex_none().text_size(px(11.5)).text_color(theme.text_placeholder).child(o)))
+            .child(div().flex_none().text_size(px(11.5)).text_color(theme.text_placeholder).child(format!("used {}", format::ago(Some(w.last_used_at)))))
+            .child(status_pill(theme, w))
+            .on_click(cx.listener(move |this, _, window, cx| this.navigate(Route::Workspace(id.clone()), window, cx)))
+            .on_mouse_down(gpui::MouseButton::Right, {
+                let wid = w.id.clone();
+                super::menu::on_right_click(move || super::menu::MenuTarget::Workspace(wid.clone()), cx)
+            })
+            .into_any_element()
+    }
+
+    pub(super) fn machine_workspaces(&self, theme: &Theme, s: &crate::fleet::model::Snapshot, m: &crate::fleet::model::Machine, cx: &mut Context<Self>) -> AnyElement {
+        let mine: Vec<&WorkspaceInfo> = s.workspaces.iter().filter(|w| w.machine_id == m.id).collect();
+        let rows: Vec<AnyElement> = mine.iter().enumerate().map(|(i, w)| self.workspace_row(theme, i, w, false, cx)).collect();
         let machine_id = m.id.clone();
         let new_on = m.id.clone();
         let allowed = m.workspaces_allowed;
@@ -789,7 +794,7 @@ fn exit_badge(theme: &Theme, c: &WorkspaceCommand) -> AnyElement {
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(4.))
+        .rounded(crate::ui::kit::corner(4.))
         .bg(color.opacity(0.14))
         .text_color(color)
         .font_family(mono_font())
