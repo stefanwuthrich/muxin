@@ -12,6 +12,7 @@ anyhow = "1"
 base64 = "0.22"
 libc = "0.2"
 portable-pty = "0.9"
+serde = "1"
 serde_json = "1"
 # Claude plan meters (`usage`): the same call Claude Code's /usage makes.
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls"] }
@@ -24,8 +25,14 @@ ring = "0.17"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "time", "sync", "signal"] }
 
 # The desktop view (`screen`): X11 capture and input on Linux, JPEG frames.
+# On Wayland, X11's picture of the desktop is black, so capture goes through
+# the desktop portal (pure Rust) and GStreamer pulls the frames.
 [target.'cfg(target_os = "linux")'.dependencies]
 x11rb = { version = "0.13", features = ["xtest", "shm", "xfixes", "randr"] }
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
+
+
+
 # The clipboard on Wayland (ext-data-control, and wlr-data-control where that's
 # what the compositor still offers). X11 is the fallback, including GNOME.
 wayland-client = "0.31"

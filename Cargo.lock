@@ -3860,6 +3860,7 @@ dependencies = [
  "reqwest",
  "ring",
  "rustls",
+ "serde",
  "serde_json",
  "socket2",
  "tokio",
@@ -3868,6 +3869,7 @@ dependencies = [
  "wayland-protocols-wlr",
  "windows-sys 0.61.2",
  "x11rb",
+ "zbus",
 ]
 
 [[package]]

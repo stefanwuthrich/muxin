@@ -1,6 +1,7 @@
 //! The machine's screen, for Muxen's desktop view: frames out, mouse and
-//! keyboard in. Linux desktops on X11, and Macs (ScreenCaptureKit, see
-//! mac_screen.m).
+//! keyboard in. Linux desktops on X11, Wayland through the screen-share
+//! portal (an X11 capture of a Wayland session is a black picture), and Macs
+//! (ScreenCaptureKit, see mac_screen.m).
 //!
 //! A link starts `muxen-agent screen` (on Linux with the desktop session's
 //! DISPLAY and XAUTHORITY) and relays between it and a link channel:
@@ -58,6 +59,7 @@ const SESSION_KEYS: &[&str] = &[
     "WAYLAND_DISPLAY",
     "XDG_RUNTIME_DIR",
     "XDG_SESSION_TYPE",
+    "DBUS_SESSION_BUS_ADDRESS",
 ];
 
 /// The graphical-session variables among `vars` (empty values dropped).
@@ -87,6 +89,14 @@ fn session_score(vars: &[(String, String)]) -> u8 {
 #[cfg(target_os = "linux")]
 fn fill_session(own: &mut Vec<(String, String)>, found: &[(String, String)]) {
     let has = |vars: &[(String, String)], key: &str| vars.iter().any(|(k, _)| k == key);
+    if !has(own, "DBUS_SESSION_BUS_ADDRESS") {
+        if let Some(bus) = found
+            .iter()
+            .find(|(k, v)| k == "DBUS_SESSION_BUS_ADDRESS" && !v.is_empty())
+        {
+            own.push(bus.clone());
+        }
+    }
     let want: &[&str] = if !has(own, "DISPLAY") && !has(own, "WAYLAND_DISPLAY") {
         SESSION_KEYS
     } else if !has(own, "WAYLAND_DISPLAY") {
@@ -171,9 +181,15 @@ pub fn no_session() -> Option<String> {
         if pw.is_null() || (*pw).pw_name.is_null() {
             return format!("user {uid}");
         }
-        std::ffi::CStr::from_ptr((*pw).pw_name).to_string_lossy().into_owned()
+        std::ffi::CStr::from_ptr((*pw).pw_name)
+            .to_string_lossy()
+            .into_owned()
     };
-    Some(format!("{} is using this Mac's screen, not {}. Muxin shows the screen of the account it connects as.", name(owner), name(me)))
+    Some(format!(
+        "{} is using this Mac's screen, not {}. Muxin shows the screen of the account it connects as.",
+        name(owner),
+        name(me)
+    ))
 }
 
 #[cfg(windows)]
@@ -189,6 +205,10 @@ pub fn no_session() -> Option<String> {
     // `session_env` says it: no DISPLAY to borrow.
     None
 }
+
+#[cfg(target_os = "linux")]
+#[path = "portal_screen.rs"]
+mod portal;
 
 /// `muxen-agent screen [fps] [quality] [max_width] [tiles|frames] [display]`:
 /// streams a screen on stdout and applies input from stdin until either
@@ -212,6 +232,16 @@ pub fn run(args: &[String]) -> i32 {
         .filter(|d| !d.is_empty() && *d != "main");
     #[cfg(target_os = "linux")]
     {
+        // A Wayland desktop's X11 root window is black. Share the real screen.
+        if portal::wayland_session() {
+            match portal::open(fps, max_width) {
+                Ok(screen) => return stream(screen, fps, quality as u8, max_width, tiles),
+                Err(e) => {
+                    hello(&serde_json::json!({ "error": e }));
+                    return 1;
+                }
+            }
+        }
         match x11::X11::open(display) {
             Ok(screen) => stream(screen, fps, quality as u8, max_width, tiles),
             Err(e) => {
