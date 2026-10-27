@@ -60,21 +60,47 @@ pub fn note(req: &Value) -> Value {
     if !cwd.is_dir() {
         return json!({ "ok": false, "error": format!("{} isn't a folder on this machine.", cwd.display()) });
     }
-    let since = UNIX_EPOCH + Duration::from_secs(req["since"].as_u64().unwrap_or(0).saturating_sub(120));
+    let since =
+        UNIX_EPOCH + Duration::from_secs(req["since"].as_u64().unwrap_or(0).saturating_sub(120));
     let mut homes = vec![crate::sys::user_home()];
-    homes.extend(req["homes"].as_array().into_iter().flatten().filter_map(Value::as_str).map(PathBuf::from));
-    let from = req["from"].as_str().filter(|s| !s.is_empty()).unwrap_or(agent);
-    let to = req["to"].as_str().filter(|s| !s.is_empty()).unwrap_or("the next agent");
-    let terminal = req["terminal"].as_str().map(str::trim).filter(|t| !t.is_empty());
+    homes.extend(
+        req["homes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(PathBuf::from),
+    );
+    let from = req["from"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(agent);
+    let to = req["to"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .unwrap_or("the next agent");
+    let terminal = req["terminal"]
+        .as_str()
+        .map(str::trim)
+        .filter(|t| !t.is_empty());
 
     let mut found = find(agent, &cwd.to_string_lossy(), &homes, since);
     if let Some(t) = found.as_mut() {
         // The closest home it's in: a box's is inside the user's, and inside the box it's "~".
         let mut by_depth: Vec<&PathBuf> = homes.iter().collect();
         by_depth.sort_by_key(|h| std::cmp::Reverse(h.components().count()));
-        t.shown = match by_depth.into_iter().find_map(|h| t.path.strip_prefix(h).ok()) {
+        t.shown = match by_depth
+            .into_iter()
+            .find_map(|h| t.path.strip_prefix(h).ok())
+        {
             // One kind of slash after "~/", on Windows too.
-            Some(rest) => format!("~/{}", rest.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/")),
+            Some(rest) => format!(
+                "~/{}",
+                rest.components()
+                    .map(|c| c.as_os_str().to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("/")
+            ),
             None => t.path.display().to_string(),
         };
     }
@@ -142,14 +168,19 @@ fn find(agent: &str, cwd: &str, homes: &[PathBuf], since: SystemTime) -> Option<
 
 /// The most recently changed of `files`.
 fn newest(files: Vec<PathBuf>) -> Vec<PathBuf> {
-    let mut dated: Vec<(SystemTime, PathBuf)> = files.into_iter().filter_map(|f| Some((std::fs::metadata(&f).ok()?.modified().ok()?, f))).collect();
+    let mut dated: Vec<(SystemTime, PathBuf)> = files
+        .into_iter()
+        .filter_map(|f| Some((std::fs::metadata(&f).ok()?.modified().ok()?, f)))
+        .collect();
     dated.sort_by_key(|d| std::cmp::Reverse(d.0));
     dated.into_iter().map(|(_, f)| f).collect()
 }
 
 fn lines(path: &Path) -> impl Iterator<Item = Value> {
     let file = std::fs::File::open(path).ok();
-    file.into_iter().flat_map(|f| BufReader::new(f).lines().map_while(Result::ok)).filter_map(|l| serde_json::from_str(&l).ok())
+    file.into_iter()
+        .flat_map(|f| BufReader::new(f).lines().map_while(Result::ok))
+        .filter_map(|l| serde_json::from_str(&l).ok())
 }
 
 /// The first `n` records of a `.jsonl` file.
@@ -160,13 +191,22 @@ fn head(path: &Path, n: usize) -> Vec<Value> {
 // Claude Code.
 
 fn claude_file(cwd: &str, homes: &[PathBuf], since: SystemTime) -> Option<PathBuf> {
-    let slug: String = cwd.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
-    let mut dirs: Vec<PathBuf> = std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from).into_iter().collect();
+    let slug: String = cwd
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    let mut dirs: Vec<PathBuf> = std::env::var_os("CLAUDE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .into_iter()
+        .collect();
     for h in homes {
         dirs.push(h.join(".claude"));
         dirs.push(h.join(".config/claude"));
     }
-    let files = dirs.iter().flat_map(|d| crate::usage::jsonl_files(&d.join("projects").join(&slug), 1, since)).collect();
+    let files = dirs
+        .iter()
+        .flat_map(|d| crate::usage::jsonl_files(&d.join("projects").join(&slug), 1, since))
+        .collect();
     newest(files).into_iter().next()
 }
 
@@ -189,10 +229,19 @@ fn read_claude(path: &Path) -> Transcript {
             }
             // Tool results come back as user messages: left out (but a new task's number).
             Some("user") => {
-                for r in content.as_array().into_iter().flatten().filter(|b| b["type"] == "tool_result") {
-                    if let Some(i) = made.iter().position(|(id, _)| r["tool_use_id"].as_str() == Some(id)) {
+                for r in content
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|b| b["type"] == "tool_result")
+                {
+                    if let Some(i) = made
+                        .iter()
+                        .position(|(id, _)| r["tool_use_id"].as_str() == Some(id))
+                    {
                         let (_, text) = made.remove(i);
-                        let number = task_number(&text_of(&r["content"])).unwrap_or_else(|| (tasks.len() + 1).to_string());
+                        let number = task_number(&text_of(&r["content"]))
+                            .unwrap_or_else(|| (tasks.len() + 1).to_string());
                         tasks.push((number, false, text));
                     }
                 }
@@ -203,22 +252,32 @@ fn read_claude(path: &Path) -> Transcript {
             Some("assistant") => {
                 for block in content.as_array().into_iter().flatten() {
                     match block["type"].as_str() {
-                        Some("text") => push_agent(&mut t.turns, block["text"].as_str().unwrap_or("")),
+                        Some("text") => {
+                            push_agent(&mut t.turns, block["text"].as_str().unwrap_or(""))
+                        }
                         Some("tool_use") => {
-                            let (name, input) = (block["name"].as_str().unwrap_or(""), &block["input"]);
+                            let (name, input) =
+                                (block["name"].as_str().unwrap_or(""), &block["input"]);
                             if name == "TodoWrite" {
                                 t.todos = todos(&input["todos"], "content", "status");
                             } else if name == "TaskCreate" {
-                                made.push((block["id"].as_str().unwrap_or("").to_string(), input["subject"].as_str().unwrap_or("").to_string()));
+                                made.push((
+                                    block["id"].as_str().unwrap_or("").to_string(),
+                                    input["subject"].as_str().unwrap_or("").to_string(),
+                                ));
                             } else if name == "TaskUpdate" {
                                 let id = match &input["taskId"] {
                                     Value::Number(n) => n.to_string(),
-                                    v => v.as_str().unwrap_or("").trim_start_matches('#').to_string(),
+                                    v => {
+                                        v.as_str().unwrap_or("").trim_start_matches('#').to_string()
+                                    }
                                 };
                                 match input["status"].as_str() {
                                     Some("deleted") => tasks.retain(|(n, ..)| *n != id),
                                     status => {
-                                        if let Some(task) = tasks.iter_mut().find(|(n, ..)| *n == id) {
+                                        if let Some(task) =
+                                            tasks.iter_mut().find(|(n, ..)| *n == id)
+                                        {
                                             if let Some(st) = status {
                                                 task.1 = st == "completed";
                                             }
@@ -240,7 +299,10 @@ fn read_claude(path: &Path) -> Transcript {
         }
     }
     if t.todos.is_empty() {
-        t.todos = tasks.into_iter().map(|(_, done, text)| (done, text)).collect();
+        t.todos = tasks
+            .into_iter()
+            .map(|(_, done, text)| (done, text))
+            .collect();
     }
     t
 }
@@ -274,7 +336,12 @@ fn user_text(content: &Value) -> Option<String> {
 
 fn clean_user(s: &str) -> Option<String> {
     let s = s.trim();
-    let added = ["<system-reminder>", "<local-command-", "<task-notification>", "Caveat: The messages below"];
+    let added = [
+        "<system-reminder>",
+        "<local-command-",
+        "<task-notification>",
+        "Caveat: The messages below",
+    ];
     if s.is_empty() || added.iter().any(|p| s.starts_with(p)) {
         return None;
     }
@@ -295,14 +362,24 @@ fn between<'a>(s: &'a str, open: &str, close: &str) -> Option<&'a str> {
 // Codex.
 
 fn codex_file(cwd: &str, homes: &[PathBuf], since: SystemTime) -> Option<PathBuf> {
-    let mut dirs: Vec<PathBuf> = std::env::var_os("CODEX_HOME").map(|d| PathBuf::from(d).join("sessions")).into_iter().collect();
+    let mut dirs: Vec<PathBuf> = std::env::var_os("CODEX_HOME")
+        .map(|d| PathBuf::from(d).join("sessions"))
+        .into_iter()
+        .collect();
     dirs.extend(homes.iter().map(|h| h.join(".codex/sessions")));
     let files: Vec<PathBuf> = dirs
         .iter()
         .flat_map(|d| crate::usage::jsonl_files(d, 4, since))
-        .filter(|f| f.file_name().is_some_and(|n| n.to_string_lossy().starts_with("rollout-")))
+        .filter(|f| {
+            f.file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with("rollout-"))
+        })
         .collect();
-    newest(files).into_iter().find(|f| head(f, 5).iter().any(|v| v["type"] == "session_meta" && v["payload"]["cwd"].as_str() == Some(cwd)))
+    newest(files).into_iter().find(|f| {
+        head(f, 5)
+            .iter()
+            .any(|v| v["type"] == "session_meta" && v["payload"]["cwd"].as_str() == Some(cwd))
+    })
 }
 
 fn read_codex(path: &Path) -> Transcript {
@@ -315,7 +392,14 @@ fn read_codex(path: &Path) -> Transcript {
         match p["type"].as_str() {
             Some("message") => {
                 let texts = |kind: &str| -> String {
-                    p["content"].as_array().into_iter().flatten().filter(|c| c["type"] == kind).filter_map(|c| c["text"].as_str()).collect::<Vec<_>>().join("\n")
+                    p["content"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter(|c| c["type"] == kind)
+                        .filter_map(|c| c["text"].as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n")
                 };
                 match p["role"].as_str() {
                     Some("user") => {
@@ -324,11 +408,16 @@ fn read_codex(path: &Path) -> Transcript {
                             .into_iter()
                             .flatten()
                             .filter_map(|c| match c["type"].as_str() {
-                                Some("input_text") => c["text"].as_str().filter(|s| !codex_context(s)).map(|s| s.trim().to_string()),
+                                Some("input_text") => c["text"]
+                                    .as_str()
+                                    .filter(|s| !codex_context(s))
+                                    .map(|s| s.trim().to_string()),
                                 Some("input_image") => Some("[an image]".into()),
                                 _ => None,
                             })
-                            .filter(|s| !s.is_empty() && !s.starts_with("<image") && s != "</image>")
+                            .filter(|s| {
+                                !s.is_empty() && !s.starts_with("<image") && s != "</image>"
+                            })
                             .collect();
                         if !kept.is_empty() {
                             t.turns.push(Turn::User(kept.join("\n")));
@@ -340,7 +429,10 @@ fn read_codex(path: &Path) -> Transcript {
             }
             Some("function_call") => {
                 let name = p["name"].as_str().unwrap_or("");
-                let args: Value = p["arguments"].as_str().and_then(|a| serde_json::from_str(a).ok()).unwrap_or(Value::Null);
+                let args: Value = p["arguments"]
+                    .as_str()
+                    .and_then(|a| serde_json::from_str(a).ok())
+                    .unwrap_or(Value::Null);
                 if name == "update_plan" {
                     t.todos = todos(&args["plan"], "step", "status");
                 } else {
@@ -360,7 +452,16 @@ fn read_codex(path: &Path) -> Transcript {
 /// What Codex adds to a user message: its instructions and environment.
 fn codex_context(s: &str) -> bool {
     let s = s.trim_start();
-    ["<environment_context>", "# AGENTS.md instructions", "<user_instructions>", "<INSTRUCTIONS>", "<turn_aborted>", "<user_shell_command>"].iter().any(|p| s.starts_with(p))
+    [
+        "<environment_context>",
+        "# AGENTS.md instructions",
+        "<user_instructions>",
+        "<INSTRUCTIONS>",
+        "<turn_aborted>",
+        "<user_shell_command>",
+    ]
+    .iter()
+    .any(|p| s.starts_with(p))
 }
 
 fn codex_tool(name: &str, args: &Value) -> String {
@@ -371,7 +472,9 @@ fn codex_tool(name: &str, args: &Value) -> String {
                     let words: Vec<&str> = a.iter().filter_map(Value::as_str).collect();
                     // ["bash", "-lc", "cargo test"] is "cargo test".
                     match words.as_slice() {
-                        [_, flag, rest] if flag.starts_with('-') && flag.contains('c') => rest.to_string(),
+                        [_, flag, rest] if flag.starts_with('-') && flag.contains('c') => {
+                            rest.to_string()
+                        }
                         w => w.join(" "),
                     }
                 }
@@ -380,12 +483,23 @@ fn codex_tool(name: &str, args: &Value) -> String {
             ran(&cmd)
         }
         "apply_patch" => {
-            let patch = args.as_str().or_else(|| args["input"].as_str()).unwrap_or("");
+            let patch = args
+                .as_str()
+                .or_else(|| args["input"].as_str())
+                .unwrap_or("");
             let files: Vec<&str> = patch
                 .lines()
-                .filter_map(|l| ["*** Update File: ", "*** Add File: ", "*** Delete File: "].iter().find_map(|p| l.strip_prefix(p)))
+                .filter_map(|l| {
+                    ["*** Update File: ", "*** Add File: ", "*** Delete File: "]
+                        .iter()
+                        .find_map(|p| l.strip_prefix(p))
+                })
                 .collect();
-            if files.is_empty() { "edited files".into() } else { format!("edited {}", files.join(", ")) }
+            if files.is_empty() {
+                "edited files".into()
+            } else {
+                format!("edited {}", files.join(", "))
+            }
         }
         // Codex's code mode: a script that calls its tools.
         "exec" | "js" => match args.as_str().or_else(|| args["code"].as_str()) {
@@ -403,7 +517,13 @@ fn script_line(code: &str) -> String {
     let mut rest = code;
     while let Some(i) = rest.find("cmd:") {
         rest = rest[i + 4..].trim_start();
-        let Some(q) = rest.chars().next().filter(|c| matches!(c, '"' | '\'' | '`')) else { continue };
+        let Some(q) = rest
+            .chars()
+            .next()
+            .filter(|c| matches!(c, '"' | '\'' | '`'))
+        else {
+            continue;
+        };
         let mut cmd = String::new();
         let mut chars = rest[1..].char_indices();
         let mut end = rest.len() - 1;
@@ -428,7 +548,11 @@ fn script_line(code: &str) -> String {
     }
     let files = patched(code);
     match (files.is_empty(), cmds.is_empty()) {
-        (false, false) => format!("edited {}, then {}", files.join(", "), ran(&cmds.join("; "))),
+        (false, false) => format!(
+            "edited {}, then {}",
+            files.join(", "),
+            ran(&cmds.join("; "))
+        ),
         (false, true) => format!("edited {}", files.join(", ")),
         (true, false) => ran(&cmds.join("; ")),
         (true, true) => format!("ran a script: {}", one_line(code, 140)),
@@ -442,7 +566,9 @@ fn patched(code: &str) -> Vec<String> {
     for marker in ["*** Update File: ", "*** Add File: ", "*** Delete File: "] {
         for (i, _) in code.match_indices(marker) {
             let rest = &code[i + marker.len()..];
-            let end = rest.find(['\n', '"', '\'', '`', '\\']).unwrap_or(rest.len());
+            let end = rest
+                .find(['\n', '"', '\'', '`', '\\'])
+                .unwrap_or(rest.len());
             let file = rest[..end].trim().to_string();
             if !file.is_empty() && !files.contains(&file) {
                 files.push(file);
@@ -459,11 +585,22 @@ fn gemini_file(cwd: &str, homes: &[PathBuf], since: SystemTime) -> Option<PathBu
     let hash: String = digest.as_ref().iter().map(|b| format!("{b:02x}")).collect();
     let mut files = Vec::new();
     for h in homes {
-        let Ok(entries) = std::fs::read_dir(h.join(".gemini/tmp").join(&hash).join("chats")) else { continue };
+        let Ok(entries) = std::fs::read_dir(h.join(".gemini/tmp").join(&hash).join("chats")) else {
+            continue;
+        };
         for e in entries.flatten() {
             let path = e.path();
-            let fresh = e.metadata().ok().and_then(|m| m.modified().ok()).is_some_and(|m| m >= since);
-            if fresh && path.extension().is_some_and(|x| x == "json") && path.file_name().is_some_and(|n| n.to_string_lossy().starts_with("session-")) {
+            let fresh = e
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .is_some_and(|m| m >= since);
+            if fresh
+                && path.extension().is_some_and(|x| x == "json")
+                && path
+                    .file_name()
+                    .is_some_and(|n| n.to_string_lossy().starts_with("session-"))
+            {
                 files.push(path);
             }
         }
@@ -473,7 +610,12 @@ fn gemini_file(cwd: &str, homes: &[PathBuf], since: SystemTime) -> Option<PathBu
 
 fn read_gemini(path: &Path) -> Transcript {
     let mut t = Transcript::default();
-    let Some(v) = std::fs::read_to_string(path).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()) else { return t };
+    let Some(v) = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+    else {
+        return t;
+    };
     for m in v["messages"].as_array().into_iter().flatten() {
         match m["type"].as_str() {
             Some("user") => {
@@ -502,8 +644,15 @@ fn read_gemini(path: &Path) -> Transcript {
 // Pi.
 
 fn pi_file(cwd: &str, homes: &[PathBuf], since: SystemTime) -> Option<PathBuf> {
-    let files = homes.iter().flat_map(|h| crate::usage::jsonl_files(&h.join(".pi/agent/sessions"), 2, since)).collect();
-    newest(files).into_iter().find(|f| head(f, 1).first().is_some_and(|v| v["cwd"].as_str() == Some(cwd)))
+    let files = homes
+        .iter()
+        .flat_map(|h| crate::usage::jsonl_files(&h.join(".pi/agent/sessions"), 2, since))
+        .collect();
+    newest(files).into_iter().find(|f| {
+        head(f, 1)
+            .first()
+            .is_some_and(|v| v["cwd"].as_str() == Some(cwd))
+    })
 }
 
 fn read_pi(path: &Path) -> Transcript {
@@ -528,8 +677,13 @@ fn read_pi(path: &Path) -> Transcript {
                     Some("assistant") => {
                         for block in m["content"].as_array().into_iter().flatten() {
                             match block["type"].as_str() {
-                                Some("text") => push_agent(&mut t.turns, block["text"].as_str().unwrap_or("")),
-                                Some("toolCall") => t.turns.push(Turn::Tool(tool_line(block["name"].as_str().unwrap_or(""), &block["arguments"]))),
+                                Some("text") => {
+                                    push_agent(&mut t.turns, block["text"].as_str().unwrap_or(""))
+                                }
+                                Some("toolCall") => t.turns.push(Turn::Tool(tool_line(
+                                    block["name"].as_str().unwrap_or(""),
+                                    &block["arguments"],
+                                ))),
                                 _ => {}
                             }
                         }
@@ -549,7 +703,11 @@ fn read_pi(path: &Path) -> Transcript {
 fn text_of(content: &Value) -> String {
     match content {
         Value::String(s) => s.clone(),
-        Value::Array(a) => a.iter().filter_map(|b| b.as_str().or_else(|| b["text"].as_str())).collect::<Vec<_>>().join("\n"),
+        Value::Array(a) => a
+            .iter()
+            .filter_map(|b| b.as_str().or_else(|| b["text"].as_str()))
+            .collect::<Vec<_>>()
+            .join("\n"),
         _ => String::new(),
     }
 }
@@ -567,7 +725,12 @@ fn todos(items: &Value, text: &str, status: &str) -> Vec<(bool, String)> {
         .as_array()
         .into_iter()
         .flatten()
-        .filter_map(|i| Some((matches!(i[status].as_str(), Some("completed" | "done")), i[text].as_str()?.to_string())))
+        .filter_map(|i| {
+            Some((
+                matches!(i[status].as_str(), Some("completed" | "done")),
+                i[text].as_str()?.to_string(),
+            ))
+        })
         .collect()
 }
 
@@ -579,7 +742,11 @@ fn tool_line(name: &str, args: &Value) -> String {
         return ran(cmd);
     }
     let lower = name.to_ascii_lowercase();
-    if let Some(file) = s("file_path").or_else(|| s("path")).or_else(|| s("absolute_path")).or_else(|| s("notebook_path")) {
+    if let Some(file) = s("file_path")
+        .or_else(|| s("path"))
+        .or_else(|| s("absolute_path"))
+        .or_else(|| s("notebook_path"))
+    {
         let verb = if lower.contains("write") || lower.contains("create") {
             "wrote"
         } else if lower.contains("edit") || lower.contains("replace") || lower.contains("patch") {
@@ -612,12 +779,20 @@ fn one_line(s: &str, max: usize) -> String {
     let first = s.trim().lines().next().unwrap_or("").trim();
     let more = s.trim().lines().nth(1).is_some();
     let cut = cut(first, max);
-    if more && cut.len() == first.len() { format!("{cut} …") } else { cut }
+    if more && cut.len() == first.len() {
+        format!("{cut} …")
+    } else {
+        cut
+    }
 }
 
 /// `s`, at most `max` characters, with "…" when cut.
 fn cut(s: &str, max: usize) -> String {
-    if s.chars().count() <= max { s.to_string() } else { format!("{}…", s.chars().take(max).collect::<String>()) }
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        format!("{}…", s.chars().take(max).collect::<String>())
+    }
 }
 
 /// Where the git work stands in `cwd`: its status, the branch's commits since
@@ -625,7 +800,10 @@ fn cut(s: &str, max: usize) -> String {
 fn git_state(cwd: &Path, base: Option<&str>) -> String {
     let git = |args: &[&str]| -> Option<String> {
         let mut cmd = Command::new("git");
-        cmd.arg("-C").arg(cwd).args(args).env("GIT_TERMINAL_PROMPT", "0");
+        cmd.arg("-C")
+            .arg(cwd)
+            .args(args)
+            .env("GIT_TERMINAL_PROMPT", "0");
         match crate::repos::run_with_timeout(&mut cmd, Duration::from_secs(15)) {
             Ok((true, out, _)) => Some(out.trim_end().to_string()),
             _ => None,
@@ -645,11 +823,18 @@ fn git_state(cwd: &Path, base: Option<&str>) -> String {
     }
     out.push_str("```\n");
     if let Some(base) = base {
-        if let Some(log) = git(&["log", "--oneline", "-25", &format!("{base}..HEAD")]).filter(|l| !l.is_empty()) {
-            out.push_str(&format!("\nCommits on this branch since `{base}`:\n\n```\n{log}\n```\n"));
+        if let Some(log) =
+            git(&["log", "--oneline", "-25", &format!("{base}..HEAD")]).filter(|l| !l.is_empty())
+        {
+            out.push_str(&format!(
+                "\nCommits on this branch since `{base}`:\n\n```\n{log}\n```\n"
+            ));
         }
         if let Some(stat) = git(&["diff", "--shortstat", base]).filter(|s| !s.is_empty()) {
-            out.push_str(&format!("\nSince `{base}`, uncommitted changes included: {}.\n", stat.trim()));
+            out.push_str(&format!(
+                "\nSince `{base}`, uncommitted changes included: {}.\n",
+                stat.trim()
+            ));
         }
     } else if let Some(stat) = git(&["diff", "--shortstat", "HEAD"]).filter(|s| !s.is_empty()) {
         out.push_str(&format!("\nUncommitted: {}.\n", stat.trim()));
@@ -658,15 +843,28 @@ fn git_state(cwd: &Path, base: Option<&str>) -> String {
 }
 
 /// `on`: the machine the work was on, when it moved.
-fn render(t: Option<&Transcript>, from: &str, on: Option<&str>, to: &str, git: &str, terminal: Option<&str>) -> String {
+fn render(
+    t: Option<&Transcript>,
+    from: &str,
+    on: Option<&str>,
+    to: &str,
+    git: &str,
+    terminal: Option<&str>,
+) -> String {
     let mut out = format!("# Handoff: {from} → {to}\n\n");
     let made_from = match (t, terminal) {
-        (Some(t), _) => format!("{from}'s own transcript (`{}`{})", t.shown, on.map(|m| format!(" on {m}")).unwrap_or_default()),
+        (Some(t), _) => format!(
+            "{from}'s own transcript (`{}`{})",
+            t.shown,
+            on.map(|m| format!(" on {m}")).unwrap_or_default()
+        ),
         (None, Some(_)) => format!("what {from}'s terminal showed last"),
         _ => format!("this folder; Muxin couldn't find {from}'s conversation"),
     };
     let place = match on {
-        Some(m) => format!("on {m}, in its own checkout of this repository. Muxin brought that work here: its commits, uncommitted changes and new files"),
+        Some(m) => format!(
+            "on {m}, in its own checkout of this repository. Muxin brought that work here: its commits, uncommitted changes and new files"
+        ),
         None => "in this folder".to_string(),
     };
     out.push_str(&format!(
@@ -681,7 +879,11 @@ fn render(t: Option<&Transcript>, from: &str, on: Option<&str>, to: &str, git: &
     if let Some(t) = t.filter(|t| !t.todos.is_empty()) {
         out.push_str(&format!("## {from}'s to-do list\n\n"));
         for (done, item) in &t.todos {
-            out.push_str(&format!("- [{}] {}\n", if *done { "x" } else { " " }, one_line(item, 300)));
+            out.push_str(&format!(
+                "- [{}] {}\n",
+                if *done { "x" } else { " " },
+                one_line(item, 300)
+            ));
         }
         out.push('\n');
     }
@@ -708,14 +910,29 @@ fn render(t: Option<&Transcript>, from: &str, on: Option<&str>, to: &str, git: &
 fn without_input_box(text: &str) -> Vec<&str> {
     let lines: Vec<&str> = text.trim_end().lines().collect();
     let tail = lines.len().saturating_sub(20);
-    let rule = |l: &str| l.trim().chars().count() >= 20 && l.trim().chars().all(|c| matches!(c, '─' | '━' | '-' | '═' | '�'));
+    let rule = |l: &str| {
+        l.trim().chars().count() >= 20
+            && l.trim()
+                .chars()
+                .all(|c| matches!(c, '─' | '━' | '-' | '═' | '�'))
+    };
     let rules: Vec<usize> = (tail..lines.len()).filter(|&i| rule(lines[i])).collect();
     let end = match rules.as_slice() {
         [.., a, _] => *a,
-        _ => (tail..lines.len()).rev().find(|&i| ["›", "❯", ">"].iter().any(|p| lines[i].trim_start().starts_with(p))).unwrap_or(lines.len()),
+        _ => (tail..lines.len())
+            .rev()
+            .find(|&i| {
+                ["›", "❯", ">"]
+                    .iter()
+                    .any(|p| lines[i].trim_start().starts_with(p))
+            })
+            .unwrap_or(lines.len()),
     };
     // A full-screen app pads the screen with empty lines above its box.
-    let end = (0..end).rev().find(|&i| !lines[i].trim().is_empty()).map_or(0, |i| i + 1);
+    let end = (0..end)
+        .rev()
+        .find(|&i| !lines[i].trim().is_empty())
+        .map_or(0, |i| i + 1);
     lines[..end].to_vec()
 }
 
@@ -756,7 +973,10 @@ fn conversation(turns: &[Turn], from: &str) -> String {
         blocks.push(match turn {
             Turn::User(s) => format!("**You:** {}\n", cut(s, 4000)),
             Turn::Agent(s) => format!("**{from}:** {}\n", cut(s, 2500)),
-            Turn::Summary(s) => format!("**Earlier, as {from} summed it up:**\n\n{}\n", cut(s, 12_000)),
+            Turn::Summary(s) => format!(
+                "**Earlier, as {from} summed it up:**\n\n{}\n",
+                cut(s, 12_000)
+            ),
             Turn::Tool(_) => unreachable!(),
         });
     }
@@ -767,7 +987,10 @@ fn conversation(turns: &[Turn], from: &str) -> String {
         return blocks.join("\n");
     }
     // The start (up to the first thing asked), then as much of the end as fits.
-    let first_ask = blocks.iter().position(|b| b.starts_with("**You:**") || b.starts_with("**Earlier")).map_or(0, |i| i + 1);
+    let first_ask = blocks
+        .iter()
+        .position(|b| b.starts_with("**You:**") || b.starts_with("**Earlier"))
+        .map_or(0, |i| i + 1);
     let head: Vec<&String> = blocks[..first_ask].iter().collect();
     let mut room = BUDGET.saturating_sub(head.iter().map(|b| b.len() + 1).sum::<usize>() + 80);
     let mut tail: Vec<&String> = Vec::new();
@@ -781,7 +1004,9 @@ fn conversation(turns: &[Turn], from: &str) -> String {
     tail.reverse();
     let left_out = blocks.len() - head.len() - tail.len();
     let mut out: Vec<String> = head.into_iter().cloned().collect();
-    out.push(format!("*(… {left_out} earlier parts of the conversation left out …)*\n"));
+    out.push(format!(
+        "*(… {left_out} earlier parts of the conversation left out …)*\n"
+    ));
     out.extend(tail.into_iter().cloned());
     out.join("\n")
 }
@@ -789,21 +1014,43 @@ fn conversation(turns: &[Turn], from: &str) -> String {
 /// Adds `.muxin/` to the checkout's own ignore list (`info/exclude`), so the
 /// note doesn't show up as a change.
 pub(crate) fn keep_out_of_git(cwd: &Path) {
-    let Ok(out) = Command::new("git").arg("-C").arg(cwd).args(["rev-parse", "--git-path", "info/exclude"]).stdin(std::process::Stdio::null()).output() else { return };
+    let Ok(out) = Command::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .args(["rev-parse", "--git-path", "info/exclude"])
+        .stdin(std::process::Stdio::null())
+        .output()
+    else {
+        return;
+    };
     if !out.status.success() {
         return;
     }
     let rel = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    let path = if Path::new(&rel).is_absolute() { PathBuf::from(&rel) } else { cwd.join(&rel) };
+    let path = if Path::new(&rel).is_absolute() {
+        PathBuf::from(&rel)
+    } else {
+        cwd.join(&rel)
+    };
     let current = std::fs::read_to_string(&path).unwrap_or_default();
-    if current.lines().any(|l| l.trim() == ".muxin/" || l.trim() == ".muxin") {
+    if current
+        .lines()
+        .any(|l| l.trim() == ".muxin/" || l.trim() == ".muxin")
+    {
         return;
     }
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let sep = if current.is_empty() || current.ends_with('\n') { "" } else { "\n" };
-    let _ = std::fs::write(&path, format!("{current}{sep}# Muxin's notes for agents (handoffs)\n.muxin/\n"));
+    let sep = if current.is_empty() || current.ends_with('\n') {
+        ""
+    } else {
+        "\n"
+    };
+    let _ = std::fs::write(
+        &path,
+        format!("{current}{sep}# Muxin's notes for agents (handoffs)\n.muxin/\n"),
+    );
 }
 
 #[cfg(test)]
@@ -835,7 +1082,15 @@ mod tests {
             json!({ "type": "user", "message": { "role": "user", "content": [{ "type": "tool_result", "content": "ok" }] } }),
             json!({ "type": "assistant", "isSidechain": true, "message": { "role": "assistant", "content": [{ "type": "text", "text": "subagent" }] } }),
         ];
-        std::fs::write(dir.join("s1.jsonl"), lines.iter().map(|l| l.to_string()).collect::<Vec<_>>().join("\n")).unwrap();
+        std::fs::write(
+            dir.join("s1.jsonl"),
+            lines
+                .iter()
+                .map(|l| l.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
         let t = find("claude", cwd, &[home.clone()], UNIX_EPOCH).unwrap();
         assert_eq!(
             t.turns,
@@ -847,7 +1102,10 @@ mod tests {
                 Turn::Tool("edited src/a.rs".into()),
             ]
         );
-        assert_eq!(t.todos, vec![(true, "Fix it".into()), (false, "Ship it".into())]);
+        assert_eq!(
+            t.todos,
+            vec![(true, "Fix it".into()), (false, "Ship it".into())]
+        );
         let _ = std::fs::remove_dir_all(home);
     }
 
@@ -866,12 +1124,31 @@ mod tests {
             result("b", "Task #2 created successfully: Add a test"),
             call("c", "TaskCreate", json!({ "subject": "Gone" })),
             result("c", "Task #3 created successfully: Gone"),
-            call("d", "TaskUpdate", json!({ "taskId": "1", "status": "completed" })),
-            call("e", "TaskUpdate", json!({ "taskId": "3", "status": "deleted" })),
+            call(
+                "d",
+                "TaskUpdate",
+                json!({ "taskId": "1", "status": "completed" }),
+            ),
+            call(
+                "e",
+                "TaskUpdate",
+                json!({ "taskId": "3", "status": "deleted" }),
+            ),
         ];
-        std::fs::write(dir.join("s.jsonl"), lines.iter().map(|l| l.to_string()).collect::<Vec<_>>().join("\n")).unwrap();
+        std::fs::write(
+            dir.join("s.jsonl"),
+            lines
+                .iter()
+                .map(|l| l.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
         let t = find("claude", "/w", &[home.clone()], UNIX_EPOCH).unwrap();
-        assert_eq!(t.todos, vec![(true, "Fix the bug".into()), (false, "Add a test".into())]);
+        assert_eq!(
+            t.todos,
+            vec![(true, "Fix the bug".into()), (false, "Add a test".into())]
+        );
         assert_eq!(t.turns, vec![Turn::User("Go".into())]);
         let _ = std::fs::remove_dir_all(home);
     }
@@ -891,12 +1168,25 @@ mod tests {
             json!({ "type": "response_item", "payload": { "type": "custom_tool_call", "name": "apply_patch", "input": "*** Begin Patch\n*** Update File: src/main.c\n" } }),
             json!({ "type": "response_item", "payload": { "type": "message", "role": "assistant", "content": [{ "type": "output_text", "text": "Fixed." }] } }),
         ];
-        std::fs::write(dir.join("rollout-b.jsonl"), lines.iter().map(|l| l.to_string()).collect::<Vec<_>>().join("\n")).unwrap();
+        std::fs::write(
+            dir.join("rollout-b.jsonl"),
+            lines
+                .iter()
+                .map(|l| l.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
         let t = find("codex", "/work/app", &[home.clone()], UNIX_EPOCH).unwrap();
         assert!(t.path.starts_with(&home));
         assert_eq!(
             t.turns,
-            vec![Turn::User("Fix the build".into()), Turn::Tool("ran `make`".into()), Turn::Tool("edited src/main.c".into()), Turn::Agent("Fixed.".into())]
+            vec![
+                Turn::User("Fix the build".into()),
+                Turn::Tool("ran `make`".into()),
+                Turn::Tool("edited src/main.c".into()),
+                Turn::Agent("Fixed.".into())
+            ]
         );
         let _ = std::fs::remove_dir_all(home);
     }
@@ -904,11 +1194,20 @@ mod tests {
     #[test]
     fn a_codex_script_is_the_commands_it_ran() {
         let code = "const r = await Promise.allSettled([\n  tools.exec_command({cmd:\"git status --short\\ncat package.json\"}),\n  tools.exec_command({ cmd: 'npm test' }),\n]);";
-        assert_eq!(script_line(code), "ran `git status --short; cat package.json; npm test`");
-        assert_eq!(script_line("await cua.getState();"), "ran a script: await cua.getState();");
+        assert_eq!(
+            script_line(code),
+            "ran `git status --short; cat package.json; npm test`"
+        );
+        assert_eq!(
+            script_line("await cua.getState();"),
+            "ran a script: await cua.getState();"
+        );
         let both = r#"text(await tools.apply_patch("*** Begin Patch\n*** Update File: /w/calc.py\n@@\n-a\n+b\n*** Add File: /w/test_calc.py\n+x\n*** End Patch"));
 text(await tools.exec_command({cmd:"python3 test_calc.py"}));"#;
-        assert_eq!(script_line(both), "edited /w/calc.py, /w/test_calc.py, then ran `python3 test_calc.py`");
+        assert_eq!(
+            script_line(both),
+            "edited /w/calc.py, /w/test_calc.py, then ran `python3 test_calc.py`"
+        );
     }
 
     #[test]
@@ -934,7 +1233,11 @@ text(await tools.exec_command({cmd:"python3 test_calc.py"}));"#;
                 { "id": "5", "type": "gemini", "content": "Done." }
             ]
         });
-        std::fs::write(dir.join("session-2026-10-22T10-00-abc.json"), chat.to_string()).unwrap();
+        std::fs::write(
+            dir.join("session-2026-10-22T10-00-abc.json"),
+            chat.to_string(),
+        )
+        .unwrap();
         // Another folder's chat isn't this one's.
         let t = find("gemini", cwd, &[home.clone()], UNIX_EPOCH).unwrap();
         assert_eq!(
@@ -948,7 +1251,10 @@ text(await tools.exec_command({cmd:"python3 test_calc.py"}));"#;
                 Turn::Agent("Done.".into()),
             ]
         );
-        assert_eq!(t.todos, vec![(true, "Fix it".into()), (false, "Add a test".into())]);
+        assert_eq!(
+            t.todos,
+            vec![(true, "Fix it".into()), (false, "Add a test".into())]
+        );
         assert!(find("gemini", "/work/other", &[home.clone()], UNIX_EPOCH).is_none());
         let _ = std::fs::remove_dir_all(home);
     }
@@ -966,7 +1272,15 @@ text(await tools.exec_command({cmd:"python3 test_calc.py"}));"#;
             json!({ "type": "message", "message": { "role": "assistant", "content": [{ "type": "text", "text": "On it." }, { "type": "toolCall", "id": "c1", "name": "bash", "arguments": { "command": "ls" } }, { "type": "toolCall", "id": "c2", "name": "write", "arguments": { "path": "login.html" } }] } }),
             json!({ "type": "message", "message": { "role": "toolResult", "content": [{ "type": "text", "text": "a b" }] } }),
         ];
-        std::fs::write(dir.join("2026-10-22_s1.jsonl"), lines.iter().map(|l| l.to_string()).collect::<Vec<_>>().join("\n")).unwrap();
+        std::fs::write(
+            dir.join("2026-10-22_s1.jsonl"),
+            lines
+                .iter()
+                .map(|l| l.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
         let other = json!({ "type": "session", "cwd": "/elsewhere" });
         std::fs::write(dir.join("2026-10-22_s2.jsonl"), other.to_string()).unwrap();
         let t = find("pi", "/work/app", &[home.clone()], UNIX_EPOCH).unwrap();
@@ -995,11 +1309,24 @@ text(await tools.exec_command({cmd:"python3 test_calc.py"}));"#;
             json!({ "type": "session_meta", "payload": { "cwd": cwd.to_string_lossy() } }),
             json!({ "type": "response_item", "payload": { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "Hi" }] } }),
         ];
-        std::fs::write(dir.join("rollout-a.jsonl"), lines.iter().map(|l| l.to_string()).collect::<Vec<_>>().join("\n")).unwrap();
+        std::fs::write(
+            dir.join("rollout-a.jsonl"),
+            lines
+                .iter()
+                .map(|l| l.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
         // The user's home listed first, then the box's (inside it), as a box's handoff has them.
-        let r = note(&json!({ "agent": "codex", "cwd": cwd.to_string_lossy(), "homes": [user.to_string_lossy(), box_home.to_string_lossy()], "write": false }));
+        let r = note(
+            &json!({ "agent": "codex", "cwd": cwd.to_string_lossy(), "homes": [user.to_string_lossy(), box_home.to_string_lossy()], "write": false }),
+        );
         let text = r["text"].as_str().unwrap();
-        assert!(text.contains("(`~/.codex/sessions/2026/10/23/rollout-a.jsonl`)"), "{text}");
+        assert!(
+            text.contains("(`~/.codex/sessions/2026/10/23/rollout-a.jsonl`)"),
+            "{text}"
+        );
         let _ = std::fs::remove_dir_all(user);
     }
 
@@ -1020,7 +1347,10 @@ text(await tools.exec_command({cmd:"python3 test_calc.py"}));"#;
     #[test]
     fn a_terminal_loses_its_input_box() {
         let claude = "❯ fix it, don't commit\n⏺ Fixed.\n✻ Baked for 29s\n\n   \n────────────────────────────\n❯ commit the fix\n────────────────────────────\n  ⏵⏵ auto mode on\n";
-        assert_eq!(without_input_box(claude), vec!["❯ fix it, don't commit", "⏺ Fixed.", "✻ Baked for 29s"]);
+        assert_eq!(
+            without_input_box(claude),
+            vec!["❯ fix it, don't commit", "⏺ Fixed.", "✻ Baked for 29s"]
+        );
         let codex = "• Ran make\n• Done.\n› Ask Codex to do anything\n  gpt · ~/w\n";
         assert_eq!(without_input_box(codex), vec!["• Ran make", "• Done."]);
     }
@@ -1029,23 +1359,44 @@ text(await tools.exec_command({cmd:"python3 test_calc.py"}));"#;
     fn a_run_of_tool_calls_is_cut_in_the_middle() {
         let turns: Vec<Turn> = (0..30).map(|i| Turn::Tool(format!("ran `t{i}`"))).collect();
         let text = conversation(&turns, "Codex");
-        assert!(text.contains("- ran `t0`") && text.contains("- ran `t29`") && text.contains("- … 20 more"));
+        assert!(
+            text.contains("- ran `t0`")
+                && text.contains("- ran `t29`")
+                && text.contains("- … 20 more")
+        );
         assert!(!text.contains("`t10`"));
     }
 
     #[test]
     fn the_note_is_written_and_kept_out_of_git() {
         let dir = tmp("note");
-        let ok = Command::new("git").arg("-C").arg(&dir).args(["init", "-q"]).status().unwrap().success();
+        let ok = Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(["init", "-q"])
+            .status()
+            .unwrap()
+            .success();
         assert!(ok);
-        let r = note(&json!({ "agent": "opencode", "cwd": dir.to_string_lossy(), "from": "OpenCode", "to": "Codex", "terminal": "build failed\n" }));
+        let r = note(
+            &json!({ "agent": "opencode", "cwd": dir.to_string_lossy(), "from": "OpenCode", "to": "Codex", "terminal": "build failed\n" }),
+        );
         assert_eq!(r["ok"], true, "{r}");
         assert_eq!(r["source"], "terminal");
         let text = std::fs::read_to_string(dir.join(NOTE)).unwrap();
         assert!(text.starts_with("# Handoff: OpenCode → Codex"));
         assert!(text.contains("build failed"));
-        let status = Command::new("git").arg("-C").arg(&dir).args(["status", "--porcelain"]).output().unwrap();
-        assert!(String::from_utf8_lossy(&status.stdout).trim().is_empty(), "{}", String::from_utf8_lossy(&status.stdout));
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(["status", "--porcelain"])
+            .output()
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&status.stdout).trim().is_empty(),
+            "{}",
+            String::from_utf8_lossy(&status.stdout)
+        );
         // Twice is still one line.
         note(&json!({ "agent": "opencode", "cwd": dir.to_string_lossy() }));
         let exclude = std::fs::read_to_string(dir.join(".git/info/exclude")).unwrap();

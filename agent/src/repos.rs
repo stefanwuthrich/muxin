@@ -314,8 +314,16 @@ pub fn act(path: &str, action: &str) -> Result<String, String> {
     }
 }
 
-pub(crate) fn run_with_timeout(cmd: &mut Command, limit: Duration) -> Result<(bool, String, String), String> {
-    let child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| e.to_string())?;
+pub(crate) fn run_with_timeout(
+    cmd: &mut Command,
+    limit: Duration,
+) -> Result<(bool, String, String), String> {
+    let child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
     let started = Instant::now();
     let id = child.id();
     let (tx, rx) = std::sync::mpsc::channel();
@@ -346,7 +354,9 @@ fn find_gh(path_dirs: &[String]) -> Option<PathBuf> {
     let name = if cfg!(windows) { "gh.exe" } else { "gh" };
     let mut places: Vec<PathBuf> = path_dirs.iter().map(|d| Path::new(d).join(name)).collect();
     if cfg!(windows) {
-        let programs = std::env::var_os("ProgramFiles").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\Program Files"));
+        let programs = std::env::var_os("ProgramFiles")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(r"C:\Program Files"));
         places.push(programs.join("GitHub CLI").join("gh.exe"));
     }
     places.into_iter().find(|p| p.is_file())
@@ -354,8 +364,13 @@ fn find_gh(path_dirs: &[String]) -> Option<PathBuf> {
 
 /// Whether the GitHub CLI is here and signed in (for agents that use it).
 pub fn gh_status(path_dirs: &[String]) -> Value {
-    let Some(gh) = find_gh(path_dirs) else { return json!({ "installed": false }) };
-    let out = run_with_timeout(Command::new(&gh).args(["auth", "status", "--hostname", "github.com"]), Duration::from_secs(8));
+    let Some(gh) = find_gh(path_dirs) else {
+        return json!({ "installed": false });
+    };
+    let out = run_with_timeout(
+        Command::new(&gh).args(["auth", "status", "--hostname", "github.com"]),
+        Duration::from_secs(8),
+    );
     let (ok, stdout, stderr) = out.unwrap_or((false, String::new(), String::new()));
     let text = format!("{stdout}{stderr}");
     // "Logged in to github.com account octocat" (newer) or "... as octocat" (older).
@@ -381,7 +396,10 @@ mod tests {
         // On Windows the program is gh.exe; a plain "gh" there isn't it.
         let name = if cfg!(windows) { "gh.exe" } else { "gh" };
         std::fs::write(tmp.join("bin").join(name), b"").unwrap();
-        let dirs = [tmp.join("empty").display().to_string(), tmp.join("bin").display().to_string()];
+        let dirs = [
+            tmp.join("empty").display().to_string(),
+            tmp.join("bin").display().to_string(),
+        ];
         assert_eq!(find_gh(&dirs), Some(tmp.join("bin").join(name)));
         let _ = std::fs::remove_dir_all(&tmp);
     }

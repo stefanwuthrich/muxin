@@ -45,7 +45,12 @@ fn dir() -> PathBuf {
 
 /// "box-" and lowercase letters or digits.
 fn valid_id(id: &str) -> bool {
-    id.strip_prefix("box-").is_some_and(|r| !r.is_empty() && r.len() <= 24 && r.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()))
+    id.strip_prefix("box-").is_some_and(|r| {
+        !r.is_empty()
+            && r.len() <= 24
+            && r.chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+    })
 }
 
 fn folder(id: &str) -> PathBuf {
@@ -61,14 +66,21 @@ fn write(b: &Value) -> Result<(), String> {
     let id = b["id"].as_str().unwrap_or("");
     let path = folder(id).join("box.json");
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_vec_pretty(b).unwrap_or_default()).map_err(|e| format!("couldn't save it: {e}"))?;
+    std::fs::write(&tmp, serde_json::to_vec_pretty(b).unwrap_or_default())
+        .map_err(|e| format!("couldn't save it: {e}"))?;
     std::fs::rename(&tmp, &path).map_err(|e| format!("couldn't save it: {e}"))
 }
 
 /// Every box here, newest first.
 fn all() -> Vec<Value> {
     let mut out: Vec<Value> = std::fs::read_dir(dir())
-        .map(|d| d.flatten().filter_map(|e| e.file_name().to_str().map(String::from)).filter(|n| valid_id(n)).filter_map(|n| read(&n)).collect())
+        .map(|d| {
+            d.flatten()
+                .filter_map(|e| e.file_name().to_str().map(String::from))
+                .filter(|n| valid_id(n))
+                .filter_map(|n| read(&n))
+                .collect()
+        })
         .unwrap_or_default();
     out.sort_by_key(|b| std::cmp::Reverse(b["created"].as_i64().unwrap_or(0)));
     out
@@ -82,29 +94,58 @@ fn err(message: impl Into<String>) -> Value {
 /// the PATH (a Mac's Docker Desktop, OrbStack and Colima put it outside the
 /// PATH ssh gives).
 fn docker(b: &Value) -> String {
-    if let Some(d) = b["docker"].as_str().filter(|d| std::path::Path::new(d).is_file()) {
+    if let Some(d) = b["docker"]
+        .as_str()
+        .filter(|d| std::path::Path::new(d).is_file())
+    {
         return d.to_string();
     }
     let home = crate::sys::user_home();
-    let mut dirs: Vec<PathBuf> = std::env::var("PATH").unwrap_or_default().split(':').map(PathBuf::from).collect();
+    let mut dirs: Vec<PathBuf> = std::env::var("PATH")
+        .unwrap_or_default()
+        .split(':')
+        .map(PathBuf::from)
+        .collect();
     dirs.extend(["/usr/local/bin", "/opt/homebrew/bin", "/usr/bin"].map(PathBuf::from));
     dirs.push(home.join(".orbstack/bin"));
-    dirs.into_iter().map(|d| d.join("docker")).find(|p| p.is_file()).map(|p| p.display().to_string()).unwrap_or_else(|| "docker".into())
+    dirs.into_iter()
+        .map(|d| d.join("docker"))
+        .find(|p| p.is_file())
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "docker".into())
 }
 
 fn run_docker(b: &Value, args: &[&str]) -> Result<String, String> {
-    let out = Command::new(docker(b)).args(args).stdin(Stdio::null()).output().map_err(|e| format!("couldn't run docker: {e}"))?;
+    let out = Command::new(docker(b))
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("couldn't run docker: {e}"))?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
     } else {
         let e = String::from_utf8_lossy(&out.stderr);
-        Err(e.lines().rev().map(str::trim).find(|l| !l.is_empty()).unwrap_or("docker failed").to_string())
+        Err(e
+            .lines()
+            .rev()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .unwrap_or("docker failed")
+            .to_string())
     }
 }
 
 /// Sign-ins agent CLIs read from the environment: a box's agent gets the
 /// ones set in the machine's own shell (the session's login shell).
-const SIGN_IN_VARS: &[&str] = &["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY", "AMP_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"];
+const SIGN_IN_VARS: &[&str] = &[
+    "ANTHROPIC_API_KEY",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "OPENAI_API_KEY",
+    "CODEX_API_KEY",
+    "AMP_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+];
 
 fn sh_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
@@ -115,8 +156,15 @@ fn sh_quote(s: &str) -> String {
 fn run_line(b: &Value) -> String {
     let (d, c) = (sh_quote(&docker(b)), b["container"].as_str().unwrap_or(""));
     let repo = folder(b["id"].as_str().unwrap_or("")).join("repo");
-    let env: String = ["TERM", "COLORTERM"].iter().chain(SIGN_IN_VARS).map(|v| format!(" -e {v}")).collect();
-    format!("{d} start {c} >/dev/null 2>&1; exec {d} exec -it{env} -w {} {c} sh /home/box/.muxin/start", sh_quote(&repo.display().to_string()))
+    let env: String = ["TERM", "COLORTERM"]
+        .iter()
+        .chain(SIGN_IN_VARS)
+        .map(|v| format!(" -e {v}"))
+        .collect();
+    format!(
+        "{d} start {c} >/dev/null 2>&1; exec {d} exec -it{env} -w {} {c} sh /home/box/.muxin/start",
+        sh_quote(&repo.display().to_string())
+    )
 }
 
 /// The session server's sessions (none when it isn't running).
@@ -124,7 +172,10 @@ fn sessions() -> Vec<Value> {
     if crate::sys::connect().is_err() {
         return Vec::new();
     }
-    crate::client::handle(&json!({ "op": "list" }))["sessions"].as_array().cloned().unwrap_or_default()
+    crate::client::handle(&json!({ "op": "list" }))["sessions"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
 }
 
 fn session_of<'a>(id: &str, sessions: &'a [Value]) -> Option<&'a Value> {
@@ -133,12 +184,18 @@ fn session_of<'a>(id: &str, sessions: &'a [Value]) -> Option<&'a Value> {
 
 /// A box's shells are "<box id>-sh-<n>" (its agent's session has the box's id).
 fn is_shell_of(id: &str, name: &str) -> bool {
-    name.strip_prefix(id).and_then(|r| r.strip_prefix("-sh-")).is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+    name.strip_prefix(id)
+        .and_then(|r| r.strip_prefix("-sh-"))
+        .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
 }
 
 /// A box's sessions: its agent's and its shells'.
 fn box_sessions<'a>(id: &'a str, sessions: &'a [Value]) -> impl Iterator<Item = &'a Value> + 'a {
-    sessions.iter().filter(move |s| s["name"].as_str().is_some_and(|n| n == id || is_shell_of(id, n)))
+    sessions.iter().filter(move |s| {
+        s["name"]
+            .as_str()
+            .is_some_and(|n| n == id || is_shell_of(id, n))
+    })
 }
 
 fn stop_sessions(id: &str) {
@@ -152,9 +209,16 @@ fn stop_sessions(id: &str) {
 fn shell_line(b: &Value) -> String {
     let (d, c) = (sh_quote(&docker(b)), b["container"].as_str().unwrap_or(""));
     let repo = folder(b["id"].as_str().unwrap_or("")).join("repo");
-    let env: String = ["TERM", "COLORTERM"].iter().chain(SIGN_IN_VARS).map(|v| format!(" -e {v}")).collect();
+    let env: String = ["TERM", "COLORTERM"]
+        .iter()
+        .chain(SIGN_IN_VARS)
+        .map(|v| format!(" -e {v}"))
+        .collect();
     // Not a login shell: Debian's /etc/profile would drop the agent CLIs' folder from the PATH.
-    format!("exec {d} exec -it{env} -w {} {c} bash -i", sh_quote(&repo.display().to_string()))
+    format!(
+        "exec {d} exec -it{env} -w {} {c} bash -i",
+        sh_quote(&repo.display().to_string())
+    )
 }
 
 /// What a box is doing: "running" while its agent's session is, "starting"
@@ -178,7 +242,12 @@ pub fn list_with(sessions: &[Value]) -> Vec<Value> {
         .into_iter()
         .map(|mut b| {
             b["state"] = json!(state_of(&b, sessions, now));
-            b["path"] = json!(folder(b["id"].as_str().unwrap_or("")).join("repo").display().to_string());
+            b["path"] = json!(
+                folder(b["id"].as_str().unwrap_or(""))
+                    .join("repo")
+                    .display()
+                    .to_string()
+            );
             b
         })
         .collect()
@@ -199,7 +268,11 @@ pub fn save(req: &Value) -> Value {
         return err(format!("{} has no folder here", id));
     }
     let container = b["container"].as_str().unwrap_or("");
-    if !container.starts_with("muxen-box-") || !container.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+    if !container.starts_with("muxen-box-")
+        || !container
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-')
+    {
         return err("that isn't a container Muxin made");
     }
     b["state"] = json!("paused");
@@ -218,8 +291,13 @@ pub fn save(req: &Value) -> Value {
 /// `prompt` as what it's asked next.
 pub fn resume(req: &Value) -> Value {
     let id = req["box_id"].as_str().unwrap_or("");
-    let Some(mut b) = valid_id(id).then(|| read(id)).flatten() else { return err(format!("there's no box {id} here")) };
-    let prompt = req["prompt"].as_str().map(str::trim).filter(|p| !p.is_empty());
+    let Some(mut b) = valid_id(id).then(|| read(id)).flatten() else {
+        return err(format!("there's no box {id} here"));
+    };
+    let prompt = req["prompt"]
+        .as_str()
+        .map(str::trim)
+        .filter(|p| !p.is_empty());
     let current = sessions();
     match session_of(id, &current) {
         Some(s) if s["status"].as_str() == Some("running") => {
@@ -276,7 +354,10 @@ pub fn resume(req: &Value) -> Value {
     if reply["ok"].as_bool() != Some(true) {
         b["state"] = json!("paused");
         let _ = write(&b);
-        return err(format!("its agent didn't start: {}", reply["error"].as_str().unwrap_or("no reason given")));
+        return err(format!(
+            "its agent didn't start: {}",
+            reply["error"].as_str().unwrap_or("no reason given")
+        ));
     }
     if let (Some(p), true) = (prompt, typed) {
         std::thread::sleep(TYPE_AFTER);
@@ -290,12 +371,19 @@ pub fn resume(req: &Value) -> Value {
 /// and checkout. Its name is "<box id>-sh-<n>"; pausing the box ends it.
 pub fn shell(req: &Value) -> Value {
     let id = req["box_id"].as_str().unwrap_or("");
-    let Some(b) = valid_id(id).then(|| read(id)).flatten() else { return err(format!("there's no box {id} here")) };
+    let Some(b) = valid_id(id).then(|| read(id)).flatten() else {
+        return err(format!("there's no box {id} here"));
+    };
     let current = sessions();
     if state_of(&b, &current, crate::now()) != "running" {
         return err(format!("{id} is paused: resume it first"));
     }
-    let Some(name) = (1..1000).map(|n| format!("{id}-sh-{n}")).find(|n| session_of(n, &current).is_none()) else { return err("it has too many shells") };
+    let Some(name) = (1..1000)
+        .map(|n| format!("{id}-sh-{n}"))
+        .find(|n| session_of(n, &current).is_none())
+    else {
+        return err("it has too many shells");
+    };
     let start = json!({
         "op": "start",
         "name": name,
@@ -308,18 +396,24 @@ pub fn shell(req: &Value) -> Value {
     });
     let reply = crate::client::handle(&start);
     if reply["ok"].as_bool() != Some(true) {
-        return err(format!("the shell didn't start: {}", reply["error"].as_str().unwrap_or("no reason given")));
+        return err(format!(
+            "the shell didn't start: {}",
+            reply["error"].as_str().unwrap_or("no reason given")
+        ));
     }
     json!({ "ok": true, "session": name })
 }
 
 fn send(id: &str, text: &str) {
-    let _ = crate::client::handle(&json!({ "op": "send", "name": id, "text": text, "enter": true }));
+    let _ =
+        crate::client::handle(&json!({ "op": "send", "name": id, "text": text, "enter": true }));
 }
 
 pub fn pause(req: &Value) -> Value {
     let id = req["box_id"].as_str().unwrap_or("");
-    let Some(mut b) = valid_id(id).then(|| read(id)).flatten() else { return err(format!("there's no box {id} here")) };
+    let Some(mut b) = valid_id(id).then(|| read(id)).flatten() else {
+        return err(format!("there's no box {id} here"));
+    };
     match pause_box(&mut b) {
         Ok(()) => json!({ "ok": true, "box": b }),
         Err(e) => err(e),
@@ -332,7 +426,9 @@ pub fn pause(req: &Value) -> Value {
 /// the last one's conversation, when the box starts again (box_resume).
 pub fn switch(req: &Value) -> Value {
     let id = req["box_id"].as_str().unwrap_or("");
-    let Some(mut b) = valid_id(id).then(|| read(id)).flatten() else { return err(format!("there's no box {id} here")) };
+    let Some(mut b) = valid_id(id).then(|| read(id)).flatten() else {
+        return err(format!("there's no box {id} here"));
+    };
     let agent = req["agent"].as_str().unwrap_or("");
     let start = req["start"].as_str().unwrap_or("");
     if agent.is_empty() || !agent.chars().all(|c| c.is_ascii_lowercase()) || start.is_empty() {
@@ -385,7 +481,9 @@ pub fn delete(req: &Value) -> Value {
         return err(format!("there's no box {id} here"));
     }
     let path = folder(id);
-    let Ok(meta) = std::fs::symlink_metadata(&path) else { return err(format!("there's no box {id} here")) };
+    let Ok(meta) = std::fs::symlink_metadata(&path) else {
+        return err(format!("there's no box {id} here"));
+    };
     if !meta.is_dir() {
         return err(format!("{} isn't a box's folder", path.display()));
     }
@@ -401,7 +499,22 @@ pub fn delete(req: &Value) -> Value {
         // Files the agent made with sudo belong to root: remove them from a container.
         if let Some(image) = b["image"].as_str() {
             let mount = format!("{}:/box", path.display());
-            let _ = run_docker(&b, &["run", "--rm", "--user", "0", "-v", &mount, "--entrypoint", "sh", image, "-c", "rm -rf /box/repo /box/home"]);
+            let _ = run_docker(
+                &b,
+                &[
+                    "run",
+                    "--rm",
+                    "--user",
+                    "0",
+                    "-v",
+                    &mount,
+                    "--entrypoint",
+                    "sh",
+                    image,
+                    "-c",
+                    "rm -rf /box/repo /box/home",
+                ],
+            );
         }
         if let Err(e) = std::fs::remove_dir_all(&path) {
             return err(format!("its folder {} wasn't removed: {e}", path.display()));
@@ -412,18 +525,25 @@ pub fn delete(req: &Value) -> Value {
 
 /// Why a running box should pause now, if it should.
 fn pause_reason(b: &Value, sessions: &[Value], now: i64) -> Option<&'static str> {
-    if b["state"].as_str() != Some("running") || now - b["state_at"].as_i64().unwrap_or(0) < GRACE_SECS {
+    if b["state"].as_str() != Some("running")
+        || now - b["state_at"].as_i64().unwrap_or(0) < GRACE_SECS
+    {
         return None;
     }
     let id = b["id"].as_str().unwrap_or("");
-    let Some(s) = session_of(id, sessions) else { return Some("its agent ended") };
+    let Some(s) = session_of(id, sessions) else {
+        return Some("its agent ended");
+    };
     if s["status"].as_str() != Some("running") {
         return Some("its agent exited");
     }
     // Quiet is quiet whether or not a terminal is open on it: typing makes the
     // agent (or a shell in the box) redraw, so someone using it keeps it going.
     let idle = b["idle_minutes"].as_i64().unwrap_or(IDLE_MINUTES);
-    let last = box_sessions(id, sessions).filter_map(|s| s["last_output"].as_i64()).max().unwrap_or(now);
+    let last = box_sessions(id, sessions)
+        .filter_map(|s| s["last_output"].as_i64())
+        .max()
+        .unwrap_or(now);
     (idle > 0 && now - last >= idle * 60).then_some("it was idle")
 }
 
@@ -487,13 +607,20 @@ pub fn watch() -> i32 {
         let current = sessions();
         let now = crate::now();
         let mut running = 0;
-        for mut b in all().into_iter().filter(|b| b["state"].as_str() == Some("running")) {
+        for mut b in all()
+            .into_iter()
+            .filter(|b| b["state"].as_str() == Some("running"))
+        {
             running += 1;
             let id = b["id"].as_str().unwrap_or("").to_string();
             if let Some(why) = pause_reason(&b, &current, now) {
                 // Started again since this look (Resume): not this time.
                 match read(&id) {
-                    Some(fresh) if fresh["state"] == b["state"] && fresh["state_at"] == b["state_at"] => b = fresh,
+                    Some(fresh)
+                        if fresh["state"] == b["state"] && fresh["state_at"] == b["state_at"] =>
+                    {
+                        b = fresh
+                    }
                     _ => continue,
                 }
                 match pause_box(&mut b) {
@@ -529,11 +656,24 @@ mod tests {
 
     #[test]
     fn the_agent_runs_in_the_checkout_with_the_machines_sign_ins() {
-        let line = run_line(&json!({ "id": "box-ab12cd", "container": "muxen-box-ab12cd", "docker": "/nonexistent/docker" }));
+        let line = run_line(
+            &json!({ "id": "box-ab12cd", "container": "muxen-box-ab12cd", "docker": "/nonexistent/docker" }),
+        );
         let repo = folder("box-ab12cd").join("repo").display().to_string();
-        assert!(line.contains(&format!("-w '{repo}' muxen-box-ab12cd sh /home/box/.muxin/start")), "{line}");
-        assert!(line.contains(" -e ANTHROPIC_API_KEY") && line.contains(" -e OPENAI_API_KEY"), "{line}");
-        assert!(line.starts_with("'") && line.contains(" start muxen-box-ab12cd "), "{line}");
+        assert!(
+            line.contains(&format!(
+                "-w '{repo}' muxen-box-ab12cd sh /home/box/.muxin/start"
+            )),
+            "{line}"
+        );
+        assert!(
+            line.contains(" -e ANTHROPIC_API_KEY") && line.contains(" -e OPENAI_API_KEY"),
+            "{line}"
+        );
+        assert!(
+            line.starts_with("'") && line.contains(" start muxen-box-ab12cd "),
+            "{line}"
+        );
     }
 
     #[test]
@@ -551,12 +691,27 @@ mod tests {
         let b = running(now - 3600, None);
         let one = |s: Value| vec![s];
         // Working (recent output, which typing makes too): it stays.
-        assert_eq!(pause_reason(&b, &one(session("running", 0, now - 60)), now), None);
-        assert_eq!(pause_reason(&b, &one(session("running", 1, now - 60)), now), None);
+        assert_eq!(
+            pause_reason(&b, &one(session("running", 0, now - 60)), now),
+            None
+        );
+        assert_eq!(
+            pause_reason(&b, &one(session("running", 1, now - 60)), now),
+            None
+        );
         // Quiet for longer than 15 minutes, a terminal open on it or not.
-        assert_eq!(pause_reason(&b, &one(session("running", 0, now - 16 * 60)), now), Some("it was idle"));
-        assert_eq!(pause_reason(&b, &one(session("running", 2, now - 16 * 60)), now), Some("it was idle"));
-        assert_eq!(pause_reason(&b, &one(session("exited", 0, now)), now), Some("its agent exited"));
+        assert_eq!(
+            pause_reason(&b, &one(session("running", 0, now - 16 * 60)), now),
+            Some("it was idle")
+        );
+        assert_eq!(
+            pause_reason(&b, &one(session("running", 2, now - 16 * 60)), now),
+            Some("it was idle")
+        );
+        assert_eq!(
+            pause_reason(&b, &one(session("exited", 0, now)), now),
+            Some("its agent exited")
+        );
         assert_eq!(pause_reason(&b, &[], now), Some("its agent ended"));
     }
 
@@ -566,12 +721,19 @@ mod tests {
         let b = running(now - 3600, None);
         let agent = session("running", 0, now - 3600);
         let shell = json!({ "name": "box-ab12cd-sh-1", "status": "running", "clients": 1, "last_output": now - 30 });
-        let other = json!({ "name": "claude-3f9a", "status": "running", "clients": 0, "last_output": now });
+        let other =
+            json!({ "name": "claude-3f9a", "status": "running", "clients": 0, "last_output": now });
         assert_eq!(pause_reason(&b, &[agent.clone(), shell], now), None);
         // Another session's output doesn't count, and a shell alone isn't its agent.
-        assert_eq!(pause_reason(&b, &[agent, other.clone()], now), Some("it was idle"));
+        assert_eq!(
+            pause_reason(&b, &[agent, other.clone()], now),
+            Some("it was idle")
+        );
         let only_shell = json!({ "name": "box-ab12cd-sh-1", "status": "running", "clients": 1, "last_output": now });
-        assert_eq!(pause_reason(&b, &[only_shell, other], now), Some("its agent ended"));
+        assert_eq!(
+            pause_reason(&b, &[only_shell, other], now),
+            Some("its agent ended")
+        );
     }
 
     #[test]
@@ -579,7 +741,10 @@ mod tests {
         let now = 100_000;
         assert_eq!(pause_reason(&running(now - 5, None), &[], now), None);
         let never = running(now - 3600, Some(0));
-        assert_eq!(pause_reason(&never, &[session("running", 0, now - 86_400)], now), None);
+        assert_eq!(
+            pause_reason(&never, &[session("running", 0, now - 86_400)], now),
+            None
+        );
         let paused = json!({ "id": "box-ab12cd", "state": "paused", "state_at": 0 });
         assert_eq!(pause_reason(&paused, &[], now), None);
     }
@@ -603,6 +768,13 @@ mod tests {
         assert_eq!(state_of(&running(now - 5, None), &[], now), "starting");
         // Its agent quit (Ctrl-C, /exit): paused, not "starting".
         assert_eq!(state_of(&running(now - 30, None), &[], now), "paused");
-        assert_eq!(state_of(&json!({ "id": "box-ab12cd", "state": "paused" }), &[session("running", 0, now)], now), "paused");
+        assert_eq!(
+            state_of(
+                &json!({ "id": "box-ab12cd", "state": "paused" }),
+                &[session("running", 0, now)],
+                now
+            ),
+            "paused"
+        );
     }
 }

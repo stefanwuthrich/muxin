@@ -555,7 +555,10 @@ fn restart_listener() {
     }
     #[cfg(windows)]
     {
-        let script = format!("if (-not @({LISTENERS}).Count) {{ 'idle'; exit 0 }}\n{}\"running=$running\"", restart_task_ps());
+        let script = format!(
+            "if (-not @({LISTENERS}).Count) {{ 'idle'; exit 0 }}\n{}\"running=$running\"",
+            restart_task_ps()
+        );
         match crate::win::ps(&script) {
             Ok(out) if out.contains("idle") || out.contains("running=True") => {}
             // Nobody signed in, so the task waits for that: until then, in the background.
@@ -567,9 +570,15 @@ fn restart_listener() {
     #[cfg(unix)]
     {
         let managed = if cfg!(target_os = "macos") {
-            run("launchctl", &["print", &format!("gui/{}/{LAUNCHD_LABEL}", uid())])
+            run(
+                "launchctl",
+                &["print", &format!("gui/{}/{LAUNCHD_LABEL}", uid())],
+            )
         } else {
-            run("systemctl", &["--user", "is-enabled", &format!("{SERVICE}.service")])
+            run(
+                "systemctl",
+                &["--user", "is-enabled", &format!("{SERVICE}.service")],
+            )
         };
         // Anchored: the update's own shell has "muxen-agent listen" in its command line too.
         let listener = r"/\.muxen/bin/muxen-agent listen$";

@@ -136,7 +136,9 @@ impl Inner {
             });
         }
         let size = self.size_frame();
-        self.clients.retain_mut(|c| !c.sizes || proto::write_frame(&mut c.stream, proto::SIZE, &size).is_ok());
+        self.clients.retain_mut(|c| {
+            !c.sizes || proto::write_frame(&mut c.stream, proto::SIZE, &size).is_ok()
+        });
     }
 
     fn size_frame(&self) -> [u8; 4] {
@@ -145,7 +147,8 @@ impl Inner {
     }
 
     fn broadcast(&mut self, kind: u8, payload: &[u8]) {
-        self.clients.retain_mut(|c| proto::write_frame(&mut c.stream, kind, payload).is_ok());
+        self.clients
+            .retain_mut(|c| proto::write_frame(&mut c.stream, kind, payload).is_ok());
     }
 }
 
@@ -431,10 +434,17 @@ fn launch(state: &Arc<State>, s: &Arc<Session>) -> anyhow::Result<()> {
 /// C.UTF-8 first: ssh passes it on to Linux machines, which don't know UTF-8.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn default_locale(cmd: &CommandBuilder, has_c_utf8: bool) -> Option<(&'static str, &'static str)> {
-    if ["LC_ALL", "LC_CTYPE", "LANG"].iter().any(|v| cmd.get_env(v).is_some_and(|x| !x.is_empty())) {
+    if ["LC_ALL", "LC_CTYPE", "LANG"]
+        .iter()
+        .any(|v| cmd.get_env(v).is_some_and(|x| !x.is_empty()))
+    {
         return None;
     }
-    Some(if has_c_utf8 { ("LANG", "C.UTF-8") } else { ("LC_CTYPE", "UTF-8") })
+    Some(if has_c_utf8 {
+        ("LANG", "C.UTF-8")
+    } else {
+        ("LC_CTYPE", "UTF-8")
+    })
 }
 
 /// Whether this Mac's C library knows the C.UTF-8 locale.
@@ -652,7 +662,12 @@ fn attach(state: &State, mut stream: Stream, req: &Value) {
             let rows = req["rows"].as_u64().unwrap_or(i.rows as u64) as u16;
             i.resize(cols, rows);
         }
-        if proto::write_line(&mut stream, &json!({ "ok": true, "cols": i.cols, "rows": i.rows })).is_err() {
+        if proto::write_line(
+            &mut stream,
+            &json!({ "ok": true, "cols": i.cols, "rows": i.rows }),
+        )
+        .is_err()
+        {
             return;
         }
         if sizes && proto::write_frame(&mut stream, proto::SIZE, &i.size_frame()).is_err() {
@@ -664,7 +679,12 @@ fn attach(state: &State, mut stream: Stream, req: &Value) {
         }
         let Ok(out) = stream.try_clone() else { return };
         let _ = out.set_write_timeout(Some(CLIENT_WRITE_TIMEOUT));
-        i.clients.push(Client { id, stream: out, watch_only, sizes });
+        i.clients.push(Client {
+            id,
+            stream: out,
+            watch_only,
+            sizes,
+        });
     }
     loop {
         match proto::read_frame(&mut stream) {
@@ -694,7 +714,9 @@ fn attach(state: &State, mut stream: Stream, req: &Value) {
 fn answers(term: &Term<Listener>, listener: &Listener, tail: &[u8], bytes: &[u8]) -> String {
     let mut out = String::new();
     for (index, format) in std::mem::take(&mut *listener.colors.lock().unwrap()) {
-        out.push_str(&format(term.colors()[index].unwrap_or_else(|| default_color(index))));
+        out.push_str(&format(
+            term.colors()[index].unwrap_or_else(|| default_color(index)),
+        ));
     }
     if asks_version(tail, bytes) {
         out.push_str(&format!("\x1bP>|Muxin {}\x1b\\", env!("CARGO_PKG_VERSION")));
@@ -708,7 +730,9 @@ fn answers(term: &Term<Listener>, listener: &Listener, tail: &[u8], bytes: &[u8]
 /// XTVERSION (`CSI > q` or `CSI > 0 q`), in this output or across its start.
 fn asks_version(tail: &[u8], bytes: &[u8]) -> bool {
     let seen: Vec<u8> = tail.iter().chain(bytes.iter().take(5)).copied().collect();
-    [&b"\x1b[>q"[..], &b"\x1b[>0q"[..]].iter().any(|q| bytes.windows(q.len()).any(|w| w == *q) || seen.windows(q.len()).any(|w| w == *q))
+    [&b"\x1b[>q"[..], &b"\x1b[>0q"[..]]
+        .iter()
+        .any(|q| bytes.windows(q.len()).any(|w| w == *q) || seen.windows(q.len()).any(|w| w == *q))
 }
 
 /// A dark terminal's colors, for a program that asks before setting any:
@@ -716,8 +740,22 @@ fn asks_version(tail: &[u8], bytes: &[u8]) -> bool {
 /// foreground, background and cursor (256, 257, 258; dim and bright ones after).
 fn default_color(index: usize) -> Rgb {
     const NAMED: [(u8, u8, u8); 16] = [
-        (0, 0, 0), (205, 0, 0), (0, 205, 0), (205, 205, 0), (0, 0, 238), (205, 0, 205), (0, 205, 205), (229, 229, 229),
-        (127, 127, 127), (255, 0, 0), (0, 255, 0), (255, 255, 0), (92, 92, 255), (255, 0, 255), (0, 255, 255), (255, 255, 255),
+        (0, 0, 0),
+        (205, 0, 0),
+        (0, 205, 0),
+        (205, 205, 0),
+        (0, 0, 238),
+        (205, 0, 205),
+        (0, 205, 205),
+        (229, 229, 229),
+        (127, 127, 127),
+        (255, 0, 0),
+        (0, 255, 0),
+        (255, 255, 0),
+        (92, 92, 255),
+        (255, 0, 255),
+        (0, 255, 255),
+        (255, 255, 255),
     ];
     let (r, g, b) = match index {
         0..=15 => NAMED[index],
@@ -740,7 +778,9 @@ fn default_color(index: usize) -> Rgb {
 /// sandbox), not the user's settings for it (CLAUDE_CONFIG_DIR, API keys).
 fn inherited_agent_var(name: &str) -> bool {
     matches!(name, "CLAUDECODE" | "CLAUDE_PID" | "CLAUDE_EFFORT")
-        || ["CLAUDE_CODE_", "CLAUDE_AGENT_SDK_", "CODEX_SANDBOX"].iter().any(|p| name.starts_with(p))
+        || ["CLAUDE_CODE_", "CLAUDE_AGENT_SDK_", "CODEX_SANDBOX"]
+            .iter()
+            .any(|p| name.starts_with(p))
 }
 
 #[cfg(test)]
@@ -782,7 +822,10 @@ mod tests {
         let s = state.find("flood").unwrap();
         let ready = Instant::now();
         while !screen::text(&s.inner.lock().unwrap().term, 5).contains("ready") {
-            assert!(ready.elapsed() < Duration::from_secs(20), "the session didn't start");
+            assert!(
+                ready.elapsed() < Duration::from_secs(20),
+                "the session didn't start"
+            );
             thread::sleep(Duration::from_millis(50));
         }
         let typist = s.clone();
@@ -797,17 +840,36 @@ mod tests {
         });
         thread::sleep(Duration::from_millis(500));
         let st = state.clone();
-        assert!(answers_within(Duration::from_secs(3), move || drop(list(&st))), "listing sessions hangs");
+        assert!(
+            answers_within(Duration::from_secs(3), move || drop(list(&st))),
+            "listing sessions hangs"
+        );
         let st = state.clone();
-        assert!(answers_within(Duration::from_secs(3), move || drop(read(&st, &json!({ "name": "flood", "lines": 5 })))), "reading the session hangs");
+        assert!(
+            answers_within(Duration::from_secs(3), move || drop(read(
+                &st,
+                &json!({ "name": "flood", "lines": 5 })
+            ))),
+            "reading the session hangs"
+        );
         let st = state.clone();
-        assert!(answers_within(Duration::from_secs(3), move || drop(stop(&st, &json!({ "name": "flood" })))), "stopping the session hangs");
+        assert!(
+            answers_within(Duration::from_secs(3), move || drop(stop(
+                &st,
+                &json!({ "name": "flood" })
+            ))),
+            "stopping the session hangs"
+        );
     }
 
     /// What the terminal answers to `printed`, as a session with no window would.
     fn answer(printed: &[u8]) -> String {
         let listener = Listener::default();
-        let mut term = Term::new(Config::default(), &Dims { cols: 80, rows: 24 }, listener.clone());
+        let mut term = Term::new(
+            Config::default(),
+            &Dims { cols: 80, rows: 24 },
+            listener.clone(),
+        );
         let mut parser: Processor = Processor::new();
         parser.advance(&mut term, printed);
         answers(&term, &listener, &[], printed)
@@ -842,10 +904,22 @@ mod tests {
 
     #[test]
     fn an_outer_agents_session_doesnt_reach_sessions() {
-        for v in ["CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ID", "CLAUDE_AGENT_SDK_VERSION", "CLAUDE_PID", "CODEX_SANDBOX_NETWORK_DISABLED"] {
+        for v in [
+            "CLAUDECODE",
+            "CLAUDE_CODE_CHILD_SESSION",
+            "CLAUDE_CODE_SESSION_ID",
+            "CLAUDE_AGENT_SDK_VERSION",
+            "CLAUDE_PID",
+            "CODEX_SANDBOX_NETWORK_DISABLED",
+        ] {
             assert!(inherited_agent_var(v), "{v}");
         }
-        for v in ["CLAUDE_CONFIG_DIR", "ANTHROPIC_API_KEY", "CODEX_HOME", "PATH"] {
+        for v in [
+            "CLAUDE_CONFIG_DIR",
+            "ANTHROPIC_API_KEY",
+            "CODEX_HOME",
+            "PATH",
+        ] {
             assert!(!inherited_agent_var(v), "{v}");
         }
     }
@@ -865,12 +939,28 @@ mod tests {
     #[test]
     fn mac_sessions_get_a_utf8_locale_unless_one_is_set() {
         // launchd's environment, as `listen` has for direct connections.
-        assert_eq!(default_locale(&with_locale(&[]), true), Some(("LANG", "C.UTF-8")));
-        assert_eq!(default_locale(&with_locale(&[]), false), Some(("LC_CTYPE", "UTF-8")));
+        assert_eq!(
+            default_locale(&with_locale(&[]), true),
+            Some(("LANG", "C.UTF-8"))
+        );
+        assert_eq!(
+            default_locale(&with_locale(&[]), false),
+            Some(("LC_CTYPE", "UTF-8"))
+        );
         // An empty LANG is none, and LC_MESSAGES alone doesn't pick a character set.
-        assert_eq!(default_locale(&with_locale(&[("LANG", ""), ("LC_MESSAGES", "fr_FR.UTF-8")]), true), Some(("LANG", "C.UTF-8")));
+        assert_eq!(
+            default_locale(
+                &with_locale(&[("LANG", ""), ("LC_MESSAGES", "fr_FR.UTF-8")]),
+                true
+            ),
+            Some(("LANG", "C.UTF-8"))
+        );
         // A locale the agent was given (ssh brings the terminal's) stays, even C.
-        for set in [("LANG", "en_US.UTF-8"), ("LC_CTYPE", "UTF-8"), ("LC_ALL", "C")] {
+        for set in [
+            ("LANG", "en_US.UTF-8"),
+            ("LC_CTYPE", "UTF-8"),
+            ("LC_ALL", "C"),
+        ] {
             assert_eq!(default_locale(&with_locale(&[set]), true), None, "{set:?}");
         }
     }
@@ -880,7 +970,11 @@ mod tests {
     fn this_mac_knows_the_locale_it_would_give() {
         let (name, value) = default_locale(&with_locale(&[]), has_c_utf8()).unwrap();
         // LANG sets every category, LC_CTYPE only the character set.
-        let mask = if name == "LANG" { libc::LC_ALL_MASK } else { libc::LC_CTYPE_MASK };
+        let mask = if name == "LANG" {
+            libc::LC_ALL_MASK
+        } else {
+            libc::LC_CTYPE_MASK
+        };
         let value = std::ffi::CString::new(value).unwrap();
         let locale = unsafe { libc::newlocale(mask, value.as_ptr(), std::ptr::null_mut()) };
         assert!(!locale.is_null(), "{name}={value:?}");

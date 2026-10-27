@@ -20,14 +20,14 @@ mod client;
 mod clipboard;
 mod crash;
 mod daemon;
-mod detect;
-mod handoff;
 mod desktop;
+mod detect;
 mod direct;
 #[cfg(unix)]
 mod displays;
 mod files;
 mod gui;
+mod handoff;
 mod link;
 mod logs;
 mod ports;

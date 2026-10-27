@@ -591,7 +591,11 @@ struct Clipboard;
 impl super::clipboard::Board for Clipboard {
     /// (A password manager's copy shows as no text: see `clipboard_text`.)
     fn state(&mut self) -> (i64, bool) {
-        (unsafe { windows_sys::Win32::System::DataExchange::GetClipboardSequenceNumber() } as i64, false)
+        (
+            unsafe { windows_sys::Win32::System::DataExchange::GetClipboardSequenceNumber() }
+                as i64,
+            false,
+        )
     }
 
     fn text(&mut self) -> Option<String> {
@@ -639,7 +643,11 @@ fn signed_in_users() -> Option<Vec<SignedIn>> {
     let query = |id: u32, class: WTS_INFO_CLASS| -> String {
         let mut buf: windows_sys::core::PWSTR = std::ptr::null_mut();
         let mut bytes = 0u32;
-        if unsafe { WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE, id, class, &mut buf, &mut bytes) } == 0 || buf.is_null() {
+        if unsafe {
+            WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE, id, class, &mut buf, &mut bytes)
+        } == 0
+            || buf.is_null()
+        {
             return String::new();
         }
         let units = unsafe { std::slice::from_raw_parts(buf, bytes as usize / 2) };
@@ -649,7 +657,9 @@ fn signed_in_users() -> Option<Vec<SignedIn>> {
     };
     let mut list: *mut WTS_SESSION_INFOW = std::ptr::null_mut();
     let mut count = 0u32;
-    if unsafe { WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1, &mut list, &mut count) } == 0 || list.is_null() {
+    if unsafe { WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1, &mut list, &mut count) } == 0
+        || list.is_null()
+    {
         return None;
     }
     let sessions = unsafe { std::slice::from_raw_parts(list, count as usize) };
@@ -657,7 +667,10 @@ fn signed_in_users() -> Option<Vec<SignedIn>> {
     let users: Vec<SignedIn> = sessions
         .iter()
         .filter(|s| s.SessionId != 0 && (s.State == WTSActive || s.State == WTSDisconnected))
-        .map(|s| SignedIn { user: query(s.SessionId, WTSUserName), connected: s.State == WTSActive })
+        .map(|s| SignedIn {
+            user: query(s.SessionId, WTSUserName),
+            connected: s.State == WTSActive,
+        })
         .collect();
     unsafe { WTSFreeMemory(list as _) };
     // A signed-in session whose user Windows won't name: don't guess.
@@ -676,12 +689,17 @@ pub fn no_desktop_session() -> Option<String> {
     if me.is_empty() {
         return None;
     }
-    let own: Vec<&SignedIn> = users.iter().filter(|u| u.user.eq_ignore_ascii_case(&me)).collect();
+    let own: Vec<&SignedIn> = users
+        .iter()
+        .filter(|u| u.user.eq_ignore_ascii_case(&me))
+        .collect();
     if own.iter().any(|u| u.connected) {
         return None;
     }
     if !own.is_empty() {
-        return Some(format!("{me} is signed in to Windows here, but that session is disconnected (its Remote Desktop window was closed), so there's no screen to show. Open it with Remote Desktop again."));
+        return Some(format!(
+            "{me} is signed in to Windows here, but that session is disconnected (its Remote Desktop window was closed), so there's no screen to show. Open it with Remote Desktop again."
+        ));
     }
     Some(match users.first() {
         Some(other) => format!("{} is signed in to Windows here, not {me}. Muxin shows the screen of the account it connects as.", other.user),
@@ -741,15 +759,13 @@ pub fn start_in_desktop(args: &[String]) -> Result<TcpStream, String> {
         Err(e) => Err(format!(
             "couldn't start a helper in the desktop session: {e}"
         )),
-        Ok(_) => {
-            loop {
-                match ask_gui_server(args) {
+        Ok(_) => loop {
+            match ask_gui_server(args) {
                 Ok(s) => break Ok(s),
                 Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(150)),
                 Err(_) => break Err("Windows didn't start Muxin's helper in your desktop session, so there's no screen to show.".to_string()),
             }
-            }
-        }
+        },
     };
     let _ = crate::win::ps(&format!(
         "Unregister-ScheduledTask -TaskName {} -Confirm:$false -ErrorAction SilentlyContinue",

@@ -82,7 +82,12 @@ pub trait Board {
 /// the app sends something) it looks for a copy made here, and pastes what
 /// the app sent unless a newer copy was made here or it's there already.
 #[cfg(any(target_os = "macos", windows, test))]
-pub fn share(board: &mut impl Board, rx: mpsc::Receiver<String>, every: Duration, changed: impl Fn(&str) -> bool) {
+pub fn share(
+    board: &mut impl Board,
+    rx: mpsc::Receiver<String>,
+    every: Duration,
+    changed: impl Fn(&str) -> bool,
+) {
     let mut sharing = Sharing::new(board);
     loop {
         let from_app = match rx.recv_timeout(every) {
@@ -114,7 +119,11 @@ impl Sharing {
     fn new(board: &mut impl Board) -> Sharing {
         // What's there now is old news; only copies from here on count.
         let (seen, private) = board.state();
-        Sharing { seen, holds: if private { None } else { board.text() }, last: String::new() }
+        Sharing {
+            seen,
+            holds: if private { None } else { board.text() },
+            last: String::new(),
+        }
     }
 
     /// A look at the clipboard, with the text the app sent meanwhile: that's
@@ -179,7 +188,11 @@ mod mac {
     /// under launchd, for direct connections) they'd take it for Mac Roman.
     pub(super) fn pb(program: &str) -> Command {
         let mut cmd = Command::new(program);
-        cmd.env_remove("LC_ALL").env("LC_CTYPE", "UTF-8").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+        cmd.env_remove("LC_ALL")
+            .env("LC_CTYPE", "UTF-8")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
         cmd
     }
 
@@ -196,12 +209,19 @@ mod mac {
 
         fn text(&mut self) -> Option<String> {
             let out = pb("pbpaste").stdout(Stdio::piped()).output().ok()?;
-            out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+            out.status
+                .success()
+                .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
         }
 
         fn set(&mut self, text: &str) -> bool {
-            let Ok(mut child) = pb("pbcopy").stdin(Stdio::piped()).spawn() else { return false };
-            let wrote = child.stdin.take().is_some_and(|mut stdin| stdin.write_all(text.as_bytes()).is_ok());
+            let Ok(mut child) = pb("pbcopy").stdin(Stdio::piped()).spawn() else {
+                return false;
+            };
+            let wrote = child
+                .stdin
+                .take()
+                .is_some_and(|mut stdin| stdin.write_all(text.as_bytes()).is_ok());
             child.wait().is_ok_and(|s| s.success()) && wrote
         }
     }
@@ -265,7 +285,10 @@ mod tests {
         // Copied here after that, before the app's next text arrived: the
         // copy goes out and stays here.
         board.copy(Some("copied here"), false);
-        assert_eq!(turn(&mut sharing, &mut board, "from the app, later"), Some("copied here".into()));
+        assert_eq!(
+            turn(&mut sharing, &mut board, "from the app, later"),
+            Some("copied here".into())
+        );
         assert_eq!(board.text.as_deref(), Some("copied here"));
         // The app's text after that is pasted as usual.
         assert_eq!(turn(&mut sharing, &mut board, "newest"), None);
@@ -349,7 +372,9 @@ mod tests {
             to_agent.send(text.to_string()).unwrap();
         }
         drop(to_agent);
-        share(&mut board, from_app, Duration::from_secs(5), |_| panic!("nothing was copied here"));
+        share(&mut board, from_app, Duration::from_secs(5), |_| {
+            panic!("nothing was copied here")
+        });
         assert_eq!(board.pasted, ["one", "two"]);
     }
 
@@ -357,7 +382,15 @@ mod tests {
     #[test]
     fn pbcopy_and_pbpaste_use_utf8() {
         let cmd = mac::pb("pbcopy");
-        let envs: Vec<_> = cmd.get_envs().map(|(k, v)| (k.to_string_lossy().into_owned(), v.map(|v| v.to_string_lossy().into_owned()))).collect();
+        let envs: Vec<_> = cmd
+            .get_envs()
+            .map(|(k, v)| {
+                (
+                    k.to_string_lossy().into_owned(),
+                    v.map(|v| v.to_string_lossy().into_owned()),
+                )
+            })
+            .collect();
         assert!(envs.contains(&("LC_CTYPE".into(), Some("UTF-8".into()))));
         assert!(envs.contains(&("LC_ALL".into(), None)));
     }

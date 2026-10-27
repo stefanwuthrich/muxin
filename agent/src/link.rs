@@ -445,11 +445,18 @@ fn attach(req: &Value, out: &Out, attached: &Attached) -> Value {
     }
     let size = match proto::read_line(&mut stream) {
         Ok(v) if v["ok"].as_bool() == Some(true) => json!({ "cols": v["cols"], "rows": v["rows"] }),
-        Ok(v) => return json!({ "ok": false, "error": v["error"].as_str().unwrap_or("can't attach") }),
+        Ok(v) => {
+            return json!({ "ok": false, "error": v["error"].as_str().unwrap_or("can't attach") });
+        }
         Err(e) => return json!({ "ok": false, "error": e.to_string() }),
     };
-    let Ok(mut reader) = stream.try_clone() else { return json!({ "ok": false, "error": "can't attach" }) };
-    attached.lock().unwrap().insert(channel, Sink::Session(stream));
+    let Ok(mut reader) = stream.try_clone() else {
+        return json!({ "ok": false, "error": "can't attach" });
+    };
+    attached
+        .lock()
+        .unwrap()
+        .insert(channel, Sink::Session(stream));
     // The session's output, and its end, to the app.
     let (out, attached) = (out.clone(), attached.clone());
     thread::spawn(move || {
