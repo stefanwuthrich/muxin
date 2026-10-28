@@ -4850,6 +4850,13 @@ pub async fn desktop_input(
     )
 }
 
+/// The apps' windows on a machine's desktop, to show one on its own: pass
+/// `window:<id>` as the display.
+pub async fn desktop_windows(engine: &Arc<Engine>, req: MachineRequest) -> ApiResult<Vec<crate::fleet::desktop::AppWindowInfo>> {
+    let m = find_machine(&engine.current(), &req.machine_id)?.clone();
+    engine.app_windows(&m.id).await.map_err(|e| ApiError::new("operation_failed", e))
+}
+
 /// A machine's monitors, virtual ones included.
 pub async fn desktop_displays(
     engine: &Arc<Engine>,
