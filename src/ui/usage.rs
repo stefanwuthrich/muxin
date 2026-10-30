@@ -1,6 +1,6 @@
 //! Usage: what your agents used and what it'd cost at the API's prices,
 //! over a day, a week or a month: by day, model, machine and folder. Read
-//! from each machine's Claude Code and Codex logs (see fleet/usage.rs).
+//! from each machine's agent logs (see fleet/usage.rs).
 //! A Claude subscription's live meters (session, week, extra usage) sit
 //! above those totals.
 
@@ -141,6 +141,50 @@ fn resets_line(at: &str) -> String {
     )
 }
 
+/// Start a read when nothing is loaded, or the last finished read is older than five minutes.
+pub(crate) fn should_reload(loading: bool, has_data: bool, age_secs: Option<u64>) -> bool {
+    !loading && (!has_data || age_secs.is_some_and(|s| s > 300))
+}
+
+/// What to say when the period has no token totals.
+fn empty_usage(
+    machines: &[MachineUsage],
+    sessions: &[crate::fleet::sessions::SessionInfo],
+) -> String {
+    let mut present: Vec<String> = machines
+        .iter()
+        .flat_map(|m| m.present.iter().map(|t| usage::tool_name(t).to_string()))
+        .collect();
+    present.sort();
+    present.dedup();
+    let mut running: Vec<String> = sessions
+        .iter()
+        .filter(|s| s.status == "running" && !s.agent.is_empty() && s.agent != "shell")
+        .map(|s| {
+            if s.agent_name.is_empty() {
+                usage::tool_name(&s.agent).to_string()
+            } else {
+                s.agent_name.clone()
+            }
+        })
+        .collect();
+    running.sort();
+    running.dedup();
+    if present.is_empty() && running.is_empty() {
+        "No agent logs on your machines yet.".into()
+    } else if present.is_empty() {
+        format!(
+            "No token logs in this period. Running now: {}.",
+            running.join(", ")
+        )
+    } else {
+        format!(
+            "No tokens in this period. On your machines: {}.",
+            present.join(", ")
+        )
+    }
+}
+
 fn extra_line(extra: &usage::PlanExtra) -> String {
     format!(
         "Extra usage · {} of {} this month",
@@ -177,9 +221,21 @@ fn dollars(x: f64) -> String {
 
 impl Root {
     /// Reads every machine's usage for the period chosen.
+    ///
+    /// A refresh replaces a read still running. Opening the page, or the
+    /// five-minute refresh, does not start a second one.
     pub(super) fn load_usage(&mut self, cx: &mut Context<Self>) {
+        self.load_usage_now(true, cx);
+    }
+
+    fn load_usage_now(&mut self, replace: bool, cx: &mut Context<Self>) {
+        if self.usage_loading && !replace {
+            return;
+        }
+        self.usage_loading = true;
+        self.usage_gen = self.usage_gen.wrapping_add(1);
+        let generation = self.usage_gen;
         self.usage_data = Some(Load::Loading);
-        self.usage_at = Some(Instant::now());
         let (engine, days) = (self.engine.clone(), self.usage_days);
         let job = engine.runtime().spawn({
             let engine = engine.clone();
@@ -188,6 +244,11 @@ impl Root {
         let task = cx.spawn(async move |this, cx| {
             let result = job.await.map_err(|e| e.to_string());
             let _ = this.update(cx, |this, cx| {
+                if this.usage_gen != generation {
+                    return;
+                }
+                this.usage_loading = false;
+                this.usage_at = Some(Instant::now());
                 this.usage_data = Some(match result {
                     Ok(v) => Load::Ready(v),
                     Err(e) => Load::Failed(e),
@@ -200,9 +261,13 @@ impl Root {
 
     pub(super) fn render_usage(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
-        // First visit, or stale after five minutes: look again.
-        if self.usage_data.is_none() || self.usage_at.is_some_and(|t| t.elapsed().as_secs() > 300) {
-            self.load_usage(cx);
+        // First visit, or stale after five minutes: look again. Not while one is running.
+        if should_reload(
+            self.usage_loading,
+            self.usage_data.is_some(),
+            self.usage_at.map(|t| t.elapsed().as_secs()),
+        ) {
+            self.load_usage_now(false, cx);
         }
         let header = div()
             .flex()
@@ -216,7 +281,7 @@ impl Root {
                     .flex_col()
                     .gap(px(4.))
                     .child(div().text_size(px(22.)).font_weight(FontWeight::SEMIBOLD).child("Usage"))
-                    .child(div().text_size(px(13.)).text_color(theme.text_muted).child("What your agents used, from Claude Code’s and Codex’s own logs on each machine.")),
+                    .child(div().text_size(px(13.)).text_color(theme.text_muted).child("What your agents used, from their own logs on each machine.")),
             )
             .child(
                 div()
@@ -344,11 +409,11 @@ impl Root {
                 return body.child(note).into_any_element();
             }
             let none = if !plans.is_empty() {
-                "No token totals in this period."
+                "No token totals in this period.".to_string()
             } else if machines.iter().all(|m| m.tools.is_empty()) {
-                "No Claude Code or Codex logs on your machines yet."
+                empty_usage(&machines, &self.snapshot.sessions)
             } else {
-                "No agent use in this period."
+                "No agent use in this period.".to_string()
             };
             body = body.child(card(&theme).child(kit::empty_state(&theme, "gauge", none)));
             if !plans.is_empty() {
@@ -459,7 +524,7 @@ impl Root {
                 let e = days.entry(day).or_default();
                 if h.tool == "codex" {
                     e.1 += value;
-                } else {
+                } else if h.tool == "claude" {
                     e.0 += value;
                 }
             }
@@ -795,7 +860,16 @@ impl Root {
 
 #[cfg(test)]
 mod tests {
-    use super::{dollars, tokens};
+    use super::{dollars, should_reload, tokens};
+
+    #[test]
+    fn does_not_start_another_read_while_one_is_running() {
+        assert!(!should_reload(true, false, None));
+        assert!(!should_reload(true, true, Some(301)));
+        assert!(should_reload(false, false, None));
+        assert!(should_reload(false, true, Some(301)));
+        assert!(!should_reload(false, true, Some(30)));
+    }
 
     #[test]
     fn says_amounts_plainly() {

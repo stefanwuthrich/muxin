@@ -50,14 +50,16 @@ pub fn user_shell() -> String {
 /// The PATH folders (Windows keeps the user's in the environment, no rc files).
 #[cfg(windows)]
 pub fn path_dirs() -> Vec<String> {
-    std::env::var("PATH")
+    let mut dirs: Vec<String> = std::env::var("PATH")
         .map(|p| {
             p.split(';')
                 .filter(|d| !d.is_empty())
                 .map(String::from)
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    dirs.extend(fallback_dirs());
+    dirs
 }
 
 /// The PATH an interactive login shell sets up, then this process's own.
@@ -69,6 +71,20 @@ pub fn path_dirs() -> Vec<String> {
     if let Ok(p) = std::env::var("PATH") {
         dirs.extend(p.split(':').map(String::from));
     }
+    dirs.extend(fallback_dirs());
+    dirs
+}
+
+/// Folders a user install often lives in when the login shell's PATH can't be read.
+pub fn fallback_dirs() -> Vec<String> {
+    let mut dirs = Vec::new();
+    if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+        let home = std::path::PathBuf::from(home);
+        dirs.push(home.join(".local/bin").display().to_string());
+        dirs.push(home.join(".cargo/bin").display().to_string());
+    }
+    dirs.push("/opt/homebrew/bin".into());
+    dirs.push("/usr/local/bin".into());
     dirs
 }
 
@@ -140,4 +156,31 @@ fn interactive_path() -> Option<String> {
     out.lines()
         .rev()
         .find_map(|l| l.strip_prefix("__OR_PATH=").map(str::to_string))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::agents;
+
+    #[cfg(unix)]
+    #[test]
+    fn finds_a_command_in_the_directory_it_is_given() {
+        let dir = std::env::temp_dir().join(format!("muxen-detect-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let bin = dir.join("gemini");
+        std::fs::write(&bin, b"#!/bin/sh\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&bin).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&bin, perms).unwrap();
+        assert_eq!(
+            agents(
+                &["gemini".into(), "missing".into()],
+                &[dir.display().to_string()]
+            ),
+            vec!["gemini".to_string()]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

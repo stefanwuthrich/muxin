@@ -80,13 +80,10 @@ pub fn usage(req: &Value) -> Value {
 
     let config_dir = std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from);
     let claude_dirs = claude_homes(&home, config_dir.as_deref());
+    let present = present_tools(&home, &claude_dirs);
     let mut seen = HashSet::new();
     for dir in &claude_dirs {
-        let files = jsonl_files(&dir.join("projects"), 2, since);
-        if !files.is_empty() && !found.contains(&"claude") {
-            found.push("claude");
-        }
-        for f in files {
+        for f in logs_for_usage(&dir.join("projects"), 2, since) {
             claude_file(&f, &cutoff, &mut seen, &mut tally);
         }
     }
@@ -94,13 +91,21 @@ pub fn usage(req: &Value) -> Value {
         .iter()
         .filter_map(|dir| claude_plan(dir, &home))
         .collect::<Vec<_>>();
-    let codex = jsonl_files(&home.join(".codex/sessions"), 4, since);
-    if !codex.is_empty() {
-        found.push("codex");
-    }
-    for f in codex {
+    for f in logs_for_usage(&home.join(".codex/sessions"), 4, since) {
         codex_file(&f, &cutoff, &mut tally);
     }
+    for f in gemini_sessions(&home, since) {
+        gemini_file(&f, &cutoff, &mut tally);
+    }
+    for f in logs_for_usage(&home.join(".pi/agent/sessions"), 2, since) {
+        pi_file(&f, &cutoff, &mut tally);
+    }
+    for ((_, tool, _), _) in &tally.hours {
+        if !found.contains(tool) {
+            found.push(tool);
+        }
+    }
+    found.sort_unstable();
 
     let mut hours: Vec<Value> = tally
         .hours
@@ -129,7 +134,7 @@ pub fn usage(req: &Value) -> Value {
         })
         .collect();
     folders.sort_by(|a, b| b["last"].as_str().cmp(&a["last"].as_str()));
-    json!({ "ok": true, "days": days, "tools": found, "hours": hours, "folders": folders, "plans": plans })
+    json!({ "ok": true, "days": days, "tools": found, "present": present, "hours": hours, "folders": folders, "plans": plans })
 }
 
 /// Claude configs under `user_home`: `~/.claude`, `~/.config/claude`,
@@ -538,6 +543,192 @@ fn extra_usage(util: &Value) -> Option<Value> {
     Some(json!({ "used": used, "limit": limit, "currency": currency }))
 }
 
+/// Agent CLIs with a config on this machine, whether or not this period has tokens.
+fn present_tools(home: &Path, claude_dirs: &[PathBuf]) -> Vec<&'static str> {
+    let mut tools = Vec::new();
+    if !claude_dirs.is_empty() {
+        tools.push("claude");
+    }
+    if home.join(".codex").is_dir() {
+        tools.push("codex");
+    }
+    if home.join(".gemini").is_dir() {
+        tools.push("gemini");
+    }
+    if home.join(".pi").is_dir() {
+        tools.push("pi");
+    }
+    if home.join(".local/share/opencode").is_dir() || home.join(".config/opencode").is_dir() {
+        tools.push("opencode");
+    }
+    if home.join(".amp").is_dir() {
+        tools.push("amp");
+    }
+    tools
+}
+
+/// Recent logs, plus older ones up to a cap so a file touched later still counts.
+fn logs_for_usage(dir: &Path, depth: usize, since: SystemTime) -> Vec<PathBuf> {
+    const EXTRA_FILES: usize = 200;
+    const EXTRA_BYTES: u64 = 32 * 1024 * 1024;
+    let mut all = Vec::new();
+    collect_jsonl(dir, depth, &mut all);
+    let mut out = Vec::new();
+    let mut older = Vec::new();
+    for (path, modified, len) in all {
+        if modified >= since {
+            out.push(path);
+        } else {
+            older.push((path, modified, len));
+        }
+    }
+    older.sort_by(|a, b| b.1.cmp(&a.1));
+    let mut bytes = 0u64;
+    for (path, _, len) in older.into_iter().take(EXTRA_FILES) {
+        if bytes >= EXTRA_BYTES {
+            break;
+        }
+        bytes += len;
+        out.push(path);
+    }
+    out
+}
+
+fn collect_jsonl(dir: &Path, depth: usize, out: &mut Vec<(PathBuf, SystemTime, u64)>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let path = e.path();
+        let Ok(meta) = e.metadata() else { continue };
+        if meta.is_dir() {
+            if depth > 1 {
+                collect_jsonl(&path, depth - 1, out);
+            }
+        } else if path.extension().is_some_and(|x| x == "jsonl") {
+            out.push((
+                path,
+                meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+                meta.len(),
+            ));
+        }
+    }
+}
+
+/// Gemini CLI session files under `~/.gemini/tmp/<cwd-hash>/chats/`.
+fn gemini_sessions(home: &Path, since: SystemTime) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let Ok(hashes) = std::fs::read_dir(home.join(".gemini/tmp")) else {
+        return files;
+    };
+    for hash in hashes.flatten() {
+        let Ok(chats) = std::fs::read_dir(hash.path().join("chats")) else {
+            continue;
+        };
+        for e in chats.flatten() {
+            let path = e.path();
+            let fresh = e
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .is_some_and(|m| m >= since);
+            if fresh
+                && path.extension().is_some_and(|x| x == "json")
+                && path
+                    .file_name()
+                    .is_some_and(|n| n.to_string_lossy().starts_with("session-"))
+            {
+                files.push(path);
+            }
+        }
+    }
+    files
+}
+
+fn gemini_file(path: &Path, cutoff: &str, tally: &mut Tally) {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let Ok(v) = serde_json::from_str::<Value>(&text) else {
+        return;
+    };
+    let cwd = v["cwd"].as_str().unwrap_or("");
+    for m in v["messages"].as_array().into_iter().flatten() {
+        let tokens = &m["tokens"];
+        if !tokens.is_object() {
+            continue;
+        }
+        let at = m["timestamp"].as_str().unwrap_or("");
+        if at.len() < 13 || at < cutoff {
+            continue;
+        }
+        let model = m["model"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .unwrap_or("gemini");
+        tally.add(
+            at,
+            "gemini",
+            model,
+            cwd,
+            Sum {
+                input: n(&tokens["input"]),
+                output: n(&tokens["output"])
+                    .saturating_add(n(&tokens["thoughts"]))
+                    .saturating_add(n(&tokens["tool"])),
+                cache_read: n(&tokens["cached"]),
+                requests: 1,
+                ..Default::default()
+            },
+        );
+    }
+}
+
+fn pi_file(path: &Path, cutoff: &str, tally: &mut Tally) {
+    let Ok(file) = std::fs::File::open(path) else {
+        return;
+    };
+    for line in BufReader::new(file).lines().map_while(Result::ok) {
+        if !line.contains("\"usage\"") {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if v["type"].as_str() != Some("message") {
+            continue;
+        }
+        let m = &v["message"];
+        if m["role"].as_str() != Some("assistant") || !m["usage"].is_object() {
+            continue;
+        }
+        let at = v["timestamp"].as_str().unwrap_or("");
+        if at.len() < 13 || at < cutoff {
+            continue;
+        }
+        let u = &m["usage"];
+        let model = m["model"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .unwrap_or("pi");
+        let cwd = v["cwd"].as_str().unwrap_or("");
+        tally.add(
+            at,
+            "pi",
+            model,
+            cwd,
+            Sum {
+                input: n(&u["input"]),
+                output: n(&u["output"]),
+                cache_read: n(&u["cacheRead"]),
+                cache_write: n(&u["cacheWrite"]),
+                requests: 1,
+                ..Default::default()
+            },
+        );
+    }
+}
+
 /// `.jsonl` files under `dir` (down to `depth` folders) changed since `since`.
 pub(crate) fn jsonl_files(dir: &Path, depth: usize, since: SystemTime) -> Vec<PathBuf> {
     let mut out = Vec::new();
@@ -778,6 +969,55 @@ mod tests {
         let mut old = Tally::default();
         claude_file(&claude, "2026-10-13T00", &mut HashSet::new(), &mut old);
         assert!(old.hours.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn counts_gemini_and_pi_tokens() {
+        let dir = std::env::temp_dir().join(format!("muxen-usage-more-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let gemini = dir.join("session-1.json");
+        std::fs::write(
+            &gemini,
+            r#"{"cwd":"/g","messages":[{"type":"gemini","timestamp":"2026-10-12T17:04:00Z","model":"gemini-2.5-pro","tokens":{"input":10,"output":20,"cached":30,"thoughts":4,"tool":1}}]}"#,
+        )
+        .unwrap();
+        let pi = dir.join("pi.jsonl");
+        std::fs::write(
+            &pi,
+            r#"{"type":"message","timestamp":"2026-10-12T18:00:00Z","cwd":"/p","message":{"role":"assistant","model":"claude-sonnet-5-5","usage":{"input":8,"output":9,"cacheRead":7,"cacheWrite":2}}}"#,
+        )
+        .unwrap();
+        let mut tally = Tally::default();
+        gemini_file(&gemini, "2026-10-01T00", &mut tally);
+        pi_file(&pi, "2026-10-01T00", &mut tally);
+        let g = tally.hours[&("2026-10-12T17".into(), "gemini", "gemini-2.5-pro".into())];
+        assert_eq!(
+            (g.input, g.output, g.cache_read, g.requests),
+            (10, 25, 30, 1)
+        );
+        let p = tally.hours[&("2026-10-12T18".into(), "pi", "claude-sonnet-5-5".into())];
+        assert_eq!(
+            (p.input, p.output, p.cache_read, p.cache_write, p.requests),
+            (8, 9, 7, 2, 1)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_old_log_with_a_recent_line_is_still_read() {
+        let dir = std::env::temp_dir().join(format!("muxen-usage-old-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("old.jsonl");
+        std::fs::write(&path, "{}\n").unwrap();
+        let file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        file.set_modified(UNIX_EPOCH + Duration::from_secs(1_000_000))
+            .unwrap();
+        drop(file);
+        let since = SystemTime::now() - Duration::from_secs(86_400);
+        assert_eq!(logs_for_usage(&dir, 1, since).len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

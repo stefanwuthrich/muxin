@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use chrono::{Local, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
@@ -124,6 +125,9 @@ pub struct MachineUsage {
     /// The tools whose logs were found ("claude", "codex").
     #[serde(default)]
     pub tools: Vec<String>,
+    /// Agent CLIs present on the machine, even with no tokens in this period.
+    #[serde(default)]
+    pub present: Vec<String>,
     #[serde(default)]
     pub hours: Vec<UsageHour>,
     #[serde(default)]
@@ -244,8 +248,20 @@ pub fn tool_name(tool: &str) -> &str {
     match tool {
         "claude" => "Claude Code",
         "codex" => "Codex",
+        "gemini" => "Gemini CLI",
+        "pi" => "Pi",
+        "opencode" => "OpenCode",
+        "amp" => "Amp",
         other => other,
     }
+}
+
+/// How long one machine may take to report usage before the page moves on.
+const USAGE_TIMEOUT: Duration = Duration::from_secs(45);
+
+/// A machine that didn't finish becomes an error the page can show.
+pub fn finished<T>(result: Option<Result<T, String>>) -> Result<T, String> {
+    result.unwrap_or_else(|| Err("didn't answer in time".into()))
 }
 
 impl Engine {
@@ -283,7 +299,15 @@ impl Engine {
             .filter(|m| !m.is_down() && !m.host.is_empty())
             .map(|m| m.id.clone())
             .collect();
-        let results = futures::future::join_all(ids.iter().map(|id| self.usage(id, days))).await;
+        let results = futures::future::join_all(ids.iter().map(|id| async {
+            let id = id.clone();
+            finished(
+                tokio::time::timeout(USAGE_TIMEOUT, self.usage(&id, days))
+                    .await
+                    .ok(),
+            )
+        }))
+        .await;
         ids.into_iter().zip(results).collect()
     }
 }
@@ -361,6 +385,7 @@ fn demo(machine_id: &str, days: u32) -> MachineUsage {
     MachineUsage {
         machine_id: machine_id.into(),
         tools: vec![tool.into()],
+        present: vec![tool.into()],
         hours,
         folders: vec![folder("~/code/checkout"), folder("~/code/api")],
         plans: Vec::new(),
@@ -370,6 +395,15 @@ fn demo(machine_id: &str, days: u32) -> MachineUsage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_machine_that_does_not_finish_is_an_error() {
+        assert_eq!(
+            finished::<MachineUsage>(None).unwrap_err(),
+            "didn't answer in time"
+        );
+        assert!(finished(Some(Ok(MachineUsage::default()))).is_ok());
+    }
 
     #[test]
     fn prices_known_models_only() {

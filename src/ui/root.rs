@@ -410,6 +410,10 @@ pub struct Root {
     pub(super) usage_days: u32,
     pub(super) usage_data: Option<super::github::Load<super::usage::UsageData>>,
     pub(super) usage_at: Option<Instant>,
+    /// A usage read is in flight. A second one starts only when the period changes.
+    pub(super) usage_loading: bool,
+    /// Bumped when a newer read replaces one still running, so the old result is dropped.
+    pub(super) usage_gen: u64,
     /// The Run page: the command field, the machines picked (None: all
     /// online), the last command run and the ones before it.
     pub(super) run_input: Entity<TextInput>,
@@ -664,6 +668,8 @@ impl Root {
             usage_days: 7,
             usage_data: None,
             usage_at: None,
+            usage_loading: false,
+            usage_gen: 0,
             ports_more: Default::default(),
             machine_gpus: Default::default(),
             forward_seen: Default::default(),
