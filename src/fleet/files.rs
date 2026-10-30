@@ -370,6 +370,7 @@ impl Source {
                 }
             };
         }
+        no_ssh(spec)?;
         let script = format!(
             "tar -C {} -cf - {}",
             shell_path(dir),
@@ -495,6 +496,7 @@ impl Sink {
                 }
             };
         }
+        no_ssh(spec)?;
         let script = format!("mkdir -p {d} && tar -C {d} -xf -", d = shell_path(dir));
         let mut child = shell(spec, &script)
             .stdin(std::process::Stdio::piped())
@@ -632,6 +634,15 @@ fn shell_path(dir: &str) -> String {
         None if dir == "~" || dir.is_empty() => "\"$HOME\"".into(),
         None => crate::ops::remote::sh_quote(dir),
     }
+}
+
+/// Files go over the agent's link; without one they'd need ssh, which an
+/// iPad can't run.
+fn no_ssh(spec: &MachineSpec) -> Result<(), String> {
+    if cfg!(target_os = "ios") {
+        return Err(format!("{} can't be reached for its files over its direct link (Muxin's agent there doesn't copy files on Windows yet).", spec.name));
+    }
+    Ok(())
 }
 
 /// A shell command on the machine: here, or over ssh.

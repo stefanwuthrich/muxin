@@ -826,6 +826,13 @@ pub fn explain_unreachable(
             "Very busy, or a poor connection.".to_string(),
             Some(format!("ssh {host}")),
         ),
+        // An iPad has no ssh to try: only its direct connection, which the machine may have stopped trusting.
+        _ if cfg!(target_os = "ios") => (
+            format!("Can't reach {name}"),
+            "Its direct connection didn't answer. If it's on, pair this iPad with it again from your Mac."
+                .to_string(),
+            None,
+        ),
         _ => (
             format!("Can't reach {name}"),
             "Try ssh in a terminal to see why.".to_string(),

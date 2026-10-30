@@ -937,6 +937,7 @@ async fn demo_docker_flow() {
         .add_machine(crate::ops::NewMachine {
             name: "Test Windows".into(),
             host: "test-windows".into(),
+            port: None,
         })
         .unwrap();
     engine.run_check(Some(vec![id.clone()])).await;

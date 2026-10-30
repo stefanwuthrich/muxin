@@ -101,6 +101,9 @@ struct Inner {
     rows: u16,
     exit: Option<i32>,
     last_output: i64,
+    /// The last keys or size change from someone at the terminal: what the
+    /// program prints right after is an echo or a redraw, not work (alerts).
+    last_input: i64,
     /// Bumped on every (re)start so an old reader thread stops quietly.
     generation: u64,
 }
@@ -123,6 +126,7 @@ impl Inner {
         }
         self.cols = cols;
         self.rows = rows;
+        self.last_input = now();
         self.term.resize(Dims {
             cols: cols as usize,
             rows: rows as usize,
@@ -278,6 +282,7 @@ fn session_json(s: &Session) -> Value {
         "status": if i.exit.is_some() || i.child.is_none() { "exited" } else { "running" },
         "exit_code": i.exit,
         "last_output": i.last_output,
+        "last_input": i.last_input,
         "clients": i.clients.len(),
     })
 }
@@ -349,6 +354,7 @@ fn start(state: &Arc<State>, req: &Value) -> Result<Value, String> {
             rows,
             exit: None,
             last_output: now(),
+            last_input: 0,
             generation: 0,
         }),
     });
@@ -549,7 +555,12 @@ impl Session {
     /// full, with the session unlocked.
     fn input(&self, bytes: &[u8]) -> Result<(), String> {
         let gone = || format!("{} has exited", self.name);
-        let writer = self.inner.lock().unwrap().writer.clone().ok_or_else(gone)?;
+        let writer = {
+            let mut i = self.inner.lock().unwrap();
+            i.last_input = now();
+            i.writer.clone()
+        }
+        .ok_or_else(gone)?;
         writer.send(bytes.to_vec()).map_err(|_| gone())
     }
 }

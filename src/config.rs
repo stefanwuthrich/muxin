@@ -539,6 +539,11 @@ impl Inventory {
                     m.name
                 ));
             }
+            // Muxin on an iPad manages the machines it's paired with, not
+            // itself: an iPad has nothing to check, and can't run a shell.
+            if cfg!(target_os = "ios") && m.is_local() {
+                continue;
+            }
             m.id = id;
             m.runners.retain(|r| !r.trim().is_empty());
             for r in &m.runners {
@@ -625,6 +630,10 @@ host = "local"
 }
 
 pub fn local_hostname() -> String {
+    // An iPad can't run `hostname` (and isn't one of its own machines).
+    if cfg!(target_os = "ios") {
+        return "This iPad".into();
+    }
     let raw = std::process::Command::new("hostname")
         .arg("-s")
         .output()

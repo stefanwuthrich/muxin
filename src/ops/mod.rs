@@ -245,6 +245,8 @@ pub struct NewMachine {
     pub name: String,
     /// An ssh destination ("ci@studio.local", an ~/.ssh/config alias) or "local".
     pub host: String,
+    /// Its ssh port, when no ssh config says it (an iPad adding a machine).
+    pub port: Option<u16>,
 }
 
 impl Engine {
@@ -459,7 +461,7 @@ impl Engine {
 
         let mut new_id = None;
         let edit = |text: &str| {
-            let (out, id) = inventory_edit::add_machine(text, &name, &host)?;
+            let (out, id) = inventory_edit::add_machine_at(text, &name, &host, machine.port)?;
             new_id = Some(id);
             Ok(out)
         };
@@ -2159,6 +2161,7 @@ mod engine_tests {
             .add_machine(NewMachine {
                 name: "Spare".into(),
                 host: "spare.local".into(),
+                port: None,
             })
             .unwrap();
         assert_eq!(new_id, "spare");
@@ -2601,6 +2604,7 @@ mod engine_tests {
             .add_machine(NewMachine {
                 name: "Beelink".into(),
                 host: "beelink".into(),
+                port: None,
             })
             .unwrap();
         engine.run_check(Some(vec![id.clone()])).await;

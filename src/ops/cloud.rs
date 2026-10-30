@@ -248,6 +248,7 @@ impl Engine {
         let machine_id = self.add_machine(NewMachine {
             name: name.clone(),
             host: format!("{user}@{ip}"),
+            port: None,
         })?;
         let cloud = CloudRef {
             provider: "digitalocean".into(),
@@ -573,12 +574,7 @@ impl Engine {
             self.op_log(op, "▸ Waiting for it to answer ssh");
             let started = std::time::Instant::now();
             loop {
-                let ok = tokio::process::Command::new("ssh")
-                    .args(crate::probe::ssh_args(spec))
-                    .arg("true")
-                    .output()
-                    .await
-                    .is_ok_and(|o| o.status.success());
+                let ok = crate::ops::remote::answers(spec).await;
                 if ok {
                     break;
                 }
