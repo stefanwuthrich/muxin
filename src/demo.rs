@@ -701,6 +701,7 @@ impl World {
             route: None,
             kvm: hw.id == "beacon",
             refused_user: None,
+            locked_key: None,
         }
     }
 
@@ -1261,7 +1262,7 @@ impl World {
         };
         let (agents, sessions): (Vec<&str>, Vec<SessionInfo>) = match machine_id {
             "forge" => (
-                vec!["claude", "codex", "opencode"],
+                vec!["claude", "codex", "opencode", "agy"],
                 vec![
                     session(
                         "claude-7f3a",
@@ -1657,6 +1658,8 @@ pub mod github {
             html_url: format!("https://github.com/{full_name}"),
             owner_is_org: full_name.starts_with("acme/"),
             favorite: false,
+            can_push: true,
+            parent: None,
         }
     }
 

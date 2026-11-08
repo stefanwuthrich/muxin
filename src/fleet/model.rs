@@ -377,7 +377,8 @@ pub struct Probe {
 #[serde(rename_all = "camelCase")]
 pub struct Unreachable {
     /// "offline" (no answer: shut down, asleep, off the network) | "refused" |
-    /// "auth" | "unknown-host" | "host-key" | "tailscale-off" (this computer's
+    /// "auth" | "key-locked" (the machine has the key, and it has a passphrase
+    /// no agent here unlocks) | "unknown-host" | "host-key" | "tailscale-off" (this computer's
     /// Tailscale is off or signed out, and the machine is on the tailnet) |
     /// "powered-off" (a cloud machine) | "host-down" (the machine it runs on or
     /// is reached through is off) | "stopped" (its container there isn't
@@ -403,6 +404,20 @@ pub struct Diagnostic {
     pub message: String,
     pub hint: Option<String>,
     pub runner_id: Option<String>,
+    /// What Muxin can do about it, the likely fix first. The apps show these
+    /// instead of the hint, which says how to do it by hand.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<DiagnosticAction>,
+}
+
+/// A button on a diagnostic.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct DiagnosticAction {
+    pub label: String,
+    /// "runner_update" | "runner_start" | "runner_restart" | "runner_logs" |
+    /// "runner_install" | "machine_restart" | "open_services" | "open_processes" |
+    /// "open_files" | "open_settings"
+    pub kind: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

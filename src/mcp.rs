@@ -66,9 +66,10 @@ work. Only make or destroy boxes when the user asked.
 
 GitHub: github_inbox (review requests, assigned issues, the user's PRs), github_repos (favorites first), github_repo \
 (open issues and PRs, Actions runs, and where it's checked out on the machines), github_item (an \
-issue or PR in full, by URL or owner/name#123). local_checkouts lists git checkouts on the machines; \
-git_sync fetches, pulls or pushes one. To fix an issue, start a session in a checkout of its repo \
-with the issue as the prompt.";
+issue or PR in full, by URL or owner/name#123). A fork's `parent` names the repository it came from, \
+often where its issues and PRs are: call github_repo on that. local_checkouts lists git checkouts on \
+the machines; git_sync fetches, pulls or pushes one. To fix an issue, start a session in a checkout of \
+its repo with the issue as the prompt; when `can_push` is false and the user has a fork, in the fork.";
 
 /// Per-connection state: who the client is, so workspaces and commands record their owner.
 #[derive(Default)]
@@ -363,7 +364,7 @@ async fn dispatch(engine: &Arc<Engine>, session: &Session, name: &str, a: Value)
         "session_rename" => ok(api::session_rename(engine, args(a)?).await?),
         "session_handoff" => ok(api::session_handoff(engine, args(a)?).await?),
         "github_inbox" => ok(api::github_inbox(engine).await?),
-        "github_repos" => ok(json!({ "repos": api::github_repos(engine).await? })),
+        "github_repos" => ok(json!({ "repos": api::github_repos(engine).await?, "favorites": engine.settings().favorite_repos })),
         "github_favorite" => ok(api::github_favorite(engine, args(a)?)?),
         "github_accounts" => ok(api::github_accounts(engine).await?),
         "github_use_account" => ok(api::github_use_account(engine, args(a)?).await?),
@@ -513,10 +514,10 @@ pub fn tools() -> Vec<Value> {
         }),
         json!({
             "name": "runner_action",
-            "description": "Control one runner on its machine: start, stop or restart its service; logs (read-only tail of its newest _diag log); or remove (stop, uninstall the service, deregister from GitHub, drop it from config.toml, optionally delete its folder). For a runner no machine lists (\"github/<name>\"), remove deregisters it on GitHub. stop and remove take the runner offline; confirm with the user first.",
+            "description": "Control one runner on its machine: start, stop or restart its service; logs (read-only tail of its newest _diag log); update (replace its programs with the latest release's, checked against GitHub's SHA-256, keeping its registration; refused while it runs a job); or remove (stop, uninstall the service, deregister from GitHub, drop it from config.toml, optionally delete its folder). For a runner no machine lists (\"github/<name>\"), remove deregisters it on GitHub. stop and remove take the runner offline; confirm with the user first.",
             "inputSchema": schema(json!({
                 "runner_id": { "type": "string", "description": RUNNER_ID },
-                "action": { "type": "string", "enum": ["start", "stop", "restart", "logs", "remove"] },
+                "action": { "type": "string", "enum": ["start", "stop", "restart", "logs", "remove", "update"] },
                 "delete_files": { "type": "boolean", "description": "With remove: also delete the runner's folder. Default false." },
                 "wait": { "type": "boolean", "description": "Wait for it to finish. Default true." },
                 "timeout_secs": { "type": "integer", "minimum": 1, "description": "How long to wait. Default 180." }
@@ -562,9 +563,9 @@ pub fn tools() -> Vec<Value> {
         }),
         json!({
             "name": "machine_power",
-            "description": "Power a machine on or off. A cloud machine: through its provider (as cloud_power). A VM or container that runs in Docker on another of the user's machines (get_machine's `parent` names the machine and its `container`): starts or stops that container there; stopping gives it two minutes to shut down cleanly, and starting waits until it answers ssh. It changes the user's machines: only when asked.",
-            "inputSchema": schema(json!({ "machine_id": { "type": "string", "description": MACHINE_ID }, "power": { "type": "string", "enum": ["on", "off"] }, "wait": { "type": "boolean" } }), &["machine_id", "power"]),
-            "annotations": annotations("Power a machine on or off", false, false, true, true),
+            "description": "Power a machine on or off, or restart it. A cloud machine: on and off go through its provider (as cloud_power), restart through its own system. A VM or container that runs in Docker on another of the user's machines (get_machine's `parent` names the machine and its `container`): starts, stops or restarts that container there; stopping gives it two minutes to shut down cleanly, and starting or restarting waits until it answers ssh. Any other machine: off and restart ask its own system (they may need sudo: when it wants a password, this fails with a hint to use the Muxin app, which asks for it), and the operation follows it going down and coming back; `on` isn't possible, so use wake_machine. Its agent sessions and running jobs end. A shut-down machine stays off until someone is at it or it wakes over the network. It doesn't act on this computer. It changes the user's machines: only when asked.",
+            "inputSchema": schema(json!({ "machine_id": { "type": "string", "description": MACHINE_ID }, "power": { "type": "string", "enum": ["on", "off", "restart"] }, "wait": { "type": "boolean" } }), &["machine_id", "power"]),
+            "annotations": annotations("Power a machine on or off, or restart it", false, true, true, true),
         }),
         json!({
             "name": "schedule_list",
@@ -586,7 +587,7 @@ pub fn tools() -> Vec<Value> {
                     "days": { "type": "array", "items": { "type": "string" } }
                 }, "required": ["every"] },
                 "command": { "type": "string" },
-                "agent": { "type": "string", "description": "claude, codex, opencode, gemini, amp, pi or shell." },
+                "agent": { "type": "string", "description": "claude, codex, opencode, gemini, agy, amp, pi or shell." },
                 "prompt": { "type": "string" },
                 "folder": { "type": "string", "description": "Default ~." },
                 "enabled": { "type": "boolean", "description": "Default true; false keeps it without running it." }
@@ -889,7 +890,7 @@ pub fn tools() -> Vec<Value> {
             "description": "Start an agent CLI (or a shell) in a new session on a machine, in a folder there, optionally with a first prompt. It keeps running until stopped; the user can watch and type into it from the Muxin app. Returns the session. Only start sessions the user asked for.",
             "inputSchema": schema(json!({
                 "machine_id": { "type": "string", "description": MACHINE_ID },
-                "agent": { "type": "string", "enum": ["claude", "codex", "opencode", "gemini", "amp", "pi", "shell"], "description": "Which CLI to run. session_list shows which are installed on each machine." },
+                "agent": { "type": "string", "enum": ["claude", "codex", "opencode", "gemini", "agy", "amp", "pi", "shell"], "description": "Which CLI to run. session_list shows which are installed on each machine." },
                 "cwd": { "type": "string", "description": "Folder on the machine, e.g. \"~/code/api\". Default: the home folder." },
                 "title": { "type": "string", "description": "Shown in the app's sidebar. Default: agent and folder name." },
                 "prompt": { "type": "string", "description": "First message for the agent." }
@@ -965,7 +966,7 @@ pub fn tools() -> Vec<Value> {
             "description": "Hand a session's work to another agent (Claude Code to Codex, say), or a box's to another agent in the box: Muxin writes .muxin/handoff.md in its folder (where the git work stands, the agent's to-do list, and the conversation so far from the agent's own transcript: Claude Code, Codex, Gemini CLI and Pi; else what its terminal showed), starts the new agent there asked to read it first, and ends the old session unless keep. With machine_id the work moves to that machine first (git checkouts only; the folder it left stays as it was). Returns the new session, the note's path and what it was made from (`source`). Only when the user asked.",
             "inputSchema": schema(json!({
                 "session_id": { "type": "string", "description": "A session id, or a box id (box-7k2m9q)." },
-                "agent": { "type": "string", "description": "The agent to hand it to: claude, codex, opencode, gemini, amp or pi." },
+                "agent": { "type": "string", "description": "The agent to hand it to: claude, codex, opencode, gemini, agy, amp or pi." },
                 "keep": { "type": "boolean", "description": "Keep the old session running too. Default false." },
                 "machine_id": { "type": "string", "description": "Move the work to this machine and continue there: its commits that aren't on origin, uncommitted changes and new files go into a workspace there (a worktree of a checkout of the repository, else a clone). Default: the session's own machine. Not for boxes." }
             }), &["session_id", "agent"]),
@@ -979,7 +980,7 @@ pub fn tools() -> Vec<Value> {
         }),
         json!({
             "name": "github_repos",
-            "description": "The user's GitHub repositories (owned, collaborator, and through their orgs): their favorites first (`favorite: true`, the ones they work on most), then most recently pushed, with visibility, default branch, language and open issue count.",
+            "description": "The user's GitHub repositories (owned, collaborator, and through their orgs): their favorites first (`favorite: true`, the ones they work on most), then most recently pushed, with visibility, default branch, language, open issue count and `can_push`. A fork's `parent` names the repository it came from (`full_name`, `private`, `html_url`, `open_issues`), even one the user doesn't otherwise have here: its issues and pull requests are usually there, through github_repo. `parent` is null on a fork when GitHub doesn't name it to this login. `favorites` names all their favorites in the order they were added, including ones that aren't in `repos` (a fork's `parent`, say).",
             "inputSchema": schema(json!({}), &[]),
             "annotations": annotations("GitHub repositories", true, false, true, true),
         }),
@@ -1009,7 +1010,7 @@ pub fn tools() -> Vec<Value> {
         }),
         json!({
             "name": "github_repo",
-            "description": "One repository: its open issues and pull requests, recent GitHub Actions runs, and where it's checked out on the user's machines (machine, folder, branch, ahead/behind, uncommitted changes). Use the checkouts to pick where to work on it.",
+            "description": "One repository: its open issues and pull requests, recent GitHub Actions runs, and where it's checked out on the user's machines (machine, folder, branch, ahead/behind, uncommitted changes). Use the checkouts to pick where to work on it. Works for any repository this login can read, not only the user's. `repo.parent` names what a fork came from; `repo.can_push` says whether the user can push here. A fork's checkouts are listed under the fork's name, not its parent's.",
             "inputSchema": schema(json!({ "repo": { "type": "string", "description": "\"owner/name\" or a GitHub URL." } }), &["repo"]),
             "annotations": annotations("GitHub repository", true, false, true, true),
         }),
@@ -1186,7 +1187,7 @@ pub fn tools() -> Vec<Value> {
         }),
         json!({
             "name": "run_on_machines",
-            "description": "Run one shell command on several machines at once: in each one's login shell (sh-family; PowerShell on Windows), from the home folder, without a terminal (nothing interactive). One operation per machine; waits for all unless wait is false, and returns each one's exit_code and log_tail. It runs on the user's real machines as the user: only when asked, and show the command first.",
+            "description": "Run one shell command on several machines at once: in each one's shell (sh-family, with the aliases from its .zshrc or .bashrc; PowerShell on Windows), from the home folder, without a terminal (nothing interactive). One operation per machine; waits for all unless wait is false, and returns each one's exit_code and log_tail. It runs on the user's real machines as the user: only when asked, and show the command first.",
             "inputSchema": schema(json!({
                 "machine_ids": { "type": "array", "items": { "type": "string" }, "description": "Machine ids (or names)." },
                 "command": { "type": "string" },
@@ -1281,6 +1282,7 @@ pub fn print_config() -> String {
     .unwrap_or_default();
     format!(
         "# Claude Code\nclaude mcp add muxin -- {exe} mcp\n\n\
+         # Antigravity CLI\nagy mcp add muxin -- {exe} mcp\n\n\
          # Codex (~/.codex/config.toml)\n[mcp_servers.muxin]\ncommand = \"{exe}\"\nargs = [\"mcp\"]\n\n\
          # Other MCP clients (Claude Desktop, Cursor, ...)\n{json_block}\n\n\
          # Try it safely first with simulated machines: add \"--demo\" after \"mcp\".\n"
@@ -1348,6 +1350,25 @@ mod tests {
         let bg = readable_text("workspace_exec", &json!({ "background_pid": 42, "log_path": ".muxen/logs/1.log", "duration_ms": 5 })).unwrap();
         assert!(bg.contains("pid 42") && bg.contains(".muxen/logs/1.log"));
         assert!(readable_text("status", &json!({})).is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn github_repos_names_favorites_that_arent_in_its_list() {
+        let engine = demo();
+        let session = Session::default();
+        for repo in ["zed-industries/zed", "acme/api"] {
+            let starred = call_tool(&engine, &session, "github_favorite", json!({ "repo": repo })).await;
+            assert_eq!(starred["isError"], false, "{starred}");
+        }
+        let out = call_tool(&engine, &session, "github_repos", json!({})).await;
+        assert_eq!(out["isError"], false, "{out}");
+        let result = &out["structuredContent"];
+        assert_eq!(result["favorites"], json!(["zed-industries/zed", "acme/api"]));
+        // What was there before stays: the list itself, with the flag on the ones it has.
+        let repos = result["repos"].as_array().unwrap();
+        assert!(!repos.iter().any(|r| r["full_name"] == "zed-industries/zed"));
+        assert_eq!(repos[0]["full_name"], "acme/api");
+        assert_eq!(repos[0]["favorite"], true);
     }
 
     #[tokio::test(flavor = "multi_thread")]

@@ -10,7 +10,7 @@ Use the MCP tools when they're connected: start the server with `muxin mcp`, and
 
 1. **Start with `status`** (`muxin status --json`) and read `attention` first. It lists what's wrong, most severe first, with the `machine_id` or `runner_id` each item is about.
 2. **The state may be stale.** `status` uses the last machine check. Look at `last_check_at` and each machine's `checked_at`. Call `check_machines` (or `status` with `refresh: true`) when you need it fresh. Checks are read-only.
-3. **Confirm before changing real things.** `install_runners` and `runner_action` with `stop`, `restart` or `remove` run commands on the user's machines and register or deregister runners on GitHub. Do them when the user asked for exactly that; otherwise say what you'd do and ask. `add_machine`, `remove_machine`, `rename_machine` and `connect_machine` only edit `config.toml` (`remove_machine` also unpairs a machine paired for direct connections from this app).
+3. **Confirm before changing real things.** `install_runners` and `runner_action` with `stop`, `restart`, `remove` or `update` run commands on the user's machines and register or deregister runners on GitHub. Do them when the user asked for exactly that; otherwise say what you'd do and ask. `add_machine`, `remove_machine`, `rename_machine` and `connect_machine` only edit `config.toml` (`remove_machine` also unpairs a machine paired for direct connections from this app).
 4. **Use the hints.** Errors have a `code`:
    - `not_found`
    - `invalid`
@@ -44,7 +44,7 @@ Use the MCP tools when they're connected: start the server with `muxin mcp`, and
 
 **"Why is runner X offline?"**
 
-1. Call `get_machine` on its machine. Check the machine's `status` first: an unreachable machine explains everything on it. When it's `offline`, `unreachable` says why in plain words. `kind: "offline"` means it didn't answer (shut down, asleep, off the network): there's nothing to fix, so tell the user it's off and when it was `last_seen_at`. Other kinds (`refused`, `auth`, `unknown-host`, `host-key`) come with a `hint` to pass on. Then check the runner's `state`, `source`, `service_state`, and the diagnostics with its `runner_id`.
+1. Call `get_machine` on its machine. Check the machine's `status` first: an unreachable machine explains everything on it. When it's `offline`, `unreachable` says why in plain words. `kind: "offline"` means it didn't answer (shut down, asleep, off the network): there's nothing to fix, so tell the user it's off and when it was `last_seen_at`. Other kinds (`refused`, `auth`, `key-locked`, `unknown-host`, `host-key`) come with a `hint` to pass on. `key-locked` means the machine already has the user's key, but it has a passphrase and no ssh agent Muxin can reach holds it: copying the key again won't help. Then check the runner's `state`, `source`, `service_state`, and the diagnostics with its `runner_id`.
 2. Call `runner_action(X, "logs")` to read its newest `_diag` log.
 3. Explain the cause and propose a fix, such as `runner_action(X, "start")`. Do it only if the user agrees or already asked.
 
@@ -93,7 +93,7 @@ The CLI equivalents are `muxin workspace create|ls|show|exec|cat|write|files|cha
 
 ## Agent sessions: other agents running on the user's machines
 
-The user runs AI agent CLIs (Claude Code, Codex, OpenCode, Gemini CLI, Amp) or shells in persistent sessions on their machines (held by Muxin's agent there) and watches them in the app. Ids look like `beelink/claude-3f9a`.
+The user runs AI agent CLIs (Claude Code, Codex, OpenCode, Gemini CLI, Antigravity, Amp) or shells in persistent sessions on their machines (held by Muxin's agent there) and watches them in the app. Ids look like `beelink/claude-3f9a`.
 
 - `session_list` shows every session (agent, folder, `status`, `busy` = printed output in the last few seconds) and which agent CLIs each machine has. Its `git` says what the work in a session's folder changed: `branch`, the files, lines and `commits` since the default branch (`base`), `uncommitted` files, whether it's a `worktree`, and the branch's `pull` request with its `checks`.
 - `session_action(id, action)` asks a session's agent to `commit`, `commit_push`, open or update the `pull_request`, `review` its branch, `fix_comments` (the pull request's review comments), resolve `conflicts`, or write a `recap`, by typing that action's prompt (the user can change them in Settings). Only when the user asked for it.
@@ -123,16 +123,18 @@ The CLI equivalents are `muxin box new|ls|send|resume|pause|attach|shell|rm`.
 ## Usage and cost
 
 - `agent_usage(days?, machine_id?)` says what Claude Code and Codex used over the last N days (default 7), from their own logs on each machine: tokens (input, output, cache reads and writes) and requests by model and machine, each day's cost (`daily`) and the busiest folders (`folders`), and the cost at Anthropic's and OpenAI's API list prices (`null` for a model whose price isn't known). With a Claude or ChatGPT plan the user doesn't pay per token: say it's what the same use would cost through the API. Read-only.
-- The CLI equivalent is `muxin usage [--days N] [--machine X]`.
+- The CLI equivalent is `muxin usage [--days N] [X]`.
 
 ## GitHub and the user's code
 
-- `github_inbox` shows what needs the user: review requests, assigned issues, their open PRs. `github_repos` lists their repositories, favorites first (`favorite: true`: the ones they work on most). `github_favorite` stars or unstars one; only when asked.
+- `github_inbox` shows what needs the user: review requests, assigned issues, their open PRs. `github_repos` lists their repositories, favorites first (`favorite: true`: the ones they work on most), and `favorites` names them all in the order they were added, including ones that aren't in the list. `github_favorite` stars or unstars one; only when asked.
 - Muxin uses one GitHub account at a time. `github_accounts` shows which (`using`) and the alternatives: accounts the GitHub CLI here is signed in to, and other machines' `gh` logins. `github_use_account` switches (only when asked); it changes whose repositories and runners Muxin sees.
 - `github_repo` gives a repository's open issues, PRs, recent Actions runs, and its checkouts on the user's machines. `github_item` gives an issue or PR in full (description, comments; for PRs also checks and reviews), from its URL or `owner/name#123`.
+- Forks: in `github_repos` and `github_repo`, a fork's `parent` names the repository it came from (`full_name`, `private`, `html_url`, `open_issues`). A fork usually has no issues of its own: they're on the parent, so call `github_repo` and `github_item` on that; they work for any repository this login can read. `parent` is `null` on a fork when GitHub doesn't name it to this login. `can_push` says whether the user can push to a repository, and the parent isn't an entry of `github_repos` unless it's also one of theirs.
 - `muxin edit <machine>:<folder>` opens a folder of a machine's in the user's editor here (Zed, Cursor or VS Code, over ssh). It opens a window on the user's screen: only when asked.
 - `local_checkouts` lists git checkouts on the machines (branch, ahead/behind, uncommitted files). `git_sync` runs fetch, pull (fast-forward only) or push in one; only when asked.
 - To work on an issue: find a checkout with `local_checkouts` and make a worktree of it (`workspace_create(machine_id, worktree_of: <its folder>, branch: "issue-123-short-name")`), or create a workspace with a clone of the repo (`workspace_create(repo, branch: ...)`; for a pull request `ref: "pull/123/head"` checks out its code, forks included). Then `session_start` an agent in that folder with the issue's URL and text as the prompt, or work there yourself with `workspace_exec`.
+- An issue on a repository the user can't push to (not `can_push`, or not in `github_repos`) when they have a fork of it: work in the fork. A fork's checkouts are under the fork's name in `local_checkouts`, not the parent's; with none, clone the fork. It may be behind, so start the branch from the parent's default branch. Push to the fork and open the pull request against the parent: `gh pr create --repo <parent> --head <fork owner>:<branch>`. A session's `git.pull` finds that pull request on the parent.
 - Before an agent commits or pushes on a machine, `git_status(machine_id)` says whether that works (`can_commit`, `push`). `git_setup` fixes it (identity from the user's GitHub account, credentials through the machine's GitHub CLI); only when asked, since it changes the machine's global git config.
 - `github_accounts` also says which permissions the login has (`scopes`), the user's organizations (`orgs`), and `grant_command` when watching organizations needs more: pass that to the user verbatim.
 
@@ -166,7 +168,7 @@ Muxin can make a VM on one of the user's machines and add it to them, shown unde
 
 - `vm_options` lists the machines that can run VMs (and which systems, or why not), the system ids and the defaults.
 - `vm_create(name, system, host?, cpus?, memory_gb?, disk_gb?)` makes one; the result names the new `machine_id`. Linux is ready in under a minute. Windows downloads and installs itself, 15-30 minutes the first time: pass `wait: false` and poll `get_operation`. Until it answers, its `unreachable.kind` is `"installing"`.
-- `machine_power(machine_id, "on"|"off")` starts or stops it (Windows gets two minutes to shut down cleanly); `vm_destroy(machine_id)` deletes its container and disk and removes it from Muxin. A machine's `vm` field says Muxin made it (and so can destroy it).
+- `machine_power(machine_id, "on"|"off"|"restart")` starts, stops or restarts it (Windows gets two minutes to shut down cleanly); `vm_destroy(machine_id)` deletes its container and disk and removes it from Muxin. A machine's `vm` field says Muxin made it (and so can destroy it).
 - It uses the user's machine, memory and disk: make one when asked, or when a task needs a fresh machine (a clean Windows to test an installer on, say), and destroy it when the task is done unless the user wants it kept. Copy out anything worth keeping first.
 - Each VM gets a UDP port on its host forwarded to it (its `direct_address`), so `direct_connection(machine_id, true)` works for it like for any machine. A Linux VM's CPU, memory and uptime are its container's own limits.
 - A Windows VM's account password is in the user's Keychain (the app's Copy password button); you don't need it: ssh uses the key.
@@ -178,7 +180,7 @@ Muxin can make a VM on one of the user's machines and add it to them, shown unde
 3. Work there: `workspace_create(machine_id: "win-test")` and `workspace_exec`, or `copy_files` and `session_start`.
 4. `vm_destroy("win-test")` when you're done, unless the user wants it kept.
 
-The CLI equivalents are `muxin vm options|create|destroy` and `muxin power <machine> on|off`.
+The CLI equivalents are `muxin vm options|create|destroy` and `muxin power <machine> on|off|restart`.
 
 ## Schedules
 
@@ -195,11 +197,12 @@ The CLI equivalents are `muxin schedule ls|add|rm|run|log`.
 ## Several machines at once
 
 - `run_on_machines(machine_ids, command, timeout_secs?)` runs one shell command on each machine, in its login shell from the home folder, without a terminal (nothing interactive). It waits for all of them and returns each one's `exit_code`, `error` and `operation.log_tail`. It runs as the user on their real machines: only when asked, and show the command first.
+- A diagnostic's `actions` say what Muxin can do about it, the likely fix first, each with a `label` and a `kind`: `runner_update`, `runner_start`, `runner_restart` and `runner_logs` are `runner_action` on its `runner_id`; `runner_install` is `install_runners`; `machine_restart` is `machine_power(machine_id, "restart")`; `open_services`, `open_processes` and `open_files` are `machine_services`, `machine_processes` and `list_files`; `open_settings` is `github_scopes`. `hint` says how to do it by hand.
 - `status.attention` and `get_machine`'s diagnostics include `reboot-required` (a Linux machine's updates want a restart) and `failed-services` (systemd units that failed, by name). Read their logs (`logs_read(kind: "service")`) before suggesting a fix.
 - A machine can run on another of the user's machines: `get_machine`'s `parent` names that machine, with `relation` `"vm"`, `"container"` or `"inside"` (kind unknown), or `"through"` when ssh only goes through it (a jump host). `container` is the Docker container it runs in there, and `containerState` that container's state. When it can't be reached because of that, `unreachable.kind` is `"host-down"` (the machine it's on is off) or `"stopped"` (its container isn't running): start that machine, or its container.
-- `machine_power(machine_id, "on"|"off")` starts or stops the container a VM runs in (stopping gives it two minutes to shut down cleanly), or powers a cloud machine. It changes the user's machines: only when asked.
+- `machine_power(machine_id, "on"|"off"|"restart")` starts, stops or restarts the container a VM runs in (stopping gives it two minutes to shut down cleanly), or powers a cloud machine. On any other machine, `off` and `restart` ask its own system, through its agent, and the operation follows it going down and coming back; `on` can't turn one on, so use `wake_machine`. They end its agent sessions and running jobs, and they don't act on this computer. When sudo wants a password it fails with a hint to use the Muxin app, which asks for it. A Mac with FileVault waits for its password at its own screen after a restart. It changes the user's machines: only when asked.
 - `wake_machine(machine_id)` sends Wake on LAN to a machine that's asleep or off, from this computer and from online machines on its network. It works once Muxin has seen the machine's network card (while it was on) and when the machine is set up to wake that way. Muxin checks it again after 20 and 40 seconds.
-- The CLI equivalents are `muxin run --on a,b -- <command>` (`--all` for every machine online; it exits 1 when any failed), `muxin wake <machine>` and `muxin power <machine> on|off`.
+- The CLI equivalents are `muxin run --on a,b -- <command>` (`--all` for every machine online; it exits 1 when any failed), `muxin wake <machine>` and `muxin power <machine> on|off|restart`.
 
 ## Logs
 
@@ -228,6 +231,7 @@ The CLI equivalents are `muxin schedule ls|add|rm|run|log`.
 ## Muxin itself
 
 - `muxin updates` (`--json`) says whether a newer Muxin is out and how to update this copy: a command (Homebrew, the AUR) or the file to download. Read-only; installing is the user's call.
+- `muxin quit` quits the running app, whose window may be closed (it keeps running with an icon in the menu bar or tray). Sessions keep running on their machines. Only when asked. Opening `muxin` while it runs only brings its window forward.
 
 ## Don'ts
 

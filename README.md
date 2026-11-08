@@ -14,7 +14,7 @@
 
 Point it at the machines you own (a Mac Studio under the desk, a NUC, a Linux box, a few MacBooks, a Windows laptop) and Muxin becomes the hub for all of them:
 
-- **Agent sessions:** Claude Code, Codex, OpenCode, Gemini CLI, Amp, Pi or a shell on any machine, in a real terminal, still running after you close the app.
+- **Agent sessions:** Claude Code, Codex, OpenCode, Gemini CLI, Antigravity, Amp, Pi or a shell on any machine, in a real terminal, still running after you close the app.
 - **Boxes:** hand a task to an agent that works on it by itself, in a container of its own on one of your machines. A box pauses when it's quiet and picks up where it left off when you ask it more.
 - **Desktops:** see a Linux machine's screen live and use it, beside an agent's terminal or in its own window.
 - **Files and clipboard:** copy files and folders between any two machines, and copy on this computer to paste on a machine (and back).
@@ -25,6 +25,11 @@ Point it at the machines you own (a Mac Studio under the desk, a NUC, a Linux bo
 Agents can also **borrow a machine as a work environment**: an [agent workspace](#agent-workspaces) is a persistent folder (optionally a git checkout) on one of your machines where an agent runs commands, edits files and syncs code.
 
 - **Native and fast.** The window is built with [GPUI](https://www.gpui.rs), the GPU-accelerated UI framework behind the Zed editor. It runs on macOS, Linux and Windows.
+- **Keeps running when you close the window.** Muxin goes on checking your machines and holding your connections and port forwards, with an icon in the menu bar or system tray. A dot on it shows when a session is waiting for you. Its menu lists those sessions and has **Show Muxin** and **Quit Muxin**. Opening Muxin again brings the window back too, from a terminal as well: there is one running copy. A desktop's stream stops while the window is closed and picks up when it's back, and shares you started end. Your sessions keep running on their machines either way.
+  - **Mac:** the Dock brings the window back as you left it too (**Window › Show Muxin** if another Muxin window is open). ⌘Q quits. **Settings › General › Menu bar** hides the icon.
+  - **Windows:** the window comes back as you left it. Click the icon for the window, right-click it for the menu. Windows 11 starts new icons under the **^** arrow by the clock; drag it out to keep it in view. Turn off **Settings › General › Tray** and closing it quits.
+  - **Linux:** the window really closes, and comes back on the same page and splits, with terminals reattached. Open dialogs and half-typed text don't come back, and a session running without Muxin's agent ends with the window. Turn off **Settings › General › Tray** and closing it quits. So does a desktop with no tray: GNOME shows tray icons only with the AppIndicator extension (Ubuntu has it on). If the tray goes away while the window is closed, the window comes back by itself.
+  - `muxin quit` quits from a terminal, wherever the window is.
 - **Agent-first.** Every capability is available as an MCP server (`muxin mcp`) and as scriptable commands with `--json`. Claude Code, Codex and other agents can check your machines, explain problems and fix them.
 - **Uses what you already have.** Machines are first reached with your system `ssh`, so your keys, agent and `~/.ssh/config` aliases just work; after that Muxin talks to its own small agent there, directly or through [Tailscale](#tailscale-and-moving-between-networks). GitHub access uses your `gh` login.
 
@@ -106,7 +111,7 @@ muxin status
 - **Overview:** the day in one line (machines online, agents working, runners busy), a few notices for what needs a look (each with a button that fixes or explains it), a card per machine with what's running on it (its agents, desktop and runners) and live CPU, memory and disk, and every agent session across your machines. The Jobs page shows how busy your runners have been over the last few minutes.
 - **Machines and runners:** install runners on a machine, and start, stop, restart, show logs for or remove each one. A machine that's off or out of reach says so in plain words (offline, Remote Login off, ssh key not accepted, Tailscale off on this Mac, …), with when it was last seen and what to do; Muxin picks it back up by itself when it returns.
 - **Adding machines (⌘N):** suggestions from your `~/.ssh/config`, your Tailscale network, and this network (machines advertising ssh over Bonjour, and Macs that would be addable once Remote Login is on).
-- **Agent sessions (⌘T):** a real terminal on any machine running Claude Code, Codex, OpenCode, Gemini CLI, Amp, Pi or a shell. Sessions are listed under their machine in the sidebar (a spinner while the agent works, a colored dot when it wants you), with its open desktop and one line for its runners, and keep running when you close the app. Terminal font size, line height and a blinking cursor are in Settings.
+- **Agent sessions (⌘T):** a real terminal on any machine running Claude Code, Codex, OpenCode, Gemini CLI, Antigravity, Amp, Pi or a shell. Sessions are listed under their machine in the sidebar (a spinner while the agent works, a colored dot when it wants you), with its open desktop and one line for its runners, and keep running when you quit the app. Terminal font size, line height and a blinking cursor are in Settings.
 - **Usage (⌃5):** what Claude Code and Codex used on all your machines today or over the last 7, 30 or 90 days, read from their own logs there: tokens and requests by day, model, machine and folder, and what it would cost at Anthropic's and OpenAI's API list prices. With a Claude or ChatGPT plan you don't pay per token; it's what the same use would cost through the API.
 - **Run (⌃6):** one command on several machines at once (`df -h /`, `brew upgrade`, `git -C ~/code/api pull`), each one's output side by side as it comes, and its exit status. It runs in your login shell from your home folder; right-click a machine › **Run a command…** to start with just that one.
 - **Open in your editor:** sessions, workspaces, GitHub checkouts and Compose projects have a button that lists the editors on this computer (Zed, Cursor, VS Code) and opens their folder in the one you pick, over the editor's own ssh support. Settings › General › Editor picks which comes first (and which `muxin edit` uses).
@@ -214,12 +219,12 @@ The MCP server has these tools:
 | `machine_processes`, `process_signal` | A machine's busiest processes and its GPUs; stop or kill one. |
 | `run_on_machines` | Runs one shell command on several machines at once, with each one's output and exit status. |
 | `wake_machine` | Wakes a machine that's asleep or off (Wake on LAN). |
-| `machine_power` | Powers a machine on or off: a cloud machine, or a VM in a Docker container on another machine. |
+| `machine_power` | Powers a machine on or off, or restarts it: a cloud machine, a VM in a Docker container on another of your machines, or any other machine through its own system (off and restart) |
 | `vm_options`, `vm_create`, `vm_destroy` | VMs on your machines: Windows (Docker with KVM) or Linux containers, added to your machines. |
 | `schedule_list`, `schedule_save`, `schedule_delete`, `schedule_run`, `schedule_log` | Commands and agent sessions that run on a machine at set times, run there by its own scheduler. |
 | `agent_usage` | What Claude Code and Codex used over the last N days: tokens, requests and cost at API prices, by model and machine. |
 | `install_runners` | Downloads, registers and starts runners on a machine. |
-| `runner_action` | Starts, stops, restarts or removes a runner, or reads its logs. |
+| `runner_action` | Starts, stops, restarts, updates or removes a runner, or reads its logs. |
 | `get_operation`, `list_operations` | Progress and output of long operations. |
 | `github_scopes` | Watches or unwatches orgs and repos, with access checks. |
 | `get_settings`, `update_settings` | Settings. |
@@ -254,6 +259,25 @@ Every tool returns structured JSON. Failures come back with a `code` an agent ca
 
 Many failures also include a `hint` with the exact command that fixes them. [AGENTS.md](AGENTS.md) has guidance written for agents.
 
+### Agent skill
+
+Agents that load skills (Claude Code, Codex, OpenCode, Gemini CLI, Pi, Hermes, …) can learn Muxin's CLI from the skill in [`skills/muxin`](skills/muxin/SKILL.md), with no MCP server to set up. It has the ground rules (start with `muxin status --json`, confirm before changing things, pass hints on verbatim) and how to work with sessions, boxes, workspaces, runners, machines, cloud machines and VMs. Ask your agent to "review PR 142 in my session on beelink" and it knows what to run.
+
+```sh
+muxin skill install                   # for every agent found on this computer
+muxin skill install --agent hermes    # just one: claude, codex, opencode, gemini, pi, hermes, or agents
+muxin skill install --dir ~/my-agent/skills
+muxin skill remove
+```
+
+The skill is built into Muxin, so `muxin skill install` writes the version that matches yours. Run it again after updating. It goes in `~/.claude/skills/muxin`, `~/.config/opencode/skills/muxin`, `~/.gemini/skills/muxin`, `~/.pi/agent/skills/muxin`, `~/.hermes/skills/muxin`, or for Codex (and `agents`, for any other agent that reads it) the shared `~/.agents/skills/muxin`.
+
+To follow this repository instead, copy or link the folder into your agent's skills folder (`muxin skill install` leaves a link alone):
+
+```sh
+ln -s "$PWD/skills/muxin" ~/.claude/skills/muxin
+```
+
 ### The CLI, for scripts and agents without MCP
 
 Every command takes `--json`. In that mode stdout carries JSON only, and errors are printed as `{"error": {...}}`. Progress and logs go to stderr. Exit codes:
@@ -276,10 +300,10 @@ muxin run --on beelink,mac-studio -- df -h /   # one command on several machines
 muxin ps beelink [-n 20]                  # its busiest processes and its GPUs
 muxin kill beelink 4242 [--force]         # stop a process (--force: SIGKILL)
 muxin wake beelink                        # Wake on LAN
-muxin power win11 off                     # a VM in Docker on another machine (or a cloud machine): on or off
+muxin power win11 off                     # shut a machine down (or restart it); a VM or cloud machine also turns on
 muxin vm create win-test --system windows-11 --on beelink   # a VM on one of your machines
 muxin schedule add beelink --name Tests --every day --at 09:00 --command "make test"
-muxin usage [--days 30] [--machine beelink]   # what the agents used, and the cost at API prices
+muxin usage [--days 30] [beelink]             # what the agents used, and the cost at API prices
 muxin edit beelink:~/code/api [--editor zed] [--print]   # open a folder there in your editor
 muxin disconnect <id>                     # stop connecting to it (its sessions go on there)
 muxin connect <id>                        # connect again, and check it
@@ -349,9 +373,9 @@ muxin ws allow studionas --off                 # forbid workspaces on a machine
 The GitHub page is built for the loop of picking an issue, handing it to an agent, and moving on:
 
 - **For you:** pull requests waiting for your review, issues assigned to you, and your open pull requests.
-- **Repositories:** everything you own, collaborate on or reach through your orgs, with each one's open issues, pull requests and GitHub Actions runs. Star the ones you work on to keep them at the top, and show the list as one list or grouped by owner (you, then your organizations, then repositories other people shared with you).
+- **Repositories:** everything you own, collaborate on or reach through your orgs, with each one's open issues, pull requests and GitHub Actions runs. Star the ones you work on to keep them at the top, and show the list as one list or grouped by owner (you, then your organizations, then repositories other people shared with you). A fork sits under the repository it came from, even one that isn't yours, so that repository's issues and pull requests are a click away.
 - **On your machines:** each machine's agent finds git checkouts in your code folders (`~/Developer`, `~/code`, `~/src`, … add yours in Settings › General › Code folders) and links them to their GitHub repository, with branch, commits ahead/behind and uncommitted changes. Fetch, Pull and Push from there.
-- **Work on it with an agent:** on any issue (or **Review with agent** on a pull request), one click opens a new session in that repository's checkout on the machine you pick (this computer first), with the issue's link, title and description as the agent's first message. With no checkout there, Muxin clones the repository in a new workspace (an issue gets its own branch, like `issue-910-content-excalidraw`; a pull request checks out its branch, forks included), then starts the agent in it. Right-click a pull request for **Review in a new workspace…** to get a fresh clone anyway.
+- **Work on it with an agent:** on any issue (or **Review with agent** on a pull request), one click opens a new session in that repository's checkout on the machine you pick (this computer first), with the issue's link, title and description as the agent's first message. With no checkout there, Muxin clones the repository in a new workspace (an issue gets its own branch, like `issue-910-content-excalidraw`; a pull request checks out its branch, forks included), then starts the agent in it. Right-click a pull request for **Review in a new workspace…** to get a fresh clone anyway. An issue on a repository you can't push to goes through your fork of it, when you have one: its checkout or a clone of it, with the agent told to open the pull request against the original.
 - **Hand off in a box:** on an issue, opens **New box** filled in: the repository, a task to fix the issue and open a pull request that closes it (its title and description go along), and a branch named for it. An agent then works on it by itself, in a container on one of your machines (see [Boxes](#boxes)).
 
 Muxin uses the GitHub CLI's login (`gh auth login`) or `GITHUB_TOKEN`. Settings has a **Sign in with GitHub** button that runs the CLI's browser sign-in; each machine's page shows whether its own `gh` is signed in (agents there use it for issues and pull requests) and can sign it in too.
@@ -383,10 +407,10 @@ muxin checkouts --machine beelink --path ~/code/api --git pull
 
 Start an AI agent on one of your machines and come back to it whenever you like, from the app, from your own terminal, or through another agent.
 
-- **Keeps running.** Sessions live in Muxin's agent on the machine (`~/.muxen/bin/muxen-agent`), a small background program that holds each session's terminal, the way tmux would. Closing the app, sleeping your laptop or losing the network only detaches; the agent keeps working until you end the session, and reopening it shows the screen as it is with its recent scrollback. A restart of the machine ends its sessions, as with tmux.
+- **Keeps running.** Sessions live in Muxin's agent on the machine (`~/.muxen/bin/muxen-agent`), a small background program that holds each session's terminal, the way tmux would. Quitting the app, sleeping your laptop or losing the network only detaches; the agent keeps working until you end the session, and reopening it shows the screen as it is with its recent scrollback. A restart of the machine ends its sessions, as with tmux.
 - **Nothing to install.** When Muxin connects to a machine it uploads the agent build for that OS and CPU (macOS, Linux and Windows, x86_64 and arm64; a few MB) and keeps it up to date.
 - **Split panes.** ⌘D splits a terminal to the right, ⇧⌘D below it (or the buttons in its header): a new shell on the same machine, in the same folder. ⌥⌘← and ⌥⌘→ move between panes, or click one. Each pane is a session of its own, so it keeps running like any other; type `exit` to close it, or × on its bar to take it out of the split. Splits come back when you reopen Muxin.
-- **A real terminal in the app.** Everything goes to the agent: Esc, Ctrl-C, Tab, arrows, Option/Shift+Enter for newlines. ⌘C copies a selection, ⌘V pastes, the wheel scrolls back. Nerd Font icons (Neovim's file icons, prompt glyphs) show with any terminal font: Muxin brings the symbols. Right-click a machine for a new terminal or agent session.
+- **A real terminal in the app.** Everything goes to the agent: Esc, Ctrl-C, Tab, arrows, Option/Shift+Enter for newlines. On a Mac, Option types what your keyboard puts on it (`@` on a German one); on US-style keyboards it works as Meta (Option+B goes back a word). ⌘C copies a selection, ⌘V pastes, the wheel scrolls back. Nerd Font icons (Neovim's file icons, prompt glyphs) show with any terminal font: Muxin brings the symbols. Right-click a machine for a new terminal or agent session.
 - **Names you choose.** Right-click a machine or a session and pick **Rename…** (or ⇧⌘P › Rename on its page). A machine keeps its id, so its runners, sessions and favorites stay with it; `config.toml` gets `id = "<old id>"` when the new name would give a different one. A session's title is kept by the agent on its machine (`~/.muxen/titles.json`), so every Muxin sees it; an empty title goes back to the one it started with.
 - **Your environment.** The agent starts in your login shell, in the folder you pick, so nvm/fnm/asdf and the CLI's own login work as they do in your terminal. Muxin finds which agent CLIs each machine has: `claude`, `codex`, `opencode`, `gemini`, `amp`.
 - **What it changed.** Each session shows its branch, the lines and files it changed since the default branch, its commits and uncommitted files, and the branch's pull request with its checks (click it to open it on GitHub). Muxin looks when a session stops working, and at least every minute while sessions run.
@@ -452,7 +476,7 @@ Show someone a session, or a whole machine, straight from your computer. They jo
 - **Joining.** The link opens a page that asks for their name, then joins right there in the browser (or in Muxin, if they have it). In Muxin, ⇧⌘P › **Join a share…** takes a link too. Shares are listed under **Shared with you**, sessions shown at the size the sharer's terminal is. A shared machine's page lists its sessions, its screen and its servers; **Open** puts a server at `localhost` on the guest's computer (in Muxin; a browser can't open ports).
 - **Peer to peer.** The two computers connect directly (WebRTC): over your network or Tailscale when they share one, across the internet otherwise, and through an encrypted relay only when nothing direct works. muxin.dev only introduces them, with two short messages: the part of the link after `#` (the share's secret) never reaches it, and the guest checks that it reached the sharing computer's own certificate, so the site can't listen in or join.
 - **What a guest can do.** Only what's shared, and type, use the desktop or open servers only while you let them. Muxin enforces it on your computer, and the agent on the machine attaches a watcher that can't type or resize. Guests never reach the machine itself, its files or a shell.
-- **It ends** when its time runs out, when you **Stop sharing**, or when you quit Muxin. The link stops working then, for good.
+- **It ends** when its time runs out, when you **Stop sharing**, or when you close Muxin's window or quit (nobody would be there to let guests in). The link stops working then, for good.
 
 To introduce them through a server of your own instead (`share-server/` in this repository), set `[settings.share] server = "https://share.example.com"` in `config.toml`.
 
@@ -469,7 +493,7 @@ Muxin first reaches a machine with `ssh`, installs its small agent there, and fr
 
 **Servers.** A machine's page lists what's listening there: web servers first, with their page's title (a dev server, a Docker container's site), then its other ports. **Open** puts one on this computer at `localhost` (the same port number when it's free) and opens it in your browser; no desktop needed. Each connection goes through the machine's live connection, so it works over ssh or direct alike, even for servers that listen only on the machine itself. Open ports are listed under their machine in the sidebar (click to open, × to close) and come back when Muxin starts. **Open a port** takes any port number. From a terminal: `muxin ports <machine>` and `muxin forward <machine> <port>`.
 
-**Desktop.** On a Linux machine with an X11 desktop, a Mac, or a Windows PC someone is signed in to, **Show desktop** (on its page, or its right-click menu) shows its screen live and sends your mouse and keyboard to it. On Linux ⌘ works as Ctrl; on a Mac it stays ⌘. An open desktop is listed under its machine in the sidebar (and keeps streaming while you look elsewhere); close it there.
+**Desktop.** On a Linux machine with an X11 desktop, a Mac, or a Windows PC someone is signed in to, **Show desktop** (on its page, or its right-click menu) shows its screen live and sends your mouse and keyboard to it. On Linux ⌘ works as Ctrl; on a Mac it stays ⌘. Keys type what your keyboard puts on them, whatever the machine's own keyboard is: Shift+2 is `@` from a US keyboard and `"` from a German one, even on a machine set to another layout. From a Mac, so does Option (`@` on a German one); it's still Alt for keys that aren't characters (Alt+Tab, Alt+F4) and with the mouse, and on US-style keyboards it's always Alt. An open desktop is listed under its machine in the sidebar (and keeps streaming while you look elsewhere); close it there.
 
 **Nobody signed in.** Muxin shows the screen of the account it connects as, so that account has to be signed in there. Servers often have nobody signed in, and a Remote Desktop window closed without signing out leaves a session with no screen. Muxin says so right away and offers **Open with Remote Desktop** (Windows), **Open with Screen Sharing** (Mac) or **Open with RDP or VNC** (Linux); the machine's right-click menu has it too. It opens the machine's own remote desktop in your app for it: Windows App or Remote Desktop Connection, Screen Sharing, Remmina or FreeRDP. That shows the sign-in screen, so you can sign in. It goes through Muxin's connection to the machine, so it works away from home too and nothing has to be opened in a firewall. Here it's at `localhost:3390` (VNC: `localhost:5901`), listed under Servers. The machine needs it turned on:
 

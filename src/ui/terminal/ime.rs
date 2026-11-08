@@ -8,7 +8,7 @@ use gpui::{App, Bounds, Context, ElementInputHandler, EntityInputHandler, InputH
 use super::{Metrics, TerminalView, render};
 
 #[derive(Clone, Default)]
-pub(super) struct Composition {
+pub(in crate::ui) struct Composition {
     pub text: String,
     /// UTF-8 byte offsets, always on character boundaries.
     pub selected: Range<usize>,
@@ -179,6 +179,18 @@ mod tests {
         ime.clear();
         assert!(ime.text.is_empty());
         assert_eq!(ime.selected, 0..0);
+    }
+
+    #[test]
+    fn dead_key_accent_is_preedit_until_the_next_key() {
+        // German Option+N and Option+U: the accent waits for the next key.
+        let mut ime = Composition::default();
+        ime.update(None, "~", Some(1..1));
+        assert_eq!((ime.text.as_str(), ime.selected.clone()), ("~", 1..1));
+        ime.clear();
+        ime.update(None, "¨", Some(1..1));
+        assert_eq!((ime.text.as_str(), ime.selected.clone()), ("¨", 2..2));
+        assert_eq!(ime.range_to_utf16(ime.selected.clone()), 1..1);
     }
 
     #[test]

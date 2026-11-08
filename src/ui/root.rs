@@ -12,10 +12,7 @@ use gpui::{
 };
 
 use super::activity::{ActivityFilter, ActivityItem};
-use super::dialogs::{
-    AddDisplayDialog, AddMachineDialog, ConfirmDialog, DialogEvent, InstallDialog,
-    MonitorPasswordDialog, NewSessionDialog, NewWorkspaceDialog, RenameDialog, RenameTarget,
-};
+use super::dialogs::{AddDisplayDialog, MonitorPasswordDialog, PowerDialog, AddMachineDialog, ConfirmDialog, DialogEvent, InstallDialog, NewSessionDialog, NewWorkspaceDialog, RenameDialog, RenameTarget};
 use super::format;
 use super::input::{InputEvent, TextInput};
 use super::kit::{self, Button, ButtonStyle, icon, spinner};
@@ -72,6 +69,7 @@ actions!(
         Dismiss,
         Quit,
         CheckForUpdates,
+        ShowMainWindow,
         HideApp,
         HideOthers,
         ShowAll,
@@ -118,6 +116,12 @@ pub fn bind_keys(cx: &mut App) {
 
 pub fn menus() -> Vec<Menu> {
     use super::input;
+    let mut window_items = vec![MenuItem::action("Minimize", Minimize), MenuItem::action("Zoom", Zoom)];
+    // A closed window comes back from the Dock, but not while an app's window
+    // of ours still shows: the Dock has nothing to do then.
+    if cfg!(target_os = "macos") {
+        window_items.extend([MenuItem::separator(), MenuItem::action("Show Muxin", ShowMainWindow)]);
+    }
     vec![
         Menu {
             name: "Muxin".into(),
@@ -181,13 +185,7 @@ pub fn menus() -> Vec<Menu> {
                 MenuItem::action("Show or Hide Sidebar", ToggleSidebar),
             ],
         },
-        Menu {
-            name: "Window".into(),
-            items: vec![
-                MenuItem::action("Minimize", Minimize),
-                MenuItem::action("Zoom", Zoom),
-            ],
-        },
+        Menu { name: "Window".into(), items: window_items },
         Menu {
             name: "Help".into(),
             items: vec![
@@ -209,6 +207,7 @@ pub fn bind_app_actions(cx: &mut App) {
     cx.on_action(|_: &HideApp, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
+    cx.on_action(|_: &ShowMainWindow, cx| super::show_main_window(cx));
     fn on_window(cx: &mut App, f: impl FnOnce(&mut Window)) {
         if let Some(handle) = cx.active_window() {
             let _ = handle.update(cx, |_, window, _| f(window));
@@ -222,6 +221,31 @@ pub fn bind_app_actions(cx: &mut App) {
     cx.on_action(|_: &ReportProblem, cx| cx.open_url(&format!("{REPO}/issues/new/choose")));
     cx.on_action(|_: &AskQuestion, cx| cx.open_url(&format!("{REPO}/discussions")));
     cx.on_action(|_: &OpenGitHub, cx| cx.open_url(REPO));
+}
+
+/// What a window that really closed (on Linux, see `ui::run`) comes back to.
+/// Its terminals reattach, and splits come back on their own.
+pub(super) struct Left {
+    route: Route,
+    back: Vec<Route>,
+    forward: Vec<Route>,
+    collapsed: HashSet<String>,
+    pub(super) bounds: Option<gpui::WindowBounds>,
+}
+
+impl Left {
+    /// For a new process (see `ui::start_afresh`): the page, if it's one that
+    /// can be named, and the window's size.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub(super) fn as_view(&self) -> Vec<String> {
+        let page = match &self.route {
+            Route::Session(id) => format!("session:{id}"),
+            Route::Machine(id) => format!("machine:{id}"),
+            _ => String::new(),
+        };
+        let size = self.bounds.map(|b| b.get_bounds().size).map(|s| format!("size:{}x{}", f32::from(s.width) as u32, f32::from(s.height) as u32));
+        std::iter::once(page).chain(size).collect()
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -293,6 +317,7 @@ pub enum Modal {
     Rename(Entity<RenameDialog>),
     AddDisplay(Entity<AddDisplayDialog>),
     MonitorPassword(Entity<MonitorPasswordDialog>),
+    Power(Entity<PowerDialog>),
     Share(Entity<super::share::ShareDialog>),
     Join(Entity<super::share::JoinDialog>),
 }
@@ -457,7 +482,9 @@ pub struct Root {
     pub(super) joined: Vec<super::share::JoinedShare>,
     pub(super) joined_count: u32,
     /// A share link opened with Muxin, for the Join dialog on the next render.
-    pending_join: Option<String>,
+    pub(super) pending_join: Option<String>,
+    /// The window's place and size, as last moved (see `Left`).
+    bounds: Option<gpui::WindowBounds>,
     _tasks: Vec<Task<()>>,
     pub(super) _subscriptions: Vec<Subscription>,
 }
@@ -564,6 +591,14 @@ impl Root {
                 }
             }
         });
+        // The window really closing, on Linux: what it comes back to, and shares
+        // end (nobody could let a guest in).
+        subscriptions.push(cx.observe_window_bounds(window, |this, window, _| this.bounds = Some(window.window_bounds())));
+        subscriptions.push(cx.on_release(|this: &mut Root, _| {
+            crate::share::host::stop_all();
+            let left = Left { route: this.route.clone(), back: std::mem::take(&mut this.back), forward: std::mem::take(&mut this.forward), collapsed: std::mem::take(&mut this.collapsed), bounds: this.bounds };
+            *super::left_as_it_was().lock().unwrap() = Some(left);
+        }));
 
         // The machine page's "Open a port": a number, then Return.
         let port_input = cx.new(|cx| TextInput::new(cx, "Port, e.g. 3000"));
@@ -696,6 +731,7 @@ impl Root {
             joined: Vec::new(),
             joined_count: 0,
             pending_join: None,
+            bounds: None,
             _tasks: {
                 #[cfg(target_os = "linux")]
                 {
@@ -731,20 +767,42 @@ impl Root {
             }
         });
         ws._tasks.push(sharing);
-        // Share links opened with Muxin (muxin://join...).
-        if let Some(mut links) = super::take_opened_links() {
-            let opened = cx.spawn(async move |this, cx| {
-                use futures::StreamExt;
-                while let Some(link) = links.next().await {
-                    let _ = this.update(cx, |this, cx| {
-                        this.pending_join = Some(link);
-                        cx.notify()
-                    });
-                }
-            });
-            ws._tasks.push(opened);
-        }
         ws
+    }
+
+    /// The window comes back after really closing (see `ui::run`).
+    pub(super) fn go_back_to(&mut self, left: Left, window: &mut Window, cx: &mut Context<Self>) {
+        self.navigate(left.route, window, cx);
+        (self.back, self.forward, self.collapsed) = (left.back, left.forward, left.collapsed);
+    }
+
+    /// The window closed but stays alive (on a Mac, or on Windows with the tray;
+    /// see `ui::hide_main_window`). Machine checks, links and forwards go on, and
+    /// sessions stay attached.
+    pub(super) fn window_hidden(&mut self, cx: &mut Context<Self>) {
+        // Rendering has stopped, so this wouldn't be noticed: notices for the
+        // session that was showing stay unread now.
+        self.window_active = false;
+        (self.show_keys, self.keys_soon) = (false, None);
+        // Nobody can see these, and a machine would go on capturing its screen.
+        for view in self.all_desktops() {
+            view.update(cx, |view, _| view.pause());
+        }
+        // Nobody could let a guest in or see who's there.
+        crate::share::host::stop_all();
+    }
+
+    /// The window is back (see `ui::show_main_window`).
+    pub(super) fn window_shown(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        for view in self.all_desktops() {
+            view.update(cx, |view, cx| view.resume(window, cx));
+        }
+        cx.notify();
+    }
+
+    /// The desktops of this window: machines', and ones shared with you.
+    fn all_desktops(&self) -> Vec<Entity<super::desktop::DesktopView>> {
+        self.desktops.values().chain(self.joined.iter().filter_map(|j| j.desktop.as_ref())).cloned().collect()
     }
 
     fn apply_snapshot(&mut self, snapshot: Arc<Snapshot>, cx: &mut Context<Self>) {
@@ -1063,7 +1121,7 @@ impl Root {
                     self.confirm_remove_runner(&r, window, cx);
                 }
             }
-            "size" | "display" => {}
+            "size" | "display" | "tray" => {}
             "session" => self.navigate(Route::Session(arg.into()), window, cx),
             // "new-session:<machine>", or "new-session:<machine>@<folder>".
             "new-session" => match arg.split_once('@') {
@@ -1977,6 +2035,36 @@ impl Root {
         self.track(task);
     }
 
+    /// A diagnostic's button (`DiagnosticAction::kind`).
+    pub(super) fn run_diagnostic_action(&mut self, kind: &str, machine: &str, runner: Option<&str>, window: &mut Window, cx: &mut Context<Self>) {
+        match (kind, runner) {
+            ("runner_update", Some(r)) => self.runner_action(r, RunnerAction::Update, cx),
+            ("runner_start", Some(r)) => self.runner_action(r, RunnerAction::Start, cx),
+            ("runner_restart", Some(r)) => self.runner_action(r, RunnerAction::Restart, cx),
+            ("runner_logs", Some(r)) => self.runner_action(r, RunnerAction::Logs, cx),
+            ("runner_install", _) => self.show_install_dialog(machine, window, cx),
+            ("machine_restart", _) => self.show_os_power(machine.to_string(), crate::ops::OsPower::Restart, window, cx),
+            ("open_services", _) => self.navigate(Route::Services(machine.to_string()), window, cx),
+            ("open_processes", _) => {
+                self.navigate(Route::Services(machine.to_string()), window, cx);
+                if let Some(view) = self.service_pages.get(machine).cloned() {
+                    view.update(cx, |v, cx| v.show_tab("processes", window, cx));
+                }
+            }
+            ("open_files", _) => self.show_copy_files(Some(machine.to_string()), None, window, cx),
+            ("open_settings", _) => self.open_settings_tab(super::settings::SettingsTab::GitHub, window, cx),
+            _ => {}
+        }
+    }
+
+    /// Asks before a machine shuts down or restarts.
+    pub(super) fn show_os_power(&mut self, machine: String, action: crate::ops::OsPower, window: &mut Window, cx: &mut Context<Self>) {
+        let engine = self.engine.clone();
+        let dialog = cx.new(|cx| PowerDialog::new(engine, machine, action, window, cx));
+        self.show_modal(Modal::Power(dialog.clone()), window, cx);
+        self._subscriptions.push(cx.subscribe_in(&dialog, window, Self::on_dialog_event));
+    }
+
     /// Asks for a machine's or a session's new name.
     pub(super) fn show_rename(
         &mut self,
@@ -2442,6 +2530,7 @@ impl Root {
             Modal::Rename(d) => d.read(cx).first_focus(cx),
             Modal::AddDisplay(d) => d.read(cx).first_focus(cx),
             Modal::MonitorPassword(d) => d.read(cx).first_focus(cx),
+            Modal::Power(d) => d.read(cx).first_focus(cx),
             Modal::Share(d) => d.read(cx).first_focus(cx),
             Modal::Join(d) => d.read(cx).first_focus(cx),
             Modal::Licenses(d) => d.focus_handle(cx),
@@ -4820,6 +4909,7 @@ impl Render for Root {
             Modal::Rename(d) => d.clone().into_any_element(),
             Modal::AddDisplay(d) => d.clone().into_any_element(),
             Modal::MonitorPassword(d) => d.clone().into_any_element(),
+            Modal::Power(d) => d.clone().into_any_element(),
             Modal::Share(d) => d.clone().into_any_element(),
             Modal::Join(d) => d.clone().into_any_element(),
             Modal::Licenses(d) => d.clone().into_any_element(),

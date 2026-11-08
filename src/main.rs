@@ -7,6 +7,8 @@ mod crash;
 mod demo;
 mod fleet;
 mod github;
+#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+mod instance;
 mod mcp;
 mod ops;
 #[cfg(all(feature = "gui", target_os = "linux"))]
@@ -17,9 +19,10 @@ mod renamed;
 #[cfg_attr(not(feature = "gui"), allow(dead_code))]
 mod share;
 mod shell_command;
+mod skill;
+mod update;
 #[cfg(feature = "gui")]
 mod ui;
-mod update;
 mod util;
 
 use std::io::IsTerminal;
@@ -128,8 +131,8 @@ enum Command {
     Run(FleetRunArgs),
     /// Wake a machine that's asleep or off (Wake on LAN)
     Wake(MachineArgs),
-    /// Power a machine on or off: a cloud machine, or a VM in Docker on another machine
-    Power(CloudPowerArgs),
+    /// Power a machine on or off, or restart it. Ordinary machines can shut down and restart, not turn on (see wake)
+    Power(PowerArgs),
     /// VMs on your machines: Windows (Docker with KVM) and Linux containers
     #[command(subcommand)]
     Vm(VmCommand),
@@ -149,6 +152,9 @@ enum Command {
     Boxes(BoxCommand),
     /// Run the MCP server on stdio for AI agents (Claude Code, Codex, ...)
     Mcp(McpArgs),
+    /// The Muxin skill that teaches agents (Claude Code, Codex, Hermes, ...) this CLI: put it in their skills folders
+    #[command(subcommand)]
+    Skill(SkillCommand),
     /// Check every machine once and print a report
     Check(CheckArgs),
     /// Write a starter config.toml
@@ -160,6 +166,8 @@ enum Command {
     ShellCommand(ShellCommandArgs),
     /// Whether a newer Muxin is out, and how to update this copy
     Updates(UpdatesArgs),
+    /// Quit the running Muxin app, wherever its window is (sessions keep running on their machines)
+    Quit(CommonArgs),
 }
 
 #[derive(Args)]
@@ -370,8 +378,8 @@ struct RunnerArgs {
     #[command(flatten)]
     agent: AgentArgs,
 
-    /// start, stop, restart, logs or remove
-    #[arg(value_parser = ["start", "stop", "restart", "logs", "remove"])]
+    /// start, stop, restart, logs, remove or update
+    #[arg(value_parser = ["start", "stop", "restart", "logs", "remove", "update"])]
     action: String,
 
     /// Runner id (<machine-id>/<name>, github/<name>) or a unique runner name
@@ -490,7 +498,7 @@ struct ScheduleAddArgs {
     /// A shell command to run
     #[arg(long)]
     command: Option<String>,
-    /// Or an agent session: claude, codex, opencode, gemini, amp, pi
+    /// Or an agent session: claude, codex, opencode, gemini, agy, amp, pi
     #[arg(long = "agent")]
     cli: Option<String>,
     /// What the agent is asked
@@ -674,6 +682,17 @@ struct CloudMachineArgs {
     agent: AgentArgs,
     /// Machine id or name
     machine: String,
+}
+
+#[derive(Args)]
+struct PowerArgs {
+    #[command(flatten)]
+    agent: AgentArgs,
+    /// Machine id or name
+    machine: String,
+    /// on, off or restart
+    #[arg(value_parser = ["on", "off", "restart"])]
+    state: String,
 }
 
 #[derive(Args)]
@@ -1042,7 +1061,7 @@ enum SessionCommand {
     /// List sessions (and which agents each machine has)
     #[command(alias = "list")]
     Ls(SessionLsArgs),
-    /// Start an agent (claude, codex, opencode, gemini, amp, pi) or a shell on a machine
+    /// Start an agent (claude, codex, opencode, gemini, agy, amp, pi) or a shell on a machine
     Start(SessionStartArgs),
     /// Print a session's screen and recent scrollback
     Read(SessionReadArgs),
@@ -1168,7 +1187,7 @@ struct SessionStartArgs {
     agent: AgentArgs,
     /// Machine id or name
     machine: String,
-    /// claude, codex, opencode, gemini, amp, pi or shell
+    /// claude, codex, opencode, gemini, agy, amp, pi or shell
     #[arg(value_name = "AGENT")]
     kind: String,
     /// Folder on the machine (default: home)
@@ -1215,7 +1234,7 @@ struct SessionHandoffArgs {
     agent: AgentArgs,
     /// Session id (<machine-id>/<name>), unique name, or a box id
     session_id: String,
-    /// The agent to hand it to: claude, codex, opencode, gemini, amp or pi
+    /// The agent to hand it to: claude, codex, opencode, gemini, agy, amp or pi
     to: String,
     /// Keep the old session running too
     #[arg(long)]
@@ -1495,6 +1514,28 @@ struct McpArgs {
     print_config: bool,
 }
 
+#[derive(Subcommand)]
+enum SkillCommand {
+    /// Write the skill into agents' skills folders (every agent found here, or --agent)
+    Install(SkillArgs),
+    /// Take it out of those folders again
+    Remove(SkillArgs),
+}
+
+#[derive(Args)]
+struct SkillArgs {
+    /// claude, codex, opencode, gemini, pi, hermes, or agents (~/.agents/skills); repeat for several
+    /// [default: every agent found on this computer]
+    #[arg(long = "agent", value_name = "AGENT")]
+    agents: Vec<String>,
+    /// Another skills folder instead (the skill goes in <DIR>/muxin)
+    #[arg(long, value_name = "DIR", conflicts_with = "agents")]
+    dir: Option<PathBuf>,
+    /// Print machine-readable JSON
+    #[arg(long)]
+    json: bool,
+}
+
 #[derive(Args)]
 struct CheckArgs {
     #[command(flatten)]
@@ -1524,10 +1565,9 @@ struct InitArgs {
 }
 
 fn main() -> ExitCode {
-    crash::install(
-        concat!("muxin ", env!("CARGO_PKG_VERSION")),
-        config::dir_from_env().join("crash.log"),
-    );
+    #[cfg(unix)]
+    probe::find_ssh_agent();
+    crash::install(concat!("muxin ", env!("CARGO_PKG_VERSION")), config::dir_from_env().join("crash.log"));
     // Logs always go to stderr: stdout is reserved for --json output and MCP messages.
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -1541,7 +1581,7 @@ fn main() -> ExitCode {
         .init();
 
     // A share link opened with Muxin: Linux and Windows hand it over as the
-    // argument (macOS through the app, see ui::open_link).
+    // argument (macOS through the app, see ui::run_app).
     let mut argv: Vec<std::ffi::OsString> = std::env::args_os().collect();
     if let Some(url) = argv.get(1).and_then(|a| a.to_str()).filter(|a| a.starts_with("muxin://join")).map(String::from) {
         argv = vec![argv[0].clone(), "open".into(), "--view".into(), format!("join:{url}").into()];
@@ -2149,6 +2189,7 @@ fn main() -> ExitCode {
             }
         }
         Some(Command::Mcp(a)) => mcp(a, &runtime),
+        Some(Command::Skill(cmd)) => skill(cmd),
         Some(Command::Check(args)) => {
             let _guard = runtime.enter();
             let engine = Engine::new(args.common.paths(), args.demo);
@@ -2175,6 +2216,19 @@ fn main() -> ExitCode {
             }
             println!("state       {}", display_path(&p.state));
             0
+        }
+        Some(Command::Quit(args)) => {
+            let dir = args.paths().dir;
+            if !instance::is_running(&dir) {
+                println!("Muxin isn't running.");
+                0
+            } else if runtime.block_on(instance::tell(&dir, &instance::Request::Quit)) == instance::Told::NoAnswer {
+                eprintln!("error: Muxin didn't answer.");
+                1
+            } else {
+                println!("Muxin is quitting.");
+                0
+            }
         }
         Some(Command::Updates(args)) => {
             let current = env!("CARGO_PKG_VERSION");
@@ -2302,7 +2356,30 @@ fn open(args: OpenArgs, runtime: &tokio::runtime::Runtime) -> u8 {
     }
     // The engine runs on tokio; the window runs on GPUI's main-thread executor.
     let _guard = runtime.enter();
-    let engine = Engine::new(args.common.paths(), args.demo);
+    let paths = args.common.paths();
+    // One window per Muxin home: opening it again brings that one forward.
+    #[cfg(feature = "gui")]
+    let listener = if args.demo {
+        None
+    } else {
+        match instance::claim(&paths.dir) {
+            instance::Claim::First(listener) => Some(listener),
+            instance::Claim::Unknown => None,
+            instance::Claim::Taken => {
+                // A test's own `--view` runs beside the app; a share link goes to it.
+                let request = match args.view.as_deref() {
+                    None => Some(instance::Request::Show),
+                    Some(view) => view.strip_prefix("join:").map(|url| instance::Request::Join(url.to_string())),
+                };
+                match request.map(|request| runtime.block_on(instance::tell(&paths.dir, &request))) {
+                    Some(instance::Told::Done) => return 0,
+                    Some(instance::Told::Replacing) => runtime.block_on(instance::claim_when_free(&paths.dir)),
+                    Some(instance::Told::NoAnswer) | None => None,
+                }
+            }
+        }
+    };
+    let engine = Engine::new(paths, args.demo);
     engine.start();
     if engine.is_demo() {
         tracing::info!("demo mode: simulated machines, nothing is read from or written to disk");
@@ -2313,7 +2390,7 @@ fn open(args: OpenArgs, runtime: &tokio::runtime::Runtime) -> u8 {
     {
         // The window is the one process that watches cloud machines for idleness.
         engine.start_cloud_idle_watch();
-        ui::run(engine, args.view);
+        ui::run(engine, args.view, listener);
         0
     }
     #[cfg(not(feature = "gui"))]
@@ -3775,6 +3852,45 @@ fn mcp(args: McpArgs, runtime: &tokio::runtime::Runtime) -> u8 {
     }
 }
 
+fn skill(cmd: SkillCommand) -> u8 {
+    let (args, installing) = match cmd {
+        SkillCommand::Install(a) => (a, true),
+        SkillCommand::Remove(a) => (a, false),
+    };
+    let targets = match skill::targets(&args.agents, args.dir, installing) {
+        Ok(t) => t,
+        Err(e) if args.json => {
+            println!("{}", serde_json::json!({ "error": { "code": "invalid", "message": e } }));
+            return 2;
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 2;
+        }
+    };
+    let results: Vec<skill::Outcome> = targets
+        .into_iter()
+        .map(|(agent, dir)| if installing { skill::install(agent, &dir) } else { skill::remove(agent, &dir) })
+        .collect();
+    if args.json {
+        let out = serde_json::json!({ "skill": "muxin", "version": env!("CARGO_PKG_VERSION"), "results": results });
+        println!("{}", serde_json::to_string_pretty(&out).unwrap_or_default());
+    } else if results.is_empty() {
+        println!("The Muxin skill isn't in any agent's skills folder here.");
+    } else {
+        for r in &results {
+            println!("{:<9} {:<10} {}", r.agent, r.result, r.path);
+            if let Some(note) = &r.note {
+                println!("          {note}");
+            }
+        }
+        if installing && results.iter().any(|r| matches!(r.result, "installed" | "updated")) {
+            println!("New agent sessions have it.");
+        }
+    }
+    if results.iter().any(|r| r.result == "failed") { 1 } else { 0 }
+}
+
 fn init(args: InitArgs) -> u8 {
     let paths = args.common.paths();
     if paths.inventory.exists() && !args.force {
@@ -3885,6 +4001,75 @@ mod tests {
             ])
             .is_ok()
         );
+    }
+
+    /// The skill (skills/muxin) shows only commands and flags that exist:
+    /// whole commands in code blocks parse, and inline ones name real flags.
+    #[test]
+    fn skill_uses_real_commands() {
+        let mut root = Cli::command();
+        root.build();
+        for (path, text) in skill::FILES {
+            let mut fenced = false;
+            for line in text.lines() {
+                if line.trim_start().starts_with("```") {
+                    fenced = !fenced;
+                } else if fenced {
+                    if line.starts_with("muxin ") {
+                        let words = shell_words(line);
+                        if let Err(e) = Cli::try_parse_from(&words) {
+                            panic!("{path}: `{line}` doesn't parse:\n{e}");
+                        }
+                    }
+                } else {
+                    for span in line.split('`').skip(1).step_by(2).filter(|s| s.starts_with("muxin ")) {
+                        let words = shell_words(span);
+                        let (mut cmd, mut rest) = (&root, &words[1..]);
+                        while let Some(sub) = rest.first().and_then(|w| cmd.find_subcommand(w)) {
+                            (cmd, rest) = (sub, &rest[1..]);
+                        }
+                        assert!(!cmd.has_subcommands() || rest.is_empty(), "{path}: `{span}`: no such command");
+                        for word in rest.iter().take_while(|w| *w != "--") {
+                            if let Some(long) = word.strip_prefix("--") {
+                                assert!(cmd.get_arguments().any(|a| a.get_long() == Some(long)), "{path}: `{span}`: `{}` has no --{long}", cmd.get_name());
+                            } else if let Some(short) = word.strip_prefix('-').filter(|s| s.len() == 1).and_then(|s| s.chars().next()) {
+                                assert!(cmd.get_arguments().any(|a| a.get_short() == Some(short)), "{path}: `{span}`: `{}` has no -{short}", cmd.get_name());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// A shell line's words, with quotes taken off and a `# comment` left out.
+    fn shell_words(line: &str) -> Vec<String> {
+        let (mut words, mut word, mut quote, mut in_word, mut after_space) = (Vec::new(), String::new(), None, false, true);
+        for c in line.chars() {
+            match quote {
+                Some(q) if c == q => quote = None,
+                Some(_) => word.push(c),
+                None if c == '\'' || c == '"' => (quote, in_word) = (Some(c), true),
+                None if c == '#' && after_space => break,
+                None if c.is_whitespace() => {
+                    if std::mem::take(&mut in_word) {
+                        words.push(std::mem::take(&mut word));
+                    }
+                }
+                None => (in_word, _) = (true, word.push(c)),
+            }
+            after_space = quote.is_none() && c.is_whitespace();
+        }
+        if in_word {
+            words.push(word);
+        }
+        words
+    }
+
+    #[test]
+    fn splits_shell_words() {
+        assert_eq!(shell_words(r#"muxin session send a/b "Yes, and add a test" --json   # type it"#), ["muxin", "session", "send", "a/b", "Yes, and add a test", "--json"]);
+        assert_eq!(shell_words("muxin session rename a/b \"\" --cwd '~/x' acme/api#142"), ["muxin", "session", "rename", "a/b", "", "--cwd", "~/x", "acme/api#142"]);
     }
 
     #[test]

@@ -237,6 +237,7 @@ pub enum ActionName {
     Restart,
     Logs,
     Remove,
+    Update,
 }
 
 impl std::str::FromStr for ActionName {
@@ -249,9 +250,8 @@ impl std::str::FromStr for ActionName {
             "restart" => Ok(ActionName::Restart),
             "logs" | "log" => Ok(ActionName::Logs),
             "remove" | "rm" | "delete" => Ok(ActionName::Remove),
-            other => Err(ApiError::invalid(format!(
-                "Unknown action \"{other}\". Use start, stop, restart, logs or remove."
-            ))),
+            "update" => Ok(ActionName::Update),
+            other => Err(ApiError::invalid(format!("Unknown action \"{other}\". Use start, stop, restart, logs, remove or update."))),
         }
     }
 }
@@ -430,7 +430,7 @@ pub struct MachineSummary {
     pub error: Option<String>,
     /// Why it can't be reached, in plain words: `kind` is "offline" (shut
     /// down, asleep, off the network: nothing to fix), "refused", "auth",
-    /// "unknown-host", "host-key" or "error"; `hint` is a command to try.
+    /// "key-locked", "unknown-host", "host-key" or "error"; `hint` is a command to try.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unreachable: Option<crate::fleet::model::Unreachable>,
     /// It on the user's Tailscale network: whether Tailscale sees it online,
@@ -506,6 +506,9 @@ pub struct DiagnosticOut {
     pub hint: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub runner_id: Option<String>,
+    /// What Muxin can do about it, the likely fix first (see AGENTS.md).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<crate::fleet::model::DiagnosticAction>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -562,7 +565,7 @@ pub struct JobsResponse {
 #[derive(Debug, Clone, Serialize)]
 pub struct OperationOut {
     pub id: u64,
-    /// "install" | "start" | "stop" | "restart" | "remove" | "logs"
+    /// "install" | "start" | "stop" | "restart" | "remove" | "logs" | "update"
     pub kind: String,
     pub title: String,
     /// "running" | "succeeded" | "failed"
@@ -798,6 +801,7 @@ fn machine_detail(s: &Snapshot, m: &Machine) -> MachineDetail {
                 message: d.message.clone(),
                 hint: d.hint.clone(),
                 runner_id: d.runner_id.clone(),
+                actions: d.actions.clone(),
             })
             .collect(),
     }
@@ -1589,9 +1593,8 @@ pub async fn runner_action(
         ActionName::Stop => RunnerAction::Stop,
         ActionName::Restart => RunnerAction::Restart,
         ActionName::Logs => RunnerAction::Logs,
-        ActionName::Remove => RunnerAction::Remove {
-            delete_files: req.delete_files,
-        },
+        ActionName::Remove => RunnerAction::Remove { delete_files: req.delete_files },
+        ActionName::Update => RunnerAction::Update,
     };
     let op = engine.runner_action(&runner.id, action).map_err(op_error)?;
     let tail = if req.action == ActionName::Logs {
@@ -1677,7 +1680,7 @@ pub async fn cloud_create(
 #[serde(deny_unknown_fields)]
 pub struct CloudMachineRequest {
     pub machine_id: String,
-    /// For power: "on" or "off".
+    /// For power: "on" or "off"; for machine_power also "restart".
     #[serde(default)]
     pub power: Option<String>,
     #[serde(default = "yes")]
@@ -1938,35 +1941,28 @@ pub async fn vm_destroy(
     .await
 }
 
-/// Powers a machine on or off: a cloud machine through its provider, or a VM
-/// (or container) in Docker on another of the user's machines by starting or
-/// stopping that container there.
-pub async fn machine_power(
-    engine: &Arc<Engine>,
-    req: CloudMachineRequest,
-    surface: Surface,
-    on_line: impl FnMut(&str),
-) -> ApiResult<ActionResponse> {
+/// Powers a machine on, off or restarts it. A cloud machine goes through its
+/// provider, a VM (or container) in Docker on another of the user's machines
+/// by that container there, and any other machine by asking its own system.
+pub async fn machine_power(engine: &Arc<Engine>, req: CloudMachineRequest, surface: Surface, on_line: impl FnMut(&str)) -> ApiResult<ActionResponse> {
     let s = freshen(engine).await;
     let m = find_machine(&s, &req.machine_id)?.clone();
-    let on = match req.power.as_deref() {
-        Some("on") => true,
-        Some("off") => false,
-        _ => return Err(ApiError::invalid("power must be \"on\" or \"off\".")),
+    let action = match req.power.as_deref() {
+        Some("on") => None,
+        Some("off") => Some(crate::ops::OsPower::Shutdown),
+        Some("restart") => Some(crate::ops::OsPower::Restart),
+        _ => return Err(ApiError::invalid("power must be \"on\", \"off\" or \"restart\".")),
     };
-    let op = engine.machine_power(&m.id, on).map_err(op_error)?;
-    finish_action(
-        engine,
-        op,
-        req.wait,
-        420,
-        DEFAULT_TAIL,
-        Some(m.id),
-        Vec::new(),
-        surface,
-        on_line,
-    )
-    .await
+    let op = match action {
+        None => engine.machine_power(&m.id, true).map_err(op_error)?,
+        Some(action) => engine.machine_os_power(&m.id, action).await.map_err(|e| match e {
+            crate::fleet::desktop::AddDisplayError::NeedsPassword(_) => {
+                ApiError::new("invalid", format!("{} wants the user's password for that (sudo).", m.name)).with_hint("Do it from the Muxin app (the machine's menu), which asks for it.")
+            }
+            crate::fleet::desktop::AddDisplayError::Failed(why) => op_error(why),
+        })?,
+    };
+    finish_action(engine, op, req.wait, 480, DEFAULT_TAIL, Some(m.id), Vec::new(), surface, on_line).await
 }
 
 /// Cancels the workflow run a queued or running job belongs to.
@@ -3595,7 +3591,7 @@ pub struct SessionListRequest {
 #[serde(deny_unknown_fields)]
 pub struct SessionStartRequest {
     pub machine_id: String,
-    /// "claude", "codex", "opencode", "gemini", "amp", "pi" or "shell".
+    /// "claude", "codex", "opencode", "gemini", "agy", "amp", "pi" or "shell".
     pub agent: String,
     /// Folder on the machine to start in. Default: the home folder.
     #[serde(default)]
@@ -3627,7 +3623,7 @@ pub struct SessionRenameRequest {
 pub struct SessionHandoffRequest {
     /// A session ("<machine-id>/<name>", or a unique name) or a box ("box-7k2m9q").
     pub session_id: String,
-    /// The agent to hand the work to: claude, codex, opencode, gemini, amp or pi.
+    /// The agent to hand the work to: claude, codex, opencode, gemini, agy, amp or pi.
     pub agent: String,
     /// Keep the old session running too. Default false: it ends.
     #[serde(default)]
@@ -4636,17 +4632,10 @@ pub async fn github_repo(engine: &Arc<Engine>, req: RepoRequest) -> ApiResult<Re
     }
     let settings = engine.settings().github;
     let gh = engine.github();
-    let (repo, items, runs) = futures::join!(
-        gh.repo(&settings, &name),
-        gh.repo_items(&settings, &name),
-        gh.repo_runs(&settings, &name)
-    );
-    let mut repo = repo.map_err(github_error)?;
-    repo.favorite = engine
-        .settings()
-        .favorite_repos
-        .iter()
-        .any(|f| f.eq_ignore_ascii_case(&repo.full_name));
+    let (repo, items, runs) = futures::join!(gh.repo(&settings, &name), gh.repo_items(&settings, &name), gh.repo_runs(&settings, &name));
+    // A fork's parent can be one this login can't read.
+    let mut repo = repo.map_err(|e| if e == "Not Found" { ApiError::not_found(format!("GitHub has no {name} that this login can read. It may be private, or gone.")) } else { github_error(e) })?;
+    repo.favorite = engine.settings().favorite_repos.iter().any(|f| f.eq_ignore_ascii_case(&repo.full_name));
     let items = items.map_err(github_error)?;
     let checkouts = engine
         .current()

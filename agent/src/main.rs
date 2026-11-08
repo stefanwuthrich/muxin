@@ -31,6 +31,7 @@ mod handoff;
 mod link;
 mod logs;
 mod ports;
+mod power;
 mod procs;
 mod proto;
 mod push;
@@ -132,7 +133,13 @@ pub fn home_dir() -> PathBuf {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+        // chmod rewrites ctime even when the mode is unchanged, and this is
+        // resolved on every poll, so only chmod what isn't private yet: a
+        // needless ctime change wakes file watchers on $HOME.
+        let private = std::fs::metadata(&dir).is_ok_and(|m| m.permissions().mode() & 0o777 == 0o700);
+        if !private {
+            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+        }
     }
     dir
 }
